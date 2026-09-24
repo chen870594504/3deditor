@@ -21,8 +21,7 @@ defineOptions({ name: 'TdmSceneSelection' })
  *   也让本组件保持**单根**。
  *
  * 它由 props 完全驱动、不访问 store：物体从哪来、算不算选中，是外面那一层的事。
- * 这与 `ScenePicker` 是同一条约定（见 SceneViewer 里那段「全仓库唯一需要
- * useTresContext 的地方」）。
+ * 这与 `ScenePicker` 是同一条约定（全仓库绕开注入链的那三处见 DESIGN.md 设计决定 4）。
  */
 const props = defineProps<{
   /** 选中模型的 id。载荷里要带上它，而这一层自己不查配置 */

@@ -10,7 +10,7 @@ import { pushEvent } from './useEditorState'
  * 3D 是随手转的自由视角。真正的正交相机要新增一只相机、切 TresJS 的 activeCamera，
  * 而 cientos 5.9 换相机会重挂 OrbitControls 并因为 `whenever(..., { once: true })`
  * 丢掉 `end` 监听器，连带打断「松手回写机位」与「拖手柄时禁用轨道控制」两条链路。
- * 代价与取舍写在 README 的设计决定里。
+ * 代价与取舍写在 DESIGN.md 的设计决定里。
  *
  * **档位是从机位推导的，没有独立的 ref。** 这与 `activePresetKey(config)` 同一条思路
  * （预设高亮也是从配置推导、手动改了参数就自己消失），也与 store 里那句

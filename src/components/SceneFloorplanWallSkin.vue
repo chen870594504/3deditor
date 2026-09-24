@@ -437,7 +437,7 @@ const layout = computed<SkinWall[] | null>(() => {
 
       <!--
         门窗构件**不铺**：框、玻璃、门扇照旧走灰盒子那套材质
-        （洞口的几何照旧由 `wallPieces()` 切段，见 README 设计决定）。
+        （洞口的几何照旧由 `wallPieces()` 切段，见 DESIGN.md 设计决定）。
 
         **不设 cast-shadow / receive-shadow**：今天墙这一侧一处都没有，
         而 `<primitive>` 不做遍历，clone 进来的网格保持 glTF 默认的

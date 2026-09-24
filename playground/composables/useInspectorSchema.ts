@@ -963,7 +963,7 @@ export function createInspectorTabs(): InspectorTabDef[] {
         },
         // 03 的位置是「场景预设」，由 InspectorPanel 挂的 PresetList 自己画
         // （见那个文件：它是自绘的阻塞列表，不是数据驱动的字段，所以不在这里）。
-        // 原先这个位置是「环境贴图」下拉框，已经删掉——理由见 README 设计决定 41。
+        // 原先这个位置是「环境贴图」下拉框，已经删掉——理由见 DESIGN.md 设计决定 41。
       ],
     },
 

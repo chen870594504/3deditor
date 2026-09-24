@@ -642,7 +642,8 @@ function modelObjectOf(id: string): Object3D | null {
  *
  * 做这件事需要两样东西：当前生效的相机，以及画布元素的 `getBoundingClientRect()`。
  * 两者都只有TresCanvas 内部拿得到——`ScenePicker.vue` 先走了一步，这里是第二处。
- * （README 里那句「全仓库唯一的 useTresContext 消费者」要跟着改。）
+ * （DESIGN.md 设计决定 4 里那句「`useTresContext()` 的消费者」的**数量**要跟着改；
+ * 它现在写的是三个，指的就是 `ScenePicker` / 这里 / `SceneSkybox`。）
  *
  * 为什么不自己 `document.querySelector('canvas')`：一个页面上可能挂着多个
  * 画布（宿主自己的 + 我们的），那样会量到错的那个，而且错得**不报错**——

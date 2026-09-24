@@ -375,7 +375,7 @@ const boxes = computed(() =>
 <template>
   <!--
     两条路**二选一**，与墙那两条路是同一条约定：同一个包围盒上两组共面几何会
-    逐像素 z-fighting（README 设计决定 32 / 33 都记着这一条）。
+    逐像素 z-fighting（DESIGN.md 设计决定 32 / 33 都记着这一条）。
   -->
   <template v-if="layout">
     <TresGroup

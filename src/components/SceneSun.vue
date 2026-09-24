@@ -9,7 +9,7 @@ defineOptions({ name: 'TdmSceneSun' })
 
 /**
  * 这一层位于 TresCanvas 内部，只收 props、不访问 Pinia
- * （见 README「TD 层不使用 Pinia」）。
+ * （见 DESIGN.md「TD 层不使用 Pinia」）。
  */
 const props = withDefaults(
   defineProps<{
@@ -46,7 +46,7 @@ const props = withDefaults(
      *
      * 编辑器那侧几乎走不到这个分支——左栏点天空盒时会把 `environment` 清成空串。
      * **只清这一个方向**：反方向（选环境贴图时清掉天空盒）原先在右栏那个下拉框里，
-     * 那个下拉框已经删掉（见 README 设计决定 41），所以「宿主同时给了 environment
+     * 那个下拉框已经删掉（见 DESIGN.md 设计决定 41），所以「宿主同时给了 environment
      * 与 skybox」现在是这份配置里唯一能造出冲突的写法。这一句就是给它兜底的，
      * 不是常态。
      */

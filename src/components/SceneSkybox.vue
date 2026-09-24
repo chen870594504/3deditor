@@ -68,7 +68,7 @@ const props = withDefaults(
 
 /**
  * 与 `ScenePicker` / `SceneContent` 一样的第三个 `useTresContext` 消费者
- * （README「TD 层不使用 Pinia」那一节点了名）。这里要的就是 `scene` 本身：
+ * （DESIGN.md「TD 层不使用 Pinia」那一节点了名）。这里要的就是 `scene` 本身：
  * 天空盒不是场景图里的一个物件，它是场景上的一对字段，没有别的写法够得着。
  * 它同样不碰 Pinia，只收一个 prop。
  */
@@ -257,6 +257,6 @@ onUnmounted(() => {
 
   空模板在 TresJS 的自定义渲染器里是安全的——`nodeOps.createComment` 造的那个
   记号节点会被 `insert` 收进父级的 `__tres.objects`，不像裸 `<template>` 那样
-  把子节点挂到场景根上（README 设计决定 7 讲的正是那个坑）。
+  把子节点挂到场景根上（DESIGN.md 设计决定 7 讲的正是那个坑）。
 -->
 <template />

@@ -11,7 +11,7 @@ defineOptions({ name: 'TdmSceneFloorplanRoom' })
  * 一个房间：地面色块 + 悬浮的房间名。
  *
  * 这一层位于 TresCanvas 内部，只收 props、不访问 Pinia
- * （见 README「TD 层不使用 Pinia」）。
+ * （见 DESIGN.md「TD 层不使用 Pinia」）。
  *
  * 多边形是「点封闭区域」那一刻算出来的**快照**（见 `FloorplanRoom` 的注释），
  * 之后不随墙变动，所以这里也不需要在墙变化时重算什么。

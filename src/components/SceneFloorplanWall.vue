@@ -11,7 +11,7 @@ defineOptions({ name: 'TdmSceneFloorplanWall' })
  * 一面**没有外观**的墙：通体灰盒子。
  *
  * 这一层位于 TresCanvas 内部，只收 props、不访问 Pinia
- * （见 README「TD 层不使用 Pinia」）。它自己不算任何几何——
+ * （见 DESIGN.md「TD 层不使用 Pinia」）。它自己不算任何几何——
  * 切段、开洞、算世界坐标全在 `wallPieces()` 里，这里只负责把结果摆进模板。
  *
  * 它同时也是**有外观的那种墙退化时的落点**（`SceneFloorplanWallSkin.vue`

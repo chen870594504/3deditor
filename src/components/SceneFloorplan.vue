@@ -31,7 +31,7 @@ defineOptions({ name: 'TdmSceneFloorplan' })
  * 逐像素 z-fighting，所以判据只有 `openingFilledByModel` 这一个实现。
  *
  * 这一层位于 TresCanvas 内部，只收 props、不访问 Pinia
- * （见 README「TD 层不使用 Pinia」）。
+ * （见 DESIGN.md「TD 层不使用 Pinia」）。
  *
  * **画到一半的东西不在这里。** 库只渲染「已经落进配置的房子」，
  * 半截墙链、拖拽中的地基矩形是编辑态，走 `SceneViewer` 的 `#scene` 插槽，

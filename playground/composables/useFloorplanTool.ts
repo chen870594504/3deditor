@@ -314,7 +314,7 @@ function usePlan() {
  * 画不了的时候把五枚按钮留在那儿，唯一的下场就是用户点了一下、什么也没发生
  * （点了工具确实还会顺手切回 2D，可那正是「用户没打算切档」的那种意外）。
  * 隐藏**不等于**把工具关掉：开着的工具与画到一半的墙链原样留着，
- * 于是切回 2D 就能接着画——那条决定见 README（不关掉是有意的）。
+ * 于是切回 2D 就能接着画——那条决定见 DESIGN.md（不关掉是有意的）。
  */
 export const planView = computed(() => {
   if (previewMode.value) return false
@@ -1206,7 +1206,7 @@ export function onFloorplanPointerDown(event: PointerEvent): void {
 
   /*
     `Shift + 左键`在 2D 下是**平移**——OrbitControls 那条分支只看 `enablePan`，
-    与 `enableRotate` 无关（见 README 里那段）。所以「带 Shift 的拖拽」不能参与平面图：
+    与 `enableRotate` 无关（见 DESIGN.md 里那段）。所以「带 Shift 的拖拽」不能参与平面图：
     地基正是拖出来的，按住 Shift 拖会一边平移一边画；空档里则会把平移做成拖动洞口。
 
     只在地基与空档这两处退让：其余工具靠**点击**工作，而点击有 `CLICK_MAX_DRIFT`
@@ -1850,7 +1850,7 @@ function replaceSelectedOpening(asset: PickedAsset): void {
  * 不达标（零厚度、全是片、顶点里有 NaN）的表现是**整面墙退回灰盒子**，外加
  * `SceneFloorplanWallSkin` 那条点名地址与原因的 warn。画墙时选料同样不预检，
  * 替换沿用同一条才是一致的——为一句话就在选择时先拉一遍 glb 出来量，是把洞口
- * 那条链的代价（README 里记着「同一条 glb 被加载两遍」那笔账）搬到这里。
+ * 那条链的代价（DESIGN.md 里记着「同一条 glb 被加载两遍」那笔账）搬到这里。
  *
  * ## 「记成当前料」放在 no-op 早返回**之前**
  *

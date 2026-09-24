@@ -8,7 +8,7 @@ import type { SceneConfig, ShadowConfig, SunConfig } from '../../src'
  *
  * 它现在住在右栏「日照环境」的 03 节（`components/inspector/PresetList.vue`），
  * 与它改的那几个字段（太阳高度 / 三盏灯 / 阴影）同屏。原先它是左栏一个独立的页面，
- * 那一格今天换成了环境贴图撤走之后腾出来的位置，见 README 设计决定 41。
+ * 那一格今天换成了环境贴图撤走之后腾出来的位置，见 DESIGN.md 设计决定 41。
  *
  * ## 一个预设只管两件事：光照（`sun` 里那几盏灯）与光影（`shadow`）
  *

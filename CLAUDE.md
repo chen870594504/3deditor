@@ -4,10 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概览
 
-`3dmaker` 是一个**同时具有两个身份**的仓库：
+`3deditor` 是一个**同时具有两个身份**的仓库：
 
-- **发布态**：npm 库包 `@chen870594504/3deditor`（发在 GitHub Packages 上），其他项目
-  `app.use(createThreeDMaker())` + `import '@chen870594504/3deditor/style.css'` 获得 3D 场景能力
+- **发布态**：npm 库包 `3deditor`（发在 npmjs.org 上），其他项目
+  `app.use(createThreeDMaker())` + `import '3deditor/style.css'` 获得 3D 场景能力
 - **开发态**：`playground/` 是一个可独立运行的场景编辑器，同时是插件的**第一个消费者**
 
 分层是刻意的，也是本仓库最重要的一条铁律：**能力进 `src/`，界面留 `playground/`**。
@@ -71,6 +71,16 @@ pnpm preview      # 预览构建产物
 
 组件分层：`SceneViewer`（对外主组件）→ `SceneContent`（`TresCanvas` 内部，组装各 `Scene*` + 相机 + 控制器 + 物体级变换与拾取）→ 其余 `Scene*.vue`。
 
+`SceneViewer` 的对外面有两层：**props / emits**（声明式，「场景长什么样」）与
+**`defineExpose` 出来的 5 个方法**（命令式，「此刻画布上是什么情况」：`captureCamera` / `measureModel` /
+`groundPointAt` / `getSceneData` / `loadSceneData`）。加新能力时先判这两层归哪一层——
+「在画布上拖出一个物理量」走 props+emits（库自己写回，宿主一行不写也能用），
+「取一份数据交给宿主」走 `defineExpose`（库只产出，不做策略）。
+两层的名字都不带策略含义：叫 `getSceneData` 而不是 `saveScene`，因为**组件本身并不保存**。
+
+编辑器（`playground/`）**自己不落盘**：`⌘S` 与顶栏「保存」走的就是 `getSceneData()` 这条公开面，
+取完只打一条日志；页面初始化也不再读任何草稿，场景从哪来由宿主决定。
+
 ### `playground/`（开发面）
 
 `App.vue` 是外壳（顶栏 + 三栏工作台）。`composables/` 放编辑器状态，`components/side/` 是左栏（图标导轨 + 模型库宫格），
@@ -101,7 +111,7 @@ pnpm preview      # 预览构建产物
    先并入三选择器组（`min-width: 40px`），之后各自再单独收窄（34px / 30px）。特异性同为 (0,1,0)，
    所以是**后面的赢**。重排或拆分这几条会静默改变按钮宽度。
    要拆成 partial，先把这类顺序依赖改成靠特异性表达（`.ed-stage--preview` 那处就是范例：
-   它写成两个类 `.ed-stage.ed-stage--preview`，README 里记着为什么）。
+   它写成两个类 `.ed-stage.ed-stage--preview`，DESIGN.md 里记着为什么）。
 9. **不要嵌套 `@media`**。它们全部排在文件末尾、靠「排在后面」取胜，而 SCSS 会把嵌套的 `@media`
    提升到父规则的位置、也就是大幅前移；另外 `prefers-reduced-motion` 那条跨 10 个父选择器、
    `1100px` 那条跨 3 个，结构上根本嵌不进单一父规则。
@@ -117,18 +127,38 @@ pnpm preview      # 预览构建产物
 - 天空盒的**面到轴映射**（错了不报错，只是天整体转到别的方向）
 - 模板 ref 指向 three 对象时的浅引用陷阱（dev 下只是一条警告，生产里静默失效）
 - 那段 `new Function` 执行器（库自身从不执行配置里的任何 `code`）
+- **`SceneViewer` 那 5 个 `defineExpose` 方法**——它的失效原因与上面几条不同，值得单独记着：
+  `renderToString` 只产出 HTML 字符串，**拿不到组件实例**，`ref` 上没有 `.value`，
+  所以返回值语义（什么时候给 `null`、`loadSceneData` 会不会清空撤销栈）**一行断言都写不出来**。
+  往里加方法时必须同时补一条目视清单条目。
 
-这些的唯一防线是 README 末尾「验证覆盖到哪一步」里的**目视清单**，配合 `pnpm dev`。
-推翻了某条断言时，要同时更新 README 里对应的说明。
+这些的唯一防线是 DESIGN.md 末尾「验证覆盖到哪一步」里的**目视清单**，配合 `pnpm dev`。
+推翻了某条断言时，要同时更新 DESIGN.md 里对应的说明。
 
-## README 是权威文档
+## 文档分两份
 
-`README.md` 有两千三百余行，含 **44 条编号设计决定**。源码注释里大量以「见设计决定 N」**按编号**交叉引用，
-所以：
+| 文件 | 读者 | 内容 |
+|---|---|---|
+| `README.md` | 用这个库的宿主 | 安装与令牌、注册插件、`SceneViewer` 的 props / emits、配置分组、`useSceneStore`、**对外方法**、导出清单 |
+| `DESIGN.md` | 改这个仓库的人 | 编辑器的设计、**45 条编号设计决定**、143 条**目视清单**、目录结构、发布流程、待办 |
+
+`README.md` 是一份**面向宿主的用法手册**，只有四类内容：怎么装进来、怎么用组件、
+API 是什么（签名 / 默认值 / 字段含义 / 用法规则）、以及宿主不照做就会出错的那几条警告。
+**它不解释「为什么这么设计」**——那类推理一律进 `DESIGN.md`，哪怕它读起来很有用。
+
+`README.md` 是**唯一随包发出去的那份**（`files` 只收 `dist`，但 npm 强制带上 README），
+`DESIGN.md` 不会——所以 README 里不写任何宿主读不到的东西，也不留指不回本仓库的引用。
+
+分界线就是仓库那条铁律的文档版本：**「宿主用得上吗」**，答案是否就该进 `DESIGN.md`。
+`DESIGN.md` 里没有任何宿主需要知道的东西，`README.md` 里不解释任何内部推理。
+
+**编号是稳定契约。** 源码注释大量以「见 `DESIGN.md` 设计决定 N」**按编号**交叉引用（`src/` 与
+`playground/` 里 30 余处，其中十余处以编号引用；目视清单的条目号同样被引用），所以：
 
 - **不要重排或插入编号**，新条目只能追加在末尾
-- 目视清单的条目号同样被引用，不要重排
+- 目视清单的条目号同样不要重排
 - 改行为前先查有没有对应的设计决定；推翻它就要同时更新那一条
+- 上面那张表决定了新内容写进哪个文件，**不要两边各写一份**
 
 ## 写作约定
 
@@ -159,17 +189,19 @@ pnpm preview      # 预览构建产物
 
 ### 发布
 
-包名 `@chen870594504/3deditor`，发在 GitHub Packages 上（仓库 `chen870594504/3deditor`，公开）。
+包名 **`3deditor`**（**不带 scope**），发在 **npmjs.org** 上（仓库 `chen870594504/3deditor`，公开）。
 
-**GitHub Packages 强制 scope 等于仓库 owner**，所以 scope 只能是 `chen870594504`，不能换成
-`@hcbox` 之类。**三处 scope 必须完全一致**：`package.json` 的 `name`、`.npmrc` 的
-`@chen870594504:registry`、`publishConfig.registry`。不一致的表现是 `npm publish`
-**悄悄发到 registry.npmjs.org 去了**，而这不会报错。
+**刻意不用 scope 包**。原先发在 GitHub Packages 上、包名是 `@chen870594504/3deditor`，
+换过来的原因只有一个：**GitHub Packages 即使包是公开的，拉取也强制带令牌**，不支持匿名安装
+（实测匿名 `GET https://npm.pkg.github.com/@chen870594504%2F3deditor` 返回
+`401 {"error":"authentication token not provided"}`，而同样的包在 npmjs 上是 200）。
+那意味着宿主那边不能只写一行 registry，每个项目、每台 CI 都要各配一次 classic PAT，
+令牌过期就集体拉不动，而失败信号是 `401` 而不是「包不存在」，很难查。
 
-**GitHub Packages 即使包是公开的，拉取也强制带令牌**，不支持匿名安装。这是它与
-npmjs.org 最大的区别：宿主那边不能只写一行 registry，每个项目、每台 CI 都要配一次
-classic PAT（拉包 `read:packages`，发布 `write:packages`），令牌过期就集体拉不动。
-缺令牌的表现是 `401 Unauthorized` 而不是「包不存在」。
+**不带 scope 还顺带免掉了一整类坑**：GitHub Packages 强制 scope 等于仓库 owner，
+所以那时包名、`.npmrc` 的 scope 分流、`publishConfig.registry` **三处必须完全一致**，
+不一致的表现是 `npm publish` 悄悄发到 registry.npmjs.org 去了而不报错。
+npmjs 上不需要任何 registry 分流，本仓库因此**没有 `.npmrc`**——不要为了「配 registry」再加回来。
 
 `pnpm publish` 即可，`prepublishOnly` 会先跑 `pnpm build && pnpm smoke`。
 
@@ -178,4 +210,4 @@ classic PAT（拉包 `read:packages`，发布 `write:packages`），令牌过期
 而 npm 不会因此报错——表现是宿主装到旧版本，怎么改代码都不生效。
 
 `dist/style.css` 漏进包里同样是静默失败（宿主渲染出一片裸 DOM），
-发布前用 `npm pack --dry-run` 对一眼白名单。完整说明见 README「发布到 GitHub Packages」。
+发布前用 `npm pack --dry-run` 对一眼白名单。完整说明见 DESIGN.md「发布到 npmjs」。

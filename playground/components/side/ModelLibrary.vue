@@ -597,7 +597,7 @@ function addGenerated(entry: LibraryEntry): void {
  *
  * **这个不变量现在只剩这一处在写。** 反方向那一条（在右栏选环境贴图时把
  * `skybox` 清成 `null`）原先住在 `useInspectorSchema.ts` 那个下拉框的 `apply` 里，
- * 随这次搬家一起删掉了——那一格现在是场景预设，见 README 设计决定 41。
+ * 随这次搬家一起删掉了——那一格现在是场景预设，见 DESIGN.md 设计决定 41。
  * 所以今天「两个字段同时有值」是配置里合法存在的一种状态，由渲染层裁定
  * （天空盒赢），而不是被编辑器挡住。这是删掉那个下拉框的**必然代价**：
  * 一个没有入口的字段，配不上一条只有入口才写得出来的清空规则。
@@ -677,7 +677,7 @@ function toggleSkybox(entry: LibraryEntry) {
     「这一类暂时还没有模型。」。
 
     接管之后连**滚动容器**也是宿主的（宫格那套 `ed-list ed-list--grow ed-scroll`
-    在下面那支里，这里不代劳）——README 里那段示例照抄了这几个类名。
+    在下面那支里，这里不代劳）——DESIGN.md 里那段示例照抄了这几个类名。
 
     作用域给出的就是当前分类本身（`section`，含 `entries`），也就是
     「这个 tab 分类下的模型数据列表」。**不额外给 `isInScene` / `isPicked`

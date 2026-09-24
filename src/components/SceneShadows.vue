@@ -6,7 +6,7 @@ defineOptions({ name: 'TdmSceneShadows' })
 
 /**
  * 这一层位于 TresCanvas 内部，只收 props、不访问 Pinia
- * （见 README「TD 层不使用 Pinia」）。
+ * （见 DESIGN.md「TD 层不使用 Pinia」）。
  */
 const props = withDefaults(
   defineProps<{

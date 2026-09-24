@@ -117,7 +117,7 @@ export interface ModelConfig {
    * 可选；`url` 非空时它被忽略（见下面那条「两个来源互斥」）。
    *
    * 存的是**字符串本身**，不是解析好的对象：宿主与它的后端手里就是这一段文本
-   * （见 README「宿主可以往左栏里追加分类」里那个示例），编辑器不替它解析、
+   * （见 DESIGN.md「宿主可以往左栏里追加分类」里那个示例），编辑器不替它解析、
    * 也不改写它，一路原样存进配置、导出时原样带走，**只在渲染那一刻 parse 一次**
    * （`src/components/SceneModelParts.vue`）。
    *
@@ -343,7 +343,7 @@ export interface SunConfig {
    * 所以正常情况下**最多只有一个不是空的**——编辑器里只有一个地方写这两个字段：
    * 左栏点天空盒时会把 `environment` 清成空串。反方向（选环境贴图时清掉天空盒）
    * 原先在右栏「环境贴图」那个下拉框里，那个下拉框已经删掉（它的位置换成了
-   * 场景预设，见 README 设计决定 41），于是 `environment` 现在只由宿主经 props
+   * 场景预设，见 DESIGN.md 设计决定 41），于是 `environment` 现在只由宿主经 props
    * 或导入 JSON 设定，编辑器不再替它清天空盒。`SceneSun` 里那条 `v-if` 是给
    * 两边都有值的手写 / 导入配置兜底的，见那边的注释。
    *
@@ -539,7 +539,7 @@ export interface FloorplanRoom {
  * 它是 `SceneConfig` 的一个顶层分组，而不是另立一个 store ——
  * 主要理由是**撤销、历史、导出全部白拿**：历史是「快照 + 分组 diff」
  * （见 `stores/scene.ts` 的 `commit`），每次落一面墙都是一次带标签的 `applyConfig`，
- * `⌘Z` 自然可用。代价是库的公开面变大，这一点写在 README 的设计决定里。
+ * `⌘Z` 自然可用。代价是库的公开面变大，这一点写在 DESIGN.md 的设计决定里。
  *
  * **编辑态绝不进这里**：画到一半的墙链、悬停点、拖框中的矩形全是编辑器状态，
  * 配置里只出现「用户已经确认存在的东西」——`SceneConfig` 必须可 JSON 往返。
@@ -663,7 +663,7 @@ export interface SceneViewerProps {
   /** 是否显示内置工具栏，默认 true */
   toolbar?: boolean
 
-  /** 是否自动旋转视角，默认 true */
+  /** 是否自动旋转视角，默认 false */
   autoRotate?: boolean
 
   /** 是否以线框模式渲染，默认 false */
