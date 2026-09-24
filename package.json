@@ -1,9 +1,25 @@
 {
-  "name": "3dmaker",
+  "name": "@chen870594504/3deditor",
   "version": "0.1.0",
   "description": "基于 Vue3 + TresJS 的可嵌入 3D 场景插件",
   "type": "module",
   "license": "MIT",
+  "author": "陈盛君 <870594504@qq.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chen870594504/3deditor.git"
+  },
+  "keywords": [
+    "vue3",
+    "three",
+    "tresjs",
+    "pinia",
+    "3d",
+    "scene",
+    "editor",
+    "gltf",
+    "floorplan"
+  ],
   "files": [
     "dist"
   ],
@@ -22,6 +38,10 @@
   "sideEffects": [
     "**/*.css"
   ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://npm.pkg.github.com"
+  },
   "scripts": {
     "dev": "vite",
     "build": "pnpm typecheck && vite build --mode lib",
@@ -29,7 +49,8 @@
     "preview": "vite preview",
     "typecheck": "vue-tsc --noEmit",
     "smoke": "node scripts/smoke.mjs",
-    "verify": "pnpm build:only && pnpm smoke"
+    "verify": "pnpm build:only && pnpm smoke",
+    "prepublishOnly": "pnpm build && pnpm smoke"
   },
   "peerDependencies": {
     "@tresjs/cientos": "^5.9.0",

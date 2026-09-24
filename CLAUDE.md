@@ -6,7 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `3dmaker` 是一个**同时具有两个身份**的仓库：
 
-- **发布态**：npm 库包，其他项目 `app.use(createThreeDMaker())` + `import '3dmaker/style.css'` 获得 3D 场景能力
+- **发布态**：npm 库包 `@chen870594504/3deditor`（发在 GitHub Packages 上），其他项目
+  `app.use(createThreeDMaker())` + `import '@chen870594504/3deditor/style.css'` 获得 3D 场景能力
 - **开发态**：`playground/` 是一个可独立运行的场景编辑器，同时是插件的**第一个消费者**
 
 分层是刻意的，也是本仓库最重要的一条铁律：**能力进 `src/`，界面留 `playground/`**。
@@ -141,7 +142,40 @@ pnpm preview      # 预览构建产物
 
 ## 版本控制
 
-仓库已 `git init`，但在 `main` 分支上**零提交**，所有文件都还是未跟踪状态。
-也就是说**没有历史可以回滚**。改大文件之前先备份（此前的做法是留一份 `.bak`，人工确认后再删）。
+`main` 分支已有历史，首个提交 `51a182d` 是**一次性全量入库**（91 个文件），此后按变更切分。
 
-`playground/styles/editor.css.bak` 就是这样一个备份（`editor.css` 已改成 `editor.scss`），目视确认后可删。
+所以「改大文件之前先留一份 `.bak`」这条旧规矩**已经不适用**：它成立的前提是零提交、无处回滚，
+而现在 `git checkout` 就能退回任一已提交版本。同理，`playground/styles/editor.css.bak`
+那份备份（`editor.css` 早已改成 `editor.scss`）已确认删除，不必再找。
+
+两点仍然要留意：
+
+- **首个提交之前没有可退的版本。** 它是全量入库，「这个文件当时长什么样」在它之前无处可查。
+  真正动大手术前，确认工作区干净（`git status` 为空）比留 `.bak` 更有效——脏工作区上一个提交
+  也救不回来。
+- **`.env` 是被跟踪的**（`.gitignore` 只排除 `.env.local` / `.env.*.local`，见硬性约束 7）。
+  这意味着 `VITE_ASSE_IMAGE_URL` 的任何改动都会直接进下一次提交，改它时要按第 6 条同时改四处，
+  别只改一边——只改一边的表现是列表清一色加载失败，而这不会报错。
+
+### 发布
+
+包名 `@chen870594504/3deditor`，发在 GitHub Packages 上（仓库 `chen870594504/3deditor`，公开）。
+
+**GitHub Packages 强制 scope 等于仓库 owner**，所以 scope 只能是 `chen870594504`，不能换成
+`@hcbox` 之类。**三处 scope 必须完全一致**：`package.json` 的 `name`、`.npmrc` 的
+`@chen870594504:registry`、`publishConfig.registry`。不一致的表现是 `npm publish`
+**悄悄发到 registry.npmjs.org 去了**，而这不会报错。
+
+**GitHub Packages 即使包是公开的，拉取也强制带令牌**，不支持匿名安装。这是它与
+npmjs.org 最大的区别：宿主那边不能只写一行 registry，每个项目、每台 CI 都要配一次
+classic PAT（拉包 `read:packages`，发布 `write:packages`），令牌过期就集体拉不动。
+缺令牌的表现是 `401 Unauthorized` 而不是「包不存在」。
+
+`pnpm publish` 即可，`prepublishOnly` 会先跑 `pnpm build && pnpm smoke`。
+
+**这道钩子是必需的，不要删**：`dist/` 被 `.gitignore` 排除，`files` 又只收 `dist`，
+所以没有钩子时 `pnpm publish` 会把上一次构建的陈旧产物（或空目录）发出去，
+而 npm 不会因此报错——表现是宿主装到旧版本，怎么改代码都不生效。
+
+`dist/style.css` 漏进包里同样是静默失败（宿主渲染出一片裸 DOM），
+发布前用 `npm pack --dry-run` 对一眼白名单。完整说明见 README「发布到 GitHub Packages」。

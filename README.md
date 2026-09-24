@@ -64,14 +64,14 @@ scripts/smoke.mjs        打包产物冒烟测试
 ## 接入其他项目
 
 ```bash
-pnpm add 3dmaker vue three pinia @tresjs/core @tresjs/cientos
+pnpm add @chen870594504/3deditor vue three pinia @tresjs/core @tresjs/cientos
 ```
 
 ```ts
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
-import { createThreeDMaker } from '3dmaker'
-import '3dmaker/style.css' // 必须引入，否则组件没有样式
+import { createThreeDMaker } from '@chen870594504/3deditor'
+import '@chen870594504/3deditor/style.css' // 必须引入，否则组件没有样式
 
 const app = createApp(App)
 app.use(createPinia()) // 可选：不装插件会自己建一个内部实例
@@ -83,7 +83,7 @@ app.mount('#app')
 
 ```vue
 <script setup lang="ts">
-import { SceneViewer, useSceneStore } from '3dmaker'
+import { SceneViewer, useSceneStore } from '@chen870594504/3deditor'
 
 const scene = useSceneStore()
 </script>
@@ -496,8 +496,8 @@ interface ModelEventHandler {
 要真正跑起来，宿主自己接 5 个 emit 即可，参照下面这段（也是编辑器里那份实现）：
 
 ```ts
-import { MODEL_EVENT_TYPES, useSceneStore } from '3dmaker'
-import type { ModelEventPayload, ModelEventType } from '3dmaker'
+import { MODEL_EVENT_TYPES, useSceneStore } from '@chen870594504/3deditor'
+import type { ModelEventPayload, ModelEventType } from '@chen870594504/3deditor'
 
 const scene = useSceneStore()
 const compiled = new Map<string, (event: unknown, model: unknown) => void>()
@@ -617,7 +617,7 @@ scene.setModel(url) / scene.clearModel() / scene.resetView() / scene.toggle('wir
 另有一个纯函数导出，用来从模型地址派生一个可读短名：
 
 ```ts
-import { deriveModelId } from '3dmaker'
+import { deriveModelId } from '@chen870594504/3deditor'
 
 deriveModelId('')                              // 'builtin'    内置示例几何体
 deriveModelId('DamagedHelmet.glb')             // 'damaged-helmet'
@@ -2295,6 +2295,70 @@ skybox/bak38/{back,down,front,left,right,top}.jpg
   **调用的那几条算术**，指针怎么走、高亮画在哪、历史里有几条记录，一行都盖不到
 
 已用真实宿主项目验证过的接入路径：`pnpm pack` 出 tarball → 宿主 `pnpm add <tarball>` → `vue-tsc` 通过 → `vite build` 通过。
+
+---
+
+## 发布到 GitHub Packages
+
+包名是 scope 包 `@chen870594504/3deditor`，发在 **GitHub Packages** 的 npm registry 上。
+
+### 为什么 scope 是 chen870594504
+
+**GitHub Packages 强制 scope 必须等于仓库 owner**，没有商量余地。本仓库在 `chen870594504/3deditor` 下，所以包名只能叫 `@chen870594504/3deditor`。
+
+### 三处 scope 必须一致
+
+| 位置 | 值 |
+|---|---|
+| `package.json` 的 `name` | `@chen870594504/3deditor` |
+| `package.json` 的 `publishConfig.registry` | `https://npm.pkg.github.com` |
+| `.npmrc` 的 `@chen870594504:registry` | 同上 |
+
+**不一致的后果是 `npm publish` 悄悄发到 `registry.npmjs.org` 去了**，而这不会报错——你会以为发成功了，同事却怎么也装不到。
+
+`.npmrc` 只分流 `@chen870594504` 这一个 scope，`vue` / `three` / `pinia` / `@tresjs/*` 仍走公共源。把 global registry 整个换成 `npm.pkg.github.com` 的话，那些公共包也全去 GitHub 找，结果是装依赖就装不动了。
+
+### 认证（这条和别的源不一样，要特别注意）
+
+**GitHub Packages 即使包是公开的，拉取也强制要求令牌**，不支持匿名安装。这是它和 npmjs.org 最大的区别：宿主那边**不能只写一行 registry 就完事**，每个项目、每台 CI 都得配一次令牌，过期了又要重配。
+
+令牌是 classic PAT：拉包至少 `read:packages`，发布还要 `write:packages`。
+
+**令牌不要写进仓库里的 `.npmrc`**（它被 git 跟踪），放用户级 `~/.npmrc`：
+
+```ini
+//npm.pkg.github.com/:_authToken=ghp_xxxxxxxxxxxx
+```
+
+### 发布
+
+```bash
+pnpm publish
+```
+
+`prepublishOnly` 会先跑 `pnpm build && pnpm smoke`（类型检查 + 构建 + 91 条冒烟断言），
+**这是必需的一道**：`dist/` 被 `.gitignore` 排除，`files` 又只收 `dist`，
+所以没这道钩子时，`pnpm publish` 会把**上一次构建的陈旧产物**、甚至空目录发出去，
+而 npm 不会因此报错——表现是宿主装到了旧版本，怎么改代码都不生效。
+
+发布前确认：
+
+- **版本号必须递增**。`0.1.0` 已经发过就得先改 `package.json` 的 `version`，GitHub Packages 不接受覆盖同一个版本。
+- **白名单看一眼**：`npm pack --dry-run`，确认只有 `dist/` + `README` + `LICENSE`。
+- **`dist/style.css` 必须在里面**。漏了它的表现是宿主渲染出一片裸 DOM，不报错（同硬性约束 1）。
+
+### 宿主侧安装
+
+```bash
+pnpm add @chen870594504/3deditor vue three pinia @tresjs/core @tresjs/cientos
+```
+
+后面那 5 个**必须显式装**——它们声明在 `peerDependencies` 里，而 peer 的用意正是
+「宿主自己必须有一份」，不是可选项。少装或版本不符时，`vue` / `three` 出现两份实例，
+后果是响应式与 WebGL 上下文直接失效（见硬性约束 3）。
+
+宿主项目的 `.npmrc` 里同样要有那行 scope 分流、以及自己的令牌，否则它拉不到这个包。
+缺令牌的表现是 `401 Unauthorized`（而不是「包不存在」）。
 
 ---
 
