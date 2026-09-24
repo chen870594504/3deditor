@@ -1,0 +1,2311 @@
+# 3dmaker
+
+基于 **Vue 3 + Vite + TypeScript + Pinia + SCSS + TresJS** 的 3D 场景插件。
+
+本仓库有两个身份：
+
+- **开发态**：一个可独立运行的场景编辑器（`playground/`），同时是插件的第一个消费者
+- **发布态**：一个 npm 库包，其他项目 `app.use()` 即可获得 3D 场景能力
+
+两边的分层是刻意的：**能力进 `src/`，界面留 `playground/`**。编辑器用到的相机、地面、日照、阴影
+全部是 `SceneViewer` 的公开 prop 与 store 的公开状态，`src/` 里没有任何一处为编辑器开过后门。
+
+技术栈版本：Vue 3.5 / Vite 8 / TypeScript 5.9 / Pinia 4 / sass-embedded 1.104 / TresJS 5 / Three.js 0.186
+
+---
+
+## 快速开始
+
+```bash
+pnpm install
+
+pnpm dev        # 启动 playground，浏览器打开 http://localhost:5173
+pnpm typecheck  # 类型检查
+pnpm build      # 类型检查 + 构建库产物到 dist/
+pnpm verify     # 构建 + 跑打包产物冒烟测试
+```
+
+### 目录结构
+
+```
+src/                     库源码，会被打包发布
+├── index.ts             库入口：插件 install + 具名导出 + GlobalComponents 类型增强
+├── types.ts             对外类型定义（SceneConfig 及 5 个分组配置）
+├── utils/config.ts      默认配置、深合并、变更分组比对
+├── utils/modelId.ts     模型 id 派生（纯函数，编辑器与宿主共用同一份规则）
+├── utils/pointerClick.ts      「算不算一次单击」的唯一判据（物体事件与画布点选同源）
+├── utils/modelNodeRegistry.ts 「这个网格属于哪个模型」的内部登记簿（WeakMap）
+├── stores/scene.ts      Pinia store（id: tdm-scene）：配置 + 历史栈 + 运行时状态
+├── styles/index.scss    作用域样式，收敛在 .tdm-root 下
+└── components/
+    ├── SceneViewer.vue    对外主组件：画布 + 工具栏 + 加载态
+    ├── SceneContent.vue   TresCanvas 内部：组装下面四个 + 相机 + 控制器 + 物体级变换与拾取
+    ├── ScenePicker.vue    TresCanvas 内部：画布级点选（pickable 打开时才存在）
+    ├── SceneSun.vue       环境贴图与三盏灯
+    ├── SceneSkybox.vue    天空盒（六张 jpg 拼的立方体贴图，缺哪面补哪面；不渲染任何东西）
+    ├── SceneGround.vue    地面网格
+    ├── SceneShadows.vue   接触阴影 / 累积阴影
+    ├── SceneModel.vue     glTF 加载、线框与阴影标记
+    └── SceneToolbar.vue   工具栏（手写 SCSS）
+
+playground/              仅开发期使用，不会进入库产物。是插件的第一个消费者
+├── App.vue              编辑器外壳：顶栏 + 三栏工作台
+├── styles/editor.scss   编辑器视觉系统（精密仪器 / 蓝图方向）
+├── composables/         编辑器状态、场景预设、配置导入导出、属性面板 schema
+├── components/          顶栏、视口
+│   ├── side/            左栏：图标导轨 + 模型库宫格（地板 / 墙壁 / 门 / 窗 / 天空盒）
+│   └── inspector/       属性面板：图标 tab 导轨 + schema 字段控件（模型 / 墙·门窗·房间 / 场景预设四份自绘清单）└── utils/               路径读写、数值格式化
+
+scripts/smoke.mjs        打包产物冒烟测试
+```
+
+---
+
+## 接入其他项目
+
+```bash
+pnpm add 3dmaker vue three pinia @tresjs/core @tresjs/cientos
+```
+
+```ts
+import { createApp } from 'vue'
+import { createPinia } from 'pinia'
+import { createThreeDMaker } from '3dmaker'
+import '3dmaker/style.css' // 必须引入，否则组件没有样式
+
+const app = createApp(App)
+app.use(createPinia()) // 可选：不装插件会自己建一个内部实例
+app.use(createThreeDMaker())
+app.mount('#app')
+```
+
+安装后可使用全局组件 `<TdmSceneViewer />`，也可具名导入：
+
+```vue
+<script setup lang="ts">
+import { SceneViewer, useSceneStore } from '3dmaker'
+
+const scene = useSceneStore()
+</script>
+
+<template>
+  <!-- 全局组件 -->
+  <TdmSceneViewer model="/chair.glb" height="480px" />
+
+  <!-- 具名导入，样式同款，且能用自定义前缀 -->
+  <SceneViewer model="/chair.glb" :toolbar="false" @loaded="scene.markLoaded()" />
+</template>
+```
+
+### SceneViewer Props
+
+9 个扁平 prop 保持原有契约不变，另有 `pickable`、三个选中视觉相关的 prop，
+以及 `cameraTransition`：
+
+| Prop          | 类型                              | 默认值      | 说明                                                |
+| ------------- | --------------------------------- | ----------- | --------------------------------------------------- |
+| `model`       | `string \| DeepPartial<ModelConfig>` | `''`     | 模型地址，或整个模型分组（见下）；写入**当前选中的那个模型**          |
+| `background`  | `string`                          | `'#0b1020'` | 画布背景色，传 `'transparent'` 可透出页面背景       |
+| `environment` | `EnvironmentPreset`               | —           | 环境贴图预设，**不设置则不发起任何网络请求**        |
+| `height`      | `string \| number`                | `'480px'`   | 画布高度，数字按 px 处理                            |
+| `toolbar`     | `boolean`                         | `true`      | 是否显示内置工具栏                                  |
+| `autoRotate`  | `boolean`                         | `false`     | 是否自动旋转视角                                    |
+| `wireframe`   | `boolean`                         | `false`     | 是否线框渲染（会遍历改写模型所有材质的 wireframe）  |
+| `showGrid`    | `boolean`                         | `true`      | 是否显示地面网格                                    |
+| `draco`       | `boolean`                         | `false`     | 模型是否为 Draco 压缩格式                           |
+| `pickable`    | `boolean`                         | `false`     | 是否允许在画布上点选模型（见「点选模型」一节）      |
+| `selection`   | `boolean`                         | `false`     | 是否给选中的模型画一圈包围框（见「在画布上编辑模型」） |
+| `gizmo`       | `boolean`                         | `false`     | 是否给选中的模型挂 X/Y/Z 变换手柄（同上）           |
+| `gizmoMode`   | `TransformMode`                   | `'translate'` | 手柄模式：`'translate'` / `'rotate'` / `'scale'`  |
+| `cameraTransition` | `number`                     | `0`         | 机位改动滑过去的时长（毫秒），0 = 瞬移（见下）      |
+
+> `selection` / `gizmo` / `gizmoMode` 都是**输出侧**的能力：它们读 store 里那个选中项
+> （由 `selectModel` 或用户在编辑器里点出来），不改变选中逻辑，也**不经过 `events`**——
+> 选中的模型不会因此多出任何逐帧 raycast。三个 prop 默认全关，宿主没要求就不付代价。
+
+`cameraTransition` 是唯一的动效开关，默认 **0 = 瞬移**（现有行为一字不变）。写 `450`
+之类之后，`camera.position` / `camera.target` 的**任何**改动都是滑过去的：
+
+```vue
+<!-- 2D / 3D 切换、聚焦模型、点「重置机位」、撤销、面板里手改数值，全都是滑的 -->
+<SceneViewer :camera-transition="450" />
+```
+
+它只是**动画**，不改变「谁说了算」：配置在写入那一刻就是终点，相机在后面追。
+所以右栏读数、按钮高亮、历史记录立刻都是终点的样子，不必等画面追上——这一点在做
+「2D / 3D 档位」这类**由机位反推**的界面状态时是必须的，否则按钮要比画面晚 400ms 才亮。
+两端缓入缓出，中途被用户操作打断时**直接落到终点**而不是停在半路。另外两种情况不做动画：
+起点与终点相差不到 1mm（拖动视角松手后的自动回写走的就是这条，不会被无谓地滑一下），
+以及系统开了「减少动效」（`prefers-reduced-motion: reduce`）。
+
+`model` 有两种写法，字符串是「只给地址」的简写：
+
+```vue
+<!-- 简写：只给地址 -->
+<SceneViewer model="/chair.glb" />
+
+<!-- 完整：一次给出模型分组的多个字段，未提到的字段保持默认 -->
+<SceneViewer
+  :model="{
+    url: '/chair.glb',
+    name: '办公椅',
+    position: [0, 0.2, 0],
+    rotation: [0, Math.PI / 4, 0],
+    scale: [1.2, 1.2, 1.2],
+    events: { click: { enabled: true, code: "console.log(event.name)" } },
+  }"
+  @object-click="onPick"
+/>
+```
+
+> 对象写法建议传**稳定引用**（`setup` 里的常量或 `computed`）。`model` 是深监听的，
+> 传内联字面量会在每次渲染时重新同步一遍，把用户在编辑器里改的变换冲掉。
+>
+> 另外，`ModelConfig` 里的 `position` / `rotation` / `scale` 等字段是必填的，
+> 手写一个**完整**的 `ModelConfig` 字面量会在升级后编译失败；
+> 用 `DeepPartial<ModelConfig>`（也就是这个 prop 的类型）或直接读 `exportConfig()` 不受影响。
+>
+> **这个 prop 是单模型时代的入口，语义是「当前那一个模型」**：它写入 store 里被选中的
+> 那个条目，选中项不存在（空场景）时**追加一个新的**——默认场景就是空的，所以第一次
+> 传进来时走的正是这一支。对象写法只给字段、没给 `url` 也一样：空场景下会先补一个
+> 内置示例几何体出来再把字段写上去，不会静默丢掉。场景里要同时摆多个模型，
+> 用下面「多个模型」一节里的 `addModel` / `patchModel` / `selectModel`。
+
+另有 5 个**分组 prop**（`model` / `camera` / `ground` / `sun` / `shadow`），类型是各配置分组的
+`DeepPartial`，用来一次配置一整块能力。注意这里没有 `models`：prop 的表达力只到
+「那一个模型」，多模型请直接用 store：
+
+```vue
+<SceneViewer
+  :model="{ url: '/chair.glb', position: [0, 0.2, 0], events: { click: { enabled: true } } }"
+  :camera="{ fov: 35, autoRotate: false, maxPolarAngle: Math.PI / 2 }"
+  :ground="{ visible: true, cellSize: 0.5, infiniteGrid: true }"
+  :sun="{ showSky: true, elevation: 12, azimuth: 150 }"
+  :shadow="{ enabled: true, type: 'contact', contactOpacity: 0.6 }"
+/>
+```
+
+> 扁平 prop 与分组 prop 是**初始值**：传入后同步进 store，用户在编辑器里改动不会被覆盖。
+> 两层同时给同一个字段时**以分组 prop 为准**——`wireframe` / `draco` / `environment`
+> 这几个兼容用的扁平 prop 会先看分组里有没有写该字段，写了就自己让位。
+> 物体级的 `castShadow` / `receiveShadow` 只走 `model` 分组这一条路：
+> 再给一对同名的扁平 prop 无法判断说的是全局总闸还是物体级，会和 `shadow.*` 打架。
+
+### 配置分组
+
+`SceneConfig` 是单一事实来源，`scene.config` 直接读它。默认值见 `DEFAULT_SCENE_CONFIG`。
+
+**`models`** — 模型列表，元素是 `ModelConfig`
+
+场景里可以同时摆多个模型，所以这一组是**数组**。默认是**空数组**——打开就是空场景，
+视口里只有地面与光照。想要那个占位物体（地址为空、渲染成内置示例几何体），
+调一次 `addModel()`：它是明确的动作，不该由默认值白送。
+
+| 字段                                  | 默认值            | 说明                                          |
+| ------------------------------------- | ----------------- | --------------------------------------------- |
+| `id`                                  | 随机 uuid         | 模型标识，由库生成；换模型时重新生成（见下）  |
+| `url`                                 | `''`              | 模型地址，留空则渲染内置示例几何体            |
+| `draco` / `wireframe`                 | `false` / `false` | 加载与渲染方式                                |
+| `name`                                | `''`              | 显示名；留空时回退成从地址派生的短名          |
+| `position` / `rotation` / `scale`     | `[0,0,0]` / `[0,0,0]` / `[1,1,1]` | 相对父级的变换三元组       |
+| `repeat`                              | **不存在**        | 贴图在两个方向重复几次 `(u, v)`，见下          |
+| `visible`                             | `true`            | 是否渲染                                      |
+| `castShadow` / `receiveShadow`        | `true` / `true`   | 物体级阴影，与全局总闸 **AND**                 |
+| `events`                              | 5 类全关           | 5 类指针事件各自的启用位与 JS 代码，见「模型事件」 |
+
+> `rotation` 的**单位是弧度**，与 `camera.minPolarAngle` / `maxPolarAngle` 一致：
+> 配置文件里只存一套单位，导出给别人时不会出现「这个角度到底是度还是弧度」的歧义。
+>
+> **`repeat` 默认不存在，不是 `[1, 1]`**，这一点是有意的：它补偿的是「把一个模型
+> 拉伸到一块区域大小」那类用法——`scale` 放大几倍，几何被拉伸的同时**贴图也跟着拉伸**，
+> 于是图案的实物尺寸随区域大小变（地基画 20 米宽，一块砖就变成 5 米）。
+> 给一个非 1 的 `repeat` 把这个倍数还回去，图案尺寸就恒定了。它**只改贴图、不改几何**：
+> `repeat = [2, 2]` 与「并排摆 4 份原尺寸模型」在画面上是同一张图，但只有 1 个模型条目、
+> 1 次加载、1 个 draw call。
+>
+> 之所以不做成「自动跟着 `scale` 走」：缩放一个人物模型时贴图跟着拉伸是**对的**
+> （那就是「把它变大」的意思，也是 three 的默认行为），只有「拿一个模型去铺一块地」
+> 才需要反过来补偿，所以它是逐模型的显式选择。它要求资产的 **UV 恰好铺满 0..1**
+> （一个 uv 重复 = 整个模型），UV 跨度不是 1 的资产实际密度会被乘上那个跨度；
+> 两个分量都必须是正数。编辑器里唯一会写它的地方是铺设地板的工具
+> （「一次 u repeat 铺几米」这个数记在模型清单上，见设计决定 35），
+> 宿主也可以自己写——写之前请读一遍 `ModelConfig.repeat` 的注释。
+>
+> `id` 是 uuid，由 store 生成并维护：建立 store 时生成一个，模型地址变化（或卸载）时换一个，
+> 于是撤销到换模型之前也会跟着还原。它存在配置里，所以导出导入会原样带上——
+> 宿主若想「换模型也保持同一个 id」，显式传一个固定值即可，桥接层会让它最后落笔。
+> 默认的 `id` 是空串而不是写死的 uuid。`createModelConfig()` 是个工厂，它的结果会被反复取用，
+> 写死 uuid 会让所有宿主实例、以及同一个场景里的每个模型拿到同一个 id。
+>
+> **`models` 与配置里其他分组有一个不对称**：`applyConfig` 对数组是**整体替换**，
+> 所以 `applyConfig({ models: [...] })` 等于把整张列表换掉，而不是按下标合并。
+> 只想改其中一个模型请用 `patchModel(patch, label?, index?)`——否则一个只写了
+> `{ url }` 的补丁会把那个模型其余字段连同 id 一起抹掉（场景仍然能渲染，
+> 因为内置几何体会兜底，所以这个错法很不容易当场发现）。
+>
+> 物体级 `castShadow` / `receiveShadow` 只有 `shadow.type` 是 `map` 或 `accumulative`
+> 时才有效果：接触阴影走的是 `scene.overrideMaterial` 烘焙，绕开了 `WebGLShadowMap`，
+> 而 `castShadow` 正是后者的判定。这是实测源码得出的结论，编辑器里对应的字段会直接隐藏。
+
+**`floorplan`** — 户型图，四个子类型
+
+默认是**空户型**（`foundation: null` + 三个空数组），与 `models` 同一个理由：
+「造一栋房子」是一个明确的动作，不该由默认值白送。
+
+| 字段         | 类型                              | 默认值 | 说明                                        |
+| ------------ | --------------------------------- | ------ | ------------------------------------------- |
+| `foundation` | `{ x, z, width, depth }` 或 null  | `null` | 一块矩形地基板；`x` / `z` 是**中心点**，不是最小角 |
+| `walls`      | `FloorplanWall[]`                 | `[]`   | 墙，存**中心线**（两个端点）+ 墙高 + 墙厚 + 可选的外观地址 `url` |
+| `openings`   | `FloorplanOpening[]`              | `[]`   | 门窗。**没有自己的坐标**，只有 `hostWallId` + 沿墙米数 |
+| `rooms`      | `FloorplanRoom[]`                 | `[]`   | 房间：由墙体泛洪自动围出来的多边形 + 名称 + 颜色 |
+
+墙、门窗、房间都是**独立平铺的数组**，靠 id 互相引用，而不是层层嵌套：一面墙的
+`start` / `end` 是两个端点，门窗挂在墙的 id 上，房间记的是自己的多边形。
+`removeWall(walls, openings, id)` 会把挂在那面墙上的门窗一并带走——**不存在
+「数组下标重映射」这件事**，因为没有任何一处按下标引用（见设计决定 31）。
+
+> 单位一律**米**、角度一律**弧度**（与 `rotation` 同一条约定）；`SceneConfig` 只放
+> **可 JSON 往返**的数据，所以「画到一半的那条墙链」不进配置，它是编辑器状态。
+>
+> `applyConfig({ floorplan: { walls: [...] } })` 里的 `walls` 会**整体替换**整张表
+> （与 `models` 同样是数组语义）。宿主自己拼数组时请调一次 `cloneFloorplanPatch(patch)`
+> ——`applyPatch` 对数组是别名而非拷贝，逐层拷过再写才切得断宿主与配置之间的暗通道
+> （墙的 `start` / `end`、房间的 `polygon` 都是嵌套数组，只拷顶层不够）。
+
+### 多个模型
+
+store 上多模型相关的 API：
+
+| 成员                            | 说明                                                                    |
+| ------------------------------- | ----------------------------------------------------------------------- |
+| `models`                        | `config.models` 的只读视图，渲染与遍历用                                 |
+| `addModel(url?)`                | 追加一个模型并选中它，返回它的下标。`url` 留空 = 追加一个内置示例几何体   |
+| `removeModel(index)`            | 移除指定条目；越界是空操作                                              |
+| `selectModel(index)`            | 切换「当前在编辑哪一个」；越界是空操作                                   |
+| `selectedIndex` / `selectedModel` | 当前选中项的下标与对象。空场景时 `selectedModel` 是 `undefined`          |
+| `patchModel(patch, label?, index?)` | 深合并一份补丁到某一个模型上；`index` 缺省时落到 `selectedIndex`       |
+| `setModel(url, index?)`         | 载入模型并复位加载态；`index` 缺省时落到 `selectedIndex`                  |
+| `clearModel(index?)`            | 卸载资源、回到内置几何体                                                |
+
+```ts
+const scene = useSceneStore()
+
+scene.addModel('/chair.glb')
+scene.addModel('/table.glb')        // 两个模型并存，第一个原封不动
+scene.patchModel({ position: [1, 0, 0] }, '挪一下', 1)
+scene.selectModel(0)                // 属性面板从此描述第一个模型
+scene.removeModel(1)
+```
+
+> **选中项是界面状态，不是配置**。它是独立的 `selectedIndex` ref，不进 `config`、
+> 不进历史、不进导出物。放进配置的代价是：每次在列表里点一下都会算一次场景改动
+> （历史里多出一串「模型属性」），而且宿主导入一份配置时还得接受
+> 「该选中第几个」这种指令。
+>
+> 它只可能因为「列表变短」而越界，所以 store 里只 watch 列表长度就足以把它收回界内——
+> 撤销、导入、重置都是整体换掉 `models` 数组，长度 watch 同样能捕捉到。
+>
+> 单模型时代的那些入口（`model` prop、`setModel` / `clearModel` / `modelUrl` /
+> `wireframe` / `hasModel`）语义一律收窄成「当前选中的那个模型」，
+> 所以场景里只有一个模型时，它们的行为与从前逐字节一致。
+>
+> 事件脚本按载荷里的 `id` 找回**发出事件的**那个模型，而不是「此刻选中的那个」：
+> 点一下 A 之后、代码跑起来之前去列表里切到 B 是完全可能发生的。
+
+**`camera`** — 相机
+
+| 字段                                          | 默认值        | 说明                              |
+| --------------------------------------------- | ------------- | --------------------------------- |
+| `position` / `target`                         | `[4,3,6]` / `[0,0,0]` | 机位与注视点，三元组       |
+| `fov` / `near` / `far`                        | `45` / `0.1` / `200` | 透视相机参数               |
+| `autoRotate` / `autoRotateSpeed`              | `false` / `1.2` | 自动旋转及其速度                |
+| `damping` / `dampingFactor`                   | `true` / `0.06` | 阻尼惯性及其系数                |
+| `minDistance` / `maxDistance`                 | `1.5` / `150` | 推拉距离上下限                    |
+| `minPolarAngle` / `maxPolarAngle`             | `0` / `π/2`   | 俯仰上下限，**单位是弧度**        |
+| `enableRotate`                                | `true`        | 是否允许旋转视角                  |
+| `enablePan` / `enableZoom`                    | `true` / `true` | 平移与缩放开关                  |
+
+**`ground`** — 地面网格：`visible` `size` `cellSize` `cellThickness` `cellColor` `sectionSize` `sectionThickness` `sectionColor` `infiniteGrid` `fadeDistance` `fadeStrength` `followCamera`
+
+**`sun`** — 日照与环境：`showSky` `elevation` `azimuth` `turbidity` `rayleigh` `mieCoefficient` `mieDirectionalG` `ambientIntensity` `keyIntensity` `fillIntensity` `environment` `skybox`
+
+> 主光方向由 `elevation` / `azimuth` 用与天空盒相同的球坐标公式推导，所以影子方向和天上的太阳始终一致。
+>
+> `skybox` 是**六个面地址的定长元组**（顺序 `[+X, -X, +Y, -Y, +Z, -Z]`，即 `[右, 左, 上, 下, 前, 后]`——后三个字是社区惯例对这三对轴的叫法，本项目的资产**不按它排队**，见 `SkyboxFaces` 与 `SKYBOX_FACE_FILES`），`null` 表示不用天空盒。它与 `environment` 是**同一个位置的两种填法**——两者写的都是 `scene.environment`，这一组字段里最多只有一个不是空的（见设计决定 36）。
+
+**`shadow`** — 阴影：`enabled` `type`（`'map'` / `'contact'` / `'accumulative'`）`castShadow` `receiveShadow` `mapSize` `bias` `normalBias` `contactOpacity` `contactBlur` `contactScale` `contactResolution` `accFrames` `accOpacity` `accScale` `accBlend`
+
+### 事件
+
+| 事件                 | 载荷                 | 说明                                            |
+| -------------------- | -------------------- | ----------------------------------------------- |
+| `loaded`             | —                    | 模型加载完成                                    |
+| `progress`           | `percentage`         | 加载进度 0 ~ 100                                |
+| `error`              | `message`            | 加载失败，不会中断宿主应用                      |
+| `cameraChange`       | `{ position, target }` | 用户拖动结束后回写的机位                      |
+| `objectClick`        | `ObjectClickPayload` | 单击模型（需 `events.click.enabled`）           |
+| `objectDblclick`     | `ObjectClickPayload` | 双击模型（需 `events.dblclick.enabled`）        |
+| `objectPointerEnter` | `ObjectClickPayload` | 指针进入模型（需 `events.pointerenter.enabled`） |
+| `objectPointerLeave` | `ObjectClickPayload` | 指针离开模型（需 `events.pointerleave.enabled`） |
+| `objectContextMenu`  | `ObjectClickPayload` | 右键模型（需 `events.contextmenu.enabled`）     |
+| `modelPick`          | `ModelPickPayload`   | 在画布上点中模型（需 `pickable`，与 `events` 无关） |
+| `modelTransform`     | `ModelTransformPayload` | 手柄拖拽过程中逐帧派发（需 `gizmo`）             |
+| `modelTransformEnd`  | `ModelTransformPayload` | 手柄拖拽结束、且变换**确实变了**（需 `gizmo`）   |
+
+```ts
+interface ObjectClickPayload {
+  type: ModelEventType              // 触发它的是哪一类事件
+  id: string                        // model.id，随机 uuid
+  name: string                      // model.name，留空时回退成派生的短名，保证非空
+  url: string                       // 带上它，blob 场景宿主也能自解释
+  point: [number, number, number]   // 世界坐标下的命中点
+  distance: number                  // 相机到命中点的距离
+  object: Object3D                  // 命中的最深层 mesh
+}
+```
+
+> `name` 与属性面板上看到的是同一个值：配置里留空时回退成从地址派生的短名
+> （`builtin` / `local-file` / `damaged-helmet`），因此**永远非空**，宿主可以直接拿去显示。
+> `id` 是 uuid，换模型会换一个，因此适合用来判断「是不是同一个物体」，
+> 但不适合当显示文本。
+>
+> `type` 的存在是因为 5 类事件共用同一个载荷形状（同一份接口被 5 个 emit 复用，
+> 名字 `ObjectClickPayload` 因此是历史包袱，另有一个等价的别名 `ModelEventPayload`）。
+
+> `object` 是 three 的 `Object3D`，带 `parent` 环，**不能 `JSON.stringify`**——
+> 它挂进 payload 是为了让多部件模型能分辨「点中的是哪个部件」，
+> 宿主若要透传（比如发消息），请只取自己需要的字段。
+> 5 类事件里它的语义一致，都是**命中的最深层 mesh**，而不是外层包裹组。
+>
+> 单击只在 `events.click.enabled` 且 `model.visible` 都成立时才可能触发，
+> 且要满足「位移 < 4px 且间隔 < 500ms」，所以拖动旋转视角不会误触发。
+> 双击再叠加一条「两次单击间隔 < 500ms 且落在同一小片区域」；
+> 与浏览器一致，双击会**先发两次 `objectClick` 再发一次 `objectDblclick`**，
+> 且三连击只出一次双击。
+> 「鼠标经过 / 移出」判的是**整个模型**而不是单个网格：在模型内部各部件之间移动不会触发，
+> 但鼠标移到画布上的其它元素（比如内置工具栏、加载遮罩）会先移出、回来再经过。
+
+#### 点选模型：`pickable` 与 `modelPick`
+
+`objectClick` 回答的是「用户点了**这个模型的某个部件**」，需要模型自己开事件；
+而「用户想让**这个模型**变成当前选中的那一个」是另一件事——它是编辑器的常驻能力，
+不该要求每个模型都开一类事件。所以单独给了一条画布级的通道：
+
+```ts
+interface ModelPickPayload {
+  id: string                        // model.id，与配置里 models[n].id 一一对应
+  point: [number, number, number]   // 世界坐标下的命中点
+  distance: number                  // 相机到命中点的距离
+  object: Object3D                  // 命中的最深层 mesh
+}
+```
+
+|  | `objectClick` | `modelPick` |
+| --- | --- | --- |
+| 开启方式 | 该模型的 `events.click.enabled` | 画布级 prop `pickable` |
+| 开销 | 开了任意一类事件就**每帧** raycast 一次整棵子树 | 两个 DOM 监听器 + **每次点击**一次 raycast |
+| 载荷 | 带 `type` / `name` / `url` | 只有 `id`（3D 层不认识配置） |
+| 点空白 | —（点的就是模型） | 什么都不发 |
+
+两者**互不影响**：同一个模型可以只开其中一个、也可以都开。都开时 `modelPick` 一定**先到**
+——它由 DOM 监听器同步派发，而 `objectClick` 要等 pmndrs 把事件批处理到下一帧才合成出来。
+点空白处（地面、网格、背景）不发 `modelPick`，所以「点一下画布就取消选中」这类行为
+需要宿主自己补，库不预设。
+
+与 `events` 一样，`pickable` 判定单击用的是同一个判据（位移 < 4px 且间隔 < 500ms），
+所以**拖动旋转视角、双指缩放都不会误选中**。沿射线找到的第一个属于某个模型的交点才算命中，
+且**跳过 `visible` 为 false 的模型**——three 的射线检测不看 `visible`，隐藏的模型照样会被命中，
+按可见性跳过之后，「点哪选哪」与眼睛里看到的画面一致。
+
+#### 在画布上编辑模型：`selection` 与 `gizmo`
+
+`pickable` 解决的是「怎么选中」，这一节解决「选中之后能干什么」。
+两个开关各管一件事，可以只开一个：
+
+```vue
+<SceneViewer
+  model="/chair.glb"
+  pickable
+  selection
+  gizmo
+  gizmo-mode="translate"
+  @model-pick="onPick"
+  @model-transform="onTransform"
+  @model-transform-end="onTransformEnd"
+/>
+```
+
+- **`selection`** —— 给选中的那个模型套一圈 `BoxHelper` 包围框，颜色是内置示例几何体
+  同款的青绿。它每帧 `update()` 一次，所以模型动、框跟着动。
+- **`gizmo`** —— 给选中的那个模型挂一副 X/Y/Z 手柄，`gizmoMode` 决定拖出来的是平移、
+  旋转还是缩放。手柄由 `@tresjs/cientos` 的 `TransformControls` 提供，三档模式与它同名。
+
+两个事件都是**输出**而不是输入——库里已经把值写回 store 了（见下面的设计决定 28），
+宿主接它们只为了两件事：
+
+```ts
+interface ModelTransformPayload {
+  id: string                        // model.id，与配置里 models[n].id 一一对应
+  position: [number, number, number]
+  rotation: [number, number, number]   // 弧度，与配置同一套单位
+  scale: [number, number, number]
+}
+```
+
+- `modelTransform` 每帧派发，用来做「拖拽中」的联动（编辑器拿它显示实时读数）；
+- `modelTransformEnd` 只在**松手且值确实变了**时派发一次，用来补一条可读的历史标签。
+
+|  | 与 `pickable` 的关系 | 与 `events` 的关系 |
+| --- | --- | --- |
+| `selection` | 独立：不开 `pickable` 也能给 `selectModel` 选中的模型画框 | 无关 |
+| `gizmo` | 独立：手柄拖的是 store 里的选中项，不是「点中的那个」 | 无关 |
+
+两条通道方向相反：`pickable` 是**输入**（用户 → 库 → 宿主），
+`selection` / `gizmo` 是**输出**（库 → 用户 → 库自己写回 → 宿主被动收到通知）。
+所以后者**不会给任何模型带来逐帧 raycast**——手柄自己的射线检测只打在它那几个
+轴网格上，与模型的拾取链路完全分开。
+
+两个要知道的行为：
+
+- **隐藏的模型不给选中视觉。** 选中项是隐藏的（`visible: false`）时包围框与手柄都不出现
+  ——否则你会拖一个看不见的东西。这与「隐藏的模型**仍然能量尺寸**」不冲突：
+  贴地、聚焦读的是数字，选中视觉要的是一个可交互的对象。
+- **拖拽是一次历史记录，不是几十次。** 库逐帧写回时**不带标签**（与拖动滑块走同一条
+  防抖路径），松手那一刻由宿主带标签再写一次同一个值，把那条挂起的记录换成一个可读的名字。
+  宿主什么都不做也只有一个「模型属性」标签，不会刷屏。想自己接管这一步，
+  在 `modelTransformEnd` 里调 `patchModel(patch, label, index)` 即可。
+
+### 模型事件
+
+每个模型的 `events` 里存着 5 类指针事件各自的启用位与一段 JS 代码：
+
+```ts
+interface ModelEventHandler {
+  enabled: boolean   // 唯一门控：决定挂不挂指针监听器、发不发事件
+  code: string       // 要执行的 JS 语句体；库**完全不解释**它
+}
+
+// 5 个键：click / dblclick / pointerenter / pointerleave / contextmenu
+```
+
+**库只负责「发事件 + 读 `enabled`」，从不执行 `code`。** 这件事是有意为之：
+库会被打进宿主应用，配置则可能来自一个刚下载的文件，库要是在运行时编译它，
+等于替宿主开了一个「配置即代码」的口子。`dist/` 里出现 `new Function` 或 `eval`
+会让冒烟测试直接失败——这是一条 CI 契约，不是君子协定。
+
+要真正跑起来，宿主自己接 5 个 emit 即可，参照下面这段（也是编辑器里那份实现）：
+
+```ts
+import { MODEL_EVENT_TYPES, useSceneStore } from '3dmaker'
+import type { ModelEventPayload, ModelEventType } from '3dmaker'
+
+const scene = useSceneStore()
+const compiled = new Map<string, (event: unknown, model: unknown) => void>()
+
+function run(type: ModelEventType, payload: ModelEventPayload) {
+  /*
+   * 按载荷里的 id 找回**发出这个事件的**模型，而不是「此刻属性面板里选中的那个」。
+   * 多模型下两者必然会分叉：点一下 A 之后、代码跑起来之前去列表里切到 B
+   * 是完全可以发生的，照着选中项取脚本就会跑错人的代码。
+   */
+  const snapshot = scene.exportConfig()
+  const model = snapshot.models.find((item) => item.id === payload.id)
+  const handler = model?.events?.[type]
+  if (!handler?.enabled || !handler.code.trim()) return
+
+  // 只缓存编译成功的：失败的 code 也进 Map 的话，用户每敲一个字符就多一个永久条目
+  let fn = compiled.get(handler.code)
+  if (!fn) {
+    try {
+      fn = new Function('event', 'model', handler.code) as (event: unknown, model: unknown) => void
+      compiled.set(handler.code, fn)
+    } catch (error) {
+      console.error('事件代码编译失败', error)
+      return
+    }
+  }
+
+  try {
+    // model 传深拷快照：传 config.models[n] 本身的话，用户代码一句
+    // `model.events.click.enabled = true` 就会真的写进 store、进历史栈
+    fn(payload, model)
+  } catch (error) {
+    console.error('事件执行出错', error)
+  }
+}
+```
+
+```vue
+<SceneViewer
+  @object-click="run('click', $event)"
+  @object-dblclick="run('dblclick', $event)"
+  @object-pointer-enter="run('pointerenter', $event)"
+  @object-pointer-leave="run('pointerleave', $event)"
+  @object-context-menu="run('contextmenu', $event)"
+/>
+```
+
+> `new Function('event', 'model', code)` 的最后一个参数是**语句体**，不是函数表达式：
+> 写 `console.log(event)` 可以，粘一整段 `(event) => { … }` 进去会报语法错误。
+> 编辑器里默认填的模板是 `console.log('单击', event, model)`。
+>
+> 其余几个导出：`MODEL_EVENT_TYPES`（固定顺序的 5 个键）、
+> `MODEL_EVENT_LABELS`（中文名）、`defaultEventCode(type)`（默认模板）、
+> `activeEventTypes(model)`（唯一那套门控判断，宿主想自己画界面时用它，
+> 结果一定与库一致）。
+
+#### 开销：`0/5` 才是免费的
+
+5 类事件**全部关闭**时，画布上**完全不挂指针监听器**，不是挂上再早退——
+拾取是每帧一次 raycast，宿主没要就不该有开销。
+
+但要注意这是「全部」：`isPointerEventsAllowed` 的门是「这个对象有没有**任意**一个指针监听器」，
+所以只要开了任意一类，指针在画布上移动时就会每帧对模型做一次 raycast。
+**`1/5` 与 `5/5` 的开销完全一样**，多开几类不会更贵，但也没法只买其中一类。
+
+`pickable` 不改变上面任何一条：它是画布级的，不往模型上挂监听器，
+也不受这道门影响。开了它，静止时的开销仍然是零（射线只在真的点击那一刻走一次）。
+
+`selection` / `gizmo` 同样不在拾取那条链上，代价是另外两笔、都很小：
+
+- **包围框**：只对**选中而可见的那一个**模型每帧做一次 `setFromObject`，其余模型一次都不跑，
+  没有选中项时整个组件都不存在。默认的 `precise = false` 用几何体自身的包围盒，
+  不做逐顶点迭代。一次拖拽期间它顺便承担了「配置还没写回来、框也要跟着动」。
+- **手柄**：挂在选中项上的一副 `TransformControls`，射线只打它自己那几根轴。
+  它会在拖拽期间禁用轨道控制，靠的是给 `OrbitControls` 打上 `make-default`（见设计决定 27）。
+
+两者都不产生逐帧 raycast，关掉时开销精确为零。
+
+### 状态
+
+插件状态都挂在 `useSceneStore()` 上（store id 为 `tdm-scene`，带前缀避免与宿主撞名）：
+
+```ts
+const scene = useSceneStore()
+
+// 配置（唯一事实来源）
+scene.config              // SceneConfig，reactive
+scene.applyConfig(patch, label?)  // 深合并写入；给了 label 就立刻记一条历史
+scene.exportConfig()      // 深拷贝，可直接 JSON 序列化
+scene.resetConfig()       // 全部恢复默认值
+
+// 历史栈
+scene.history             // { id, label, at, config }[]，上限 50
+scene.historyIndex
+scene.canUndo / scene.canRedo
+scene.undo() / scene.redo() / scene.jumpTo(i) / scene.clearHistory()
+
+// 运行时状态（刻意不进 config，导入导出时不会被带走）
+scene.loading / scene.progress / scene.error / scene.hasError
+
+// 兼容访问器，读写都会落到 config 对应字段
+scene.modelUrl / scene.background / scene.autoRotate / scene.wireframe / scene.showGrid
+
+// 行为
+scene.setModel(url) / scene.clearModel() / scene.resetView() / scene.toggle('wireframe')
+```
+
+> `resetView()` 恢复的是**显示类开关**：`background` / `camera.autoRotate` /
+> `model.wireframe` / `model.visible` / `ground.visible`。它不碰机位、也不碰模型的
+> 位置旋转缩放（那是 `resetConfig()` 的范畴）。`model.visible` 是后来加进去的——
+> 不加的话，用户一旦把模型隐掉就再没有任何把它找回来的入口。
+>
+> `setModel()` / `clearModel()` 会在**地址真的变了**时换一个新的 `model.id`，
+> 重复提交同一个地址不会换（面板失焦、prop 重放都会重复提交）。
+> `resetConfig()` 与还原快照时只补空值：快照里本来就有 id 的，原样保留。
+
+另有一个纯函数导出，用来从模型地址派生一个可读短名：
+
+```ts
+import { deriveModelId } from '3dmaker'
+
+deriveModelId('')                              // 'builtin'    内置示例几何体
+deriveModelId('DamagedHelmet.glb')             // 'damaged-helmet'
+deriveModelId('models/v2/chair.gltf?v=2')      // 'chair'
+deriveModelId('blob:http://localhost:5173/...') // 'local-file'
+```
+
+规则是：去掉 query / hash → 取末段 → 去掉扩展名 → `decodeURIComponent` → 转小写并 kebab 归一化。
+它是 `model.name` 留空时的**默认值**：事件载荷里的 `name`、HUD 与面板上显示的都走它，
+所以那几处都不需要再判空。两个哨兵值而不是空串，正是为了让这个回退值始终可用。
+代价是 `DamagedHelmet.glb` 与 `damaged_helmet.glb` 同名——派生名只是给人看的提示，
+真正的身份是 `id`（uuid），场景里摆两个同名模型时列表上仍然分得清。
+
+> 函数名里的 `Id` 是它早期的职责（当时模型 id 就是由它派生的）。现在 id 是 store 生成的 uuid，
+> 这个名字就名不副实了；改名会动到已公开的导出，收益只是好看一点，所以留着。
+
+改动 `config` 会被自动记录：400 毫秒内的连续改动合并成一条，标签按变化的顶层分组自动生成
+（`模型属性` / `相机` / `地面` / `日照环境` / `阴影` / `背景`）。
+
+### 自定义全局组件前缀
+
+```ts
+app.use(createThreeDMaker({ prefix: 'Maker', registerComponents: true }))
+// 组件名变为 <MakerSceneViewer /> / <MakerSceneToolbar />
+```
+
+模板里的类型提示只覆盖默认前缀 `Tdm`；使用自定义前缀时请在模板中改用具名导入。
+
+---
+
+## 编辑器
+
+`playground/` 不只是一个调试页，它是插件的第一个消费者——整个编辑器只通过上面那套公开接口工作，
+`src/` 里没有任何一处为它开过后门。
+
+界面分三部分：
+
+```
+┌ ◆ 3DMAKER ── 场景名 · 保存状态点 ─────── 导入 导出 │ 撤销 重做 │ 预览 保存 ┐
+├───────────┬──────────────────────────────────┬───────────────────────────┤
+│ ▢ ▢       │  CAM 4.00 · 3.00 · 6.00  [2D 3D] │ 模型 相机 地面            │
+│ ▢ ▢       │  FOV 45° · TRI 14.1K · CALL 2    │ 日照 阴影 历史            │
+│ ▢ ▢       │  SKY OFF · 无阴影                │ ───────────────────────   │
+│ ▢ ▢       │  MDL 2 · ID c3fd1cec · EVT 0/5   │  00 场景模型        2     │
+│           │  ┌────┐                          │                           │
+│           │  │ 地基 │                          │                           │
+│           │  │ 画墙 │                          │                           │
+│           │  │ 房间 │                          │                           │
+│           │  └────┘                          │                           │
+│           │                                  │   ▍⬡ 办公椅        ⚡1    │
+│           │                                  │     ▤ 茶几         ⚡     │
+│           │                                  │ ───────────────────────   │
+│           │                                  │  01 / 资源                │
+│           │                                  │   模型名称 办公椅         │
+└───────────┴──────────────────────────────────┴───────────────────────────┘
+```
+
+左栏内容区画的是宫格——两根图标导轨（各 40px）贴在视口两侧，示意里没有为它们单独占一列。
+
+没有底部状态栏，也没有事件控制台：视口一直铺到窗口底边，`pnpm dev` 里那块近 50px
+的高度全给了画布（见设计决定 21）。
+
+几点值得说明：
+
+- **属性面板是 schema 驱动的**。7 个 tab 的字段全部声明在 `useInspectorSchema.ts` 里，
+  控件层不认识 store、schema 层不写 DOM。新增一个配置项 = 加一行声明。
+  条件显隐分三层：字段级 `when`（不满足就不渲染）、字段级 `dim`（渲染但灰显）、
+  分区级 `when`（整节连标题一起不渲染，见设计决定 42）。
+- **「模型属性」是主从结构**。上半部分（`00 场景模型`）是场景里已有的模型列表，
+  下半部分才是属性；点列表里的一条，下面三节就换成那条的属性，`×` 移除它，
+  表头的「＋ 追加」再摆一个内置几何体。左栏导轨上那几个分类是同一件事的另一个入口
+  （那边负责挑资源），拖一个 `.glb` 进视口也是。
+  两块**高度固定在 2 : 3**（`.ed-inspector-body--split`），且**各自滚动**：
+  模型多到装不下时列表在自己的框内滚、表头钉在顶上，不会把下面的字段顶走；
+  字段长到装不下时也不会把列表挤没。列表行是一行三段——
+  行首图标（内置几何体是立方体 `⬡`、外部地址的模型是文件 `▤`）、中间名称、
+  行尾那个闪电按钮直接打开该模型的事件绑定弹窗（点它同时会选中这一行：
+  弹窗是按 `selectedModel` 钉住目标的，先开弹窗再切选中就等于改错了模型）。
+  上下两块靠**路径闭包 + `computed`** 联动：字段的 path 写成
+  `() => \`models.${selectedIndex}.position\``，于是切换选中项时每一行自己就重算了，
+  不需要任何「切换时刷新一下字段」的代码。
+- **「模型属性」是物体级的**。分区为 `01 资源`（只读 uuid + 名称）、
+  `02 变换`（位置 / 旋转 / 缩放 + 等比锁 + 重置变换）、`03 显示与拾取`（显示 / 线框 /
+  事件绑定 / 物体级投射与接收阴影）。
+  等比锁是编辑器偏好，不进配置也不进历史；打开时拖动任一轴会把三轴覆盖成**同一个值**
+  （绝对覆盖而非按比例缩放——按比例会在每次步进上累积漂移，而这个输入是不可逆的）。
+  旋转在面板上显示度、配置里存弧度，换算只发生在 schema 那一层。
+  只读的模型 id 用 `type: 'text'` + `readonly: true`：36 位的 uuid 若摆进右对齐的读数列，
+  会把字段名那一列挤没，而文本控件占满中间列、还能整段选中复制。
+  列表行尾的闪电按钮带一个读数：绑了 0 类事件时它是暗的，绑了就转成琥珀并显示条数——
+  三四个模型摆在一起时，「哪一个会响应点击」是列表上唯一看不出来、
+  又最需要一眼看到的信息，而行首图标要拿来表示「内置还是外部」。
+  这里原本还有 `04 组件`（插件内置工具栏的开关）与 `05 本轮渲染`（三角面 / 绘制调用 / 帧率
+  三行只读读数）两节，都删掉了：前者从没人开——那个悬浮工具栏和右栏的控件完全重叠；
+  后者的三个数在视口 HUD 上一直显示着，同一屏里同一个数字有两个地方只会让人怀疑哪个是对的。
+- **左栏是图标导轨 + 五个项**（`地板` / `墙壁` / `门` / `窗` / `天空盒`），与右栏互为镜像：两边都贴在自己那一栏**靠近视口**的那条边上，把视口夹在中间，激活指示条也都朝内。
+  于是左栏从 210px 变成 250px——`--w-left: calc(210px + var(--w-rail))`，
+  多出来的 40px 全是导轨，内容区宽度保持不变。
+  导轨上**原先还有第六项 `场景预设`**：它是个页面级的项（点了整个面板换掉，与分类这种
+  「同一页内换内容」不是一类东西）。它已经搬去右栏「日照环境」的 03 节（见设计决定 41），
+  左栏因此只剩模型库一页，导轨上也只剩分类。
+- **模型只能从列表里选，配置面板里没有地址输入框**。换模型是「换资源」这一类操作，
+  入口收在左栏导轨的分类、面板表头的「＋ 追加」与视口拖放三处，配置面板只管调参数。
+  于是面板也不再调用 `setModel()`，`01 资源` 里那两行纯粹是「当前是哪个物体」的读数。
+  代价是**拖进来的本地文件看不到地址**：`blob:` URL 不进任何列表，面板里也没有输入框。
+  名称会回退成 `local-file`，而控制台里记着拖入时的文件名——要认人，看那两处就够，
+  那个 `blob:` 地址本身也不值得展示。
+- **模型库的分类挂在左栏导轨上**：导轨是 `地板 / 墙壁 / 门 / 窗 / 天空盒`，
+  分类项**由 `LIBRARY_SECTIONS` 派生**——加一个分类就是往 `LIBRARY` 那份数据里加一行，
+  导轨自动多一格，不会出现「数据里有、界面上没有」这种中间态。
+  每个分类各带一个 24 格描边图标（`satisfies Record<LibrarySectionKey, IconPath[]>`
+  让「新加一个分类却忘了画图标」变成**编译错误**，而不是导轨上一格空白），
+  **数量挂在悬停提示里**（`地板 · 2 个模型`）——代价是**必须悬停才看得见**，
+  所以同一句话也当 `aria-label` 用：读屏没法悬停，数量只放提示里就等于对他们不存在。
+  那条分组分隔线（`--group-start`）原先画在「场景预设」与第一个分类之间，现在画在
+  **内置五类与宿主追加的那几类之间**：分组这件事仍然成立，只是分的换成了两组分类。
+  面板里因此**不再有任何分类表头或 tab 栏**，当前那一类下面直接是一张 2 列宫格。
+  每格是一张方形缩略图，下面一行**常显**的名字。「名字不进版面」曾经是这一栏的取舍
+  （格子因而矮、一屏多看一行），代价是读名字必须先悬停；改成常显之后格子高了约一行、
+  一屏少看一行，换来的是名字一直可读。约 86px 的缩略图是这一栏的极限，
+  再多分一列就退化成图标，名字条也塞不下几个字。宫格**自己就是滚动口**
+  （`.ed-list--grow` + `.ed-scroll`，左栏今天唯一的一个）。
+  **切换分类不重建组件**——重建就意味着每切一次都要重新拉一遍缩略图，
+  还会丢掉「哪张图挂了」那份记录，所以那边靠内容瞬换 + 琥珀高亮移动 +
+  **滚动位置归零**给反馈。（原先还有一条对照：预设 ↔ 库那种页面级切换会让面板体整块
+  重建并淡入。左栏只剩一页之后没有这个对照了，`.ed-tabpanel` 那个类留在面板体上，
+  首屏挂载时仍然淡入一次。）
+  打开时默认落在**第一个有模型的分类**上，不是「第一条」：`LIBRARY` 的顺序照语义排，
+  与哪一类眼下有货无关，取第一条就可能一进来就给用户一句空话。
+  **分类表写死在 `useModelLibrary.ts` 的 `LIBRARY` 里，源文件顺序即导轨顺序**，
+  往里加一个模型就是往对应分类里加一行（某一类量大，可以整个搬到 `playground/utils/`
+  下再由这里引用，**内置这五类现在全都搬过去了**——`utils/modelList.ts` 的 `FLOOR` /
+  `WALL` / `DOOR` / `WINDOW` / `SKY_BOX`，`DOOR` 那一栏里有关键的资产尺寸要求，
+  加一行之前先读那段注释）；
+  每个分类另带一个全 ASCII 的 `key`
+  （`floor` / `wall` / `door` / `window` / `skybox`），代码引用 `key` 而不是中文 `label`——
+  后者会随显示需要改名，代码里一旦写死 `=== '地板'`，改一次显示名就静默失效。
+  `key` **同时是服务器上这个分类的目录名**，所以模型地址的层级是
+  `<资产根>/<分类目录>/<模型子目录>/<同名文件>.<后缀>`，例如
+  `.../3d-assets/floor/tile1/tile1.glb` 与同目录的 `tile1.png`。
+  改 `key` 等于改地址里那一段，服务器上的目录要跟着改，否则整类加载失败。
+  **`skybox` 是唯一不走这条层级的一类**：它一个 `.glb` 都没有，目录里是六个固定名字
+  的 jpg（见下面资产要求那一段），所以它另有一个 `kind` 字段把这条分流钉在分类上。
+  地址前缀读 `.env` 的 `VITE_ASSE_IMAGE_URL`（键名少一个 `R`，是照那边原样读的，
+  改键名要 `.env` 与 `useModelLibrary.ts` 一起改）。
+  左栏的模型入口从此**没有独立的名字**，就只有导轨上那几个分类——文档、代码与空态文案都照这个叫。
+- **宿主可以往左栏里追加分类**（`SidePanel` 的 `extraSections` prop 与 `#rail` / `#list`
+  两个作用域插槽，完整理由见设计决定 39）。**只能追加、不能覆盖**：合并出来的表恒是
+  「内置五类 + 宿主那几类」，因为内置那五个 key 是承重的——`TOOL_ASSET_RULES` 把地基 /
+  画墙 / 门 / 窗四个工具钉在 `floor` / `wall` / `door` / `window` 上，宿主换掉其中一个，
+  「点画墙」就会跳到另一个分类去，而且不报错。
+  追加分类**复用同一套条目形状**（`LibraryEntry`），于是「已在场景里」的底色高亮、
+  空态文案、缩略图 404 兜底、「点一下追加到场景」全部自动生效；**唯一拿不到的是「选料」**
+  （它点不到任何工具，也就不进量尺寸那条链）。导轨项默认由组件按数据代画
+  （`icon` 不写就退回立方体占位图），宿主写了 `#rail` 就自己画，作用域里给全了
+  `sections` / `activeKey` / `activate` / `showTip` / `hideTip` / `tipOf`；
+  `#list` **只对追加分类生效**，内置五类永远走内置宫格。
+  **原先内置的「家具」「设备」两类就是这么挪出去的**：它们被删掉了（往场景里摆的
+  独立物体归宿主），但两个导轨图标留在了 `playground/utils/libraryIcons.ts`
+  （`ICON_FURNITURE` 一把椅子 / `ICON_EQUIPMENT` 一个插头），宿主想复活那两类
+  直接拿去当 `icon` 就行；不需要那个文件就整个删掉，没有任何地方引用它。
+  接一份自定义分类就这么几行（`key` 别和内置那五个撞、也别和页面级的 `preset` 撞）：
+
+  ```vue
+  <script setup lang="ts">
+  import type { ExtraLibrarySection } from './composables/useModelLibrary'
+
+  const MINE: ExtraLibrarySection[] = [
+    {
+      key: 'mytools', label: '我的工具', kind: 'model',
+      entries: [
+        { key: 'drill', label: '电钻', url: '<根>/mytools/drill/drill.glb', thumb: '<根>/mytools/drill/drill.png' },
+      ],
+    },
+  ]
+  </script>
+
+  <SidePanel :extra-sections="MINE" />
+  ```
+
+  写了 `#list` 就是**整个接管那一类怎么画**（连滚动容器也是自己的，
+  照 `ed-list ed-list--grow ed-scroll` 那三个类名给），空态也随之归宿主。
+- **追加的条目上还有两个可选字段：`icon`（文本图标）与 `partsJson`（由 JSON 生成的几何体）。**
+  两者都住在**条目**上（`LibraryEntry`），与分类上那个 `icon`（导轨的 SVG 路径数组，
+  `ExtraLibrarySection.icon`）同名不同型、层级也不同，写错在编译期就红。
+
+  - **`icon`** 是一个 emoji 字符串，只挂在**宫格的格子**里，排在服务器缩略图**之前**
+    （内置清单里的 `thumb` 是无条件猜出来的同名 `.png`，明写的盖过猜出来的）。
+    宿主从后端拼出来的清单常常只有数据没有配套的图，那时一格一个 emoji
+    比让每一格都显示同一个立方体占位图有意义得多。它没有请求可失败，
+    所以不进「这张图挂了」那本账。**导轨项仍然是 SVG 路径**，那里不认文本图标。
+  - **`partsJson`** 是一段 JSON 文本，这一格的东西**不在服务器上**，而是**程序生成**的
+    几何体。它原样搬进 `ModelConfig.partsJson`，进场景之后能选中、能拖、进历史、
+    能导出，与联网模型走的是同一条链。格式、校验口径与摆放约定见
+    本节**设计决定 40** 与资产要求里那一节。
+    写它的条目 **`url` 是空串**，与「内置示例几何体」那一条撞在同一个值上——
+    「已在场景里」的高亮因此另走一个集合，宿主不必管，但值得知道这个坑存在。
+
+  两者各来一条，以下这段可以直接粘贴（`partsJson` 平时由后端的接口给，
+  这里用 `JSON.stringify` 只是为了让零件表在代码里读得清）：
+
+  ```vue
+  <script setup lang="ts">
+  import type { ExtraLibrarySection } from './composables/useModelLibrary'
+
+  /** 一把办公椅的零件表，字段名照 demo.md。y 是**中心**高度 */
+  const CHAIR = [
+    { shape: 'cylinder', h: 0.05, y: 0.28, rTop: 0.35, rBottom: 0.38, name: '底座', color: '#555555', metalness: 0.7, roughness: 0.3 },
+    { shape: 'cylinder', h: 0.35, y: 0.48, rTop: 0.06, rBottom: 0.07, name: '气压杆', color: '#555555', metalness: 0.7, roughness: 0.3 },
+    // count + radius：沿圆周均布 5 份，起点在 +Z、每份跟着绕 Y 转 72°
+    { shape: 'cylinder', h: 0.05, y: 0.01, rTop: 0.06, rBottom: 0.06, count: 5, radius: 0.35, name: '脚轮', color: '#555555', metalness: 0.7, roughness: 0.3 },
+    { shape: 'box', w: 0.08, h: 0.04, d: 0.45, y: 0.2, count: 5, radius: 0.35, name: '腿部横撑', color: '#555555', metalness: 0.7, roughness: 0.3 },
+    { shape: 'box', w: 0.6, h: 0.08, d: 0.6, y: 0.7, name: '座垫', color: '#3a3a3a', roughness: 0.6 },
+    { shape: 'box', w: 0.55, h: 0.03, d: 0.55, y: 0.74, name: '座垫面', color: '#444444', roughness: 0.5 },
+    { shape: 'box', w: 0.5, h: 0.5, d: 0.12, y: 1, z: 0.28, name: '靠背', color: '#333333', roughness: 0.65 },
+    { shape: 'box', w: 0.07, h: 0.05, d: 0.25, x: -0.32, y: 0.8, z: -0.08, name: '左扶手横梁', color: '#555555', metalness: 0.7, roughness: 0.3 },
+    { shape: 'box', w: 0.07, h: 0.05, d: 0.25, x: 0.32, y: 0.8, z: -0.08, name: '右扶手横梁', color: '#555555', metalness: 0.7, roughness: 0.3 },
+    { shape: 'box', w: 0.06, h: 0.22, d: 0.06, x: -0.32, y: 0.68, z: -0.08, name: '左扶手立柱', color: '#555555', metalness: 0.7, roughness: 0.3 },
+    { shape: 'box', w: 0.06, h: 0.22, d: 0.06, x: 0.32, y: 0.68, z: -0.08, name: '右扶手立柱', color: '#555555', metalness: 0.7, roughness: 0.3 },
+  ]
+
+  const MINE: ExtraLibrarySection[] = [
+    {
+      key: 'myfurniture', label: '我的家具', kind: 'model',
+      entries: [
+        { key: 'chair', label: '办公椅', icon: '🪑', partsJson: JSON.stringify(CHAIR) },
+        { key: 'drill', label: '电钻', url: '<根>/myfurniture/drill/drill.glb', thumb: '<根>/myfurniture/drill/drill.png' },
+      ],
+    },
+  ]
+  </script>
+
+  <SidePanel :extra-sections="MINE" />
+  ```
+
+  两条条目并排正好把三样都演示了：一格是 emoji + 程序生成的几何体（不发任何请求），
+  一格是服务器上的联网资产（有缩略图）。
+- **点「地基」/「画墙」会顺手把左栏切到对应分类，而那一类里的格子此刻点下去是「选料」不是「追加」**。
+  这两个工具有两种输出（地基：选过地板就按区域铺一块真地板、没选就照旧落灰板，见设计决定 32；
+  画墙：选过墙壁模型就按那个外观铺面、没选就是灰盒子，见设计决定 33），
+  所以激活工具时顺手切分类——与同一个函数里那句「顺手切 2D」是同一类动作：
+  把「能画的地方」与「要用的料」两样都备好，比让用户自己想「模型库里好像有地板」少一次搜索。
+  此时点一格**不动场景**，只是记住「待用哪一件」（`useEditorState` 的 `pickedAssets`，
+  与 `librarySection` 同一条约定：不进配置、不进历史、不进导出）。
+  这张「哪个工具用哪一类、选了之后铺什么」的对应关系只有一处，
+  就是 `useFloorplanTool.ts` 的 `TOOL_ASSET_RULES`——**切分类、提示行、左栏宫格三处都读它**，
+  所以加一个配料工具只需要往那张表里加一行，而不是去那三个地方里各改一处
+  （漏一处的表现是「点了工具，左栏没跟着走」，不报错；门与窗就是照这一条加进去的，
+  两者在表里是对称的两行——同一个分类约定、同一条渲染链）。
+  **再点同一格就取消选用**——这条路必须留着，否则第一次选完就再也回不到「落灰板 / 灰盒子」了。
+  选用态在左栏是缩略图上的一圈琥珀，**刻意不复用 `.ed-item--active` 那条左条**：
+  那条说的是「场景里已经有它了」，与「选来铺装」是两件事，同一件料可以两者都成立，
+  挤同一个通道就等于点下去没有任何反馈。视口底部那行提示按「选没选」分开说，
+  它是这条链上唯一说得出「现在落笔会得到什么」的地方。
+  只认自己那一类：开着工具翻到「天空盒」去换背景仍然是换背景，不会被当成选料。
+  两件料**各记各的**：画墙时选过的砖不会因为中途去点了一下地基而丢掉。
+- **开发期这份地址会被换成一个同源前缀 `/3d-assets`**，由 `vite.config.ts` 的
+  `server.proxy` 转发到 `.env` 里那台服务器。原因是那台服务器**不发
+  `Access-Control-Allow-Origin`**，而 `GLTFLoader` 走的是 `fetch`，浏览器会把已经
+  完整到手的响应丢掉——控制台里只有一句 `Failed to fetch` 加 `ERR_FAILED 200 (OK)`。
+  而同一目录下的缩略图却是好的：`<img>` 不归 CORS 管。一个同源一个跨域，症状因此是
+  **「图能看见、模型加载失败」**，极易被误判成地址写错。代理把跨域变成同源就没事了，
+  目标地址从 `.env` 现读，换服务器只改 `.env`。
+  前缀在 `useModelLibrary.ts` 和 `vite.config.ts` 里各有一份，**必须一起改**，只改一边
+  表现就是清一色的加载失败。代价是 DEV 期写进配置的 `model.url` 是这个相对前缀，
+  导出的配置换个环境就解析不出来——与拖进来的本地文件存成 `blob:` 是同一类事，
+  配置里本来就允许存在只在当前环境有效的地址。
+  服务器对资源目录还返回 403（nginx 既没开 `autoindex` 也没放 index 文件）。
+  **这一条不要动**：曾经想过「在服务器上开 `autoindex`，再让这一列改成抓远程目录」，
+  已经明确否掉了——让前端去列举服务器目录是有安全隐患的，列表就写死在
+  `LIBRARY` 里。换模型只需要改这一行清单，代价只是「加一个模型要改一次代码」。
+  缩略图默认按同名 `.png` 猜，不同名就在 `thumb` 里显式写一行，图挂了回退成立方体图标。
+  追加时会**显式写 `model.name`**：`deriveModelId` 的 `toKebab` 只保留 `[a-z0-9]`，
+  中文名会被整段剥掉、回退成 `model`，一排中文模型在列表里会全变成同一个词。
+- **视口 HUD 带一行 `MDL n · ID …`**，`MDL` 是场景里的模型个数，`ID` 显示的是
+  **当前选中那个**模型的 uuid 头 8 位（悬停看完整值，面板里也一直是全的）；
+  后面跟着 `EVT n/5`，不开面板也能看出绑了几类事件。三个读数都和面板上的是同一个来源，
+  不会出现「HUD 说的是 A、面板改的是 B」。
+- **视口右上角是 2D / 3D 视角切换**。`2D` 把相机摆到**世界原点（网格中心）的正上方**、
+  固定站在 **110** 的高度（按默认那块 120 见方的地定的，见设计决定 29 那段），
+  `3D` 回到**进入 2D 之前**那个机位。
+  注视点与**起始高度**都是写死的，与选中哪个模型、之前把视角平移到哪里都无关——俯视要的是
+  一把稳定的尺子：同一处风景任何一次切到 2D 都从画面的同一格开始，两次俯视之间能直接比大小、
+  比位置，不会因为换了个选中的模型就得重新对一遍坐标。代价是内容整体远离原点时画面中央
+  是空的；要按内容自动取景，用右下的「聚焦」，那个动作才是算出来的，两者各司其职。
+  它不是正交投影，是同一只透视相机换了个机位——为什么不做真正交、代价是什么，
+  见设计决定 29。
+  2D 下**只关旋转**：写的是 `camera.enableRotate`（与面板里那个开关是同一个字段），
+  左键一转就不再是俯视了。**滚轮缩放与右键平移都留着**——它们改变的是取景（多大、在哪），
+  不改变「从正上方看下去」这件事本身，「凑近看一眼这一块」正是这一档里最常做的事。
+  缩放权限本身不在这份收窄里：宿主关掉的「允许缩放」不会被这枚按钮顺手打开。
+  这一档下**户型图的墙会换成平面图的实色**、不铺墙面贴面，门窗在俯视里表现为过梁那道亮口
+  ——为什么这么做、为什么那支实色必须不受光照，见设计决定 34。
+  进来时还会把地面切成**无限延伸**（`ground.infiniteGrid`），否则缩得远一点就会看见
+  这块 120 见方的地的边——淡出要到 150 才彻底透明，边界那圈线还留着六成亮度。
+  切回 3D 时这两项权限（含被临时按到 0 的「最低仰角」）与地面开关都**原样还原**，
+  在 2D 下导出的配置里它们则是收窄 / 打开的。
+  **凡是有机位改动，相机都是滑过去的**（450ms，`cameraTransition`）——切档、聚焦、
+  点「重置机位」、撤销、在面板里改数值走的是同一条路。它是编辑器写死的手感，
+  不进 config：配置记的是这个场景长什么样，而过渡时长是这一刻的手感，
+  跟着配置一起导出、一起进撤销栈都没有道理（同 `gizmoMode`）。
+  两件要知道的事：**档位是从机位推导的**（视线与竖直方向夹角小于 5° 即 2D，且相机必须
+  在注视点上方），所以撤销、点「重置机位」、在面板里手改位置之后档位自己就是
+  对的，不会出现「写着 2D、画面其实已经转走」。
+- **视口左边缘中部是一列绘制工具**（地基 / 画墙 / 门 / 窗 / 房间），竖排五枚按钮。
+  **整条只在 2D 档出现**（判据就是 `planView`：3D、「允许旋转」开着、预览，三种都不摆），
+  也只有那时能画。几点：
+  - **隐藏而不是置灰**。置灰的按钮点不动，会让人以为这里坏了，而「画不了」的原因
+    提示行本来就会说（3D 里那句是「绘制只在 2D 俯视角下可用」）；留着能点的按钮更糟
+    ——点了它确实还会把相机切回 2D，而那正是「他只是想斜着看一眼这面墙、
+    手一抖把相机拽回正俯视」的那种意外。
+  - **它不并进顶边那条手柄条**。那条只在**有选中模型**时才出现，而平面图工具要在
+    空场景里就能用；而且「改一个物体的变换」与「造一个新物体」是两类东西，
+    混在一条上会让「这条到底管什么」变模糊。位置选左边缘中部是因为视口四角与四条边
+    都已经被占了（左上 HUD、上中手柄条、右上档位、右下操作胶囊、四角角标）。
+  - **选工具会顺手切到 2D**：能画的地方只有一个，让你先切档再点工具是多余的一步。
+    再点一次当前工具 = 关掉它，所以工具条上没有「选择」那一枚——
+    它由「再点一次」「Esc」「右键两次」进入，多摆一枚只会多出一个点了没反应的按钮。
+    **工具条只在 2D 出现之后，这一步实际上不会再触发**（点得到按钮时人已经在 2D 了）；
+    留着是 `setFloorplanTool` 自己的契约——「开一个工具就意味着能画」，将来从别处
+    （快捷键、导入一份带着工具的配置）调它时这一条仍然成立，而少掉它的表现是
+    「工具开着、相机还斜着」。
+  - **空档不是「什么都不做」：它可以点选一个门窗、沿着它那面墙拖动，也可以点选一面墙**
+    （完整理由见设计决定 38 与 44）。能点中的东西有两种，而**一次只选中一个**——
+    这不是靠两处 setter 互相记得清，而是选中本身就装在同一个 `selection` ref 里
+    （按构造成立，见设计决定 44）。
+    与「工具开着」那条路的分工是干净的：有工具时点一下 = 落笔、再点同一个位置 = 删掉，
+    空档时才轮到选中，两条路**没有一处共用判据**，工具开着时的行为一个字都没变
+    ——所以工具条上仍然没有「选择」那一枚：它不是第六种工具，而是所有工具都关掉时
+    画布本来就该有的样子（新加一枚反而会让人以为「不点它就没法选」）。
+    同样只在 2D 档生效（与画墙、放门窗同一道闸），选中后墙顶会亮起一块琥珀板：
+    门窗那一块按住就能沿墙挪位置（落点是**1 米格 + 磁吸邻边**），墙那一块只是通体亮着
+    ——墙没有「沿墙拖动」这回事（墙面模型换了只动一个地址，见设计决定 44）；
+    两种都会让左栏自动切到对应的分类。
+  - **地基工具有两种输出，靠左栏选没选地板分开**（见设计决定 32）：选过就按划出的矩形
+    铺一块**真地板模型**，它进 `config.models`，右栏「场景模型」里能单独选中、缩放、删除；
+    没选就照旧落那块灰板。两条路**不会同时落东西**——一块铺满区域的地板会把灰板整个盖住，
+    而两者高度只差不到一个深度单位，叠着画就是成片闪烁，所以是二选一而不是叠加。
+    前者要等 glb 加载完才知道尺寸（7~9 MB），所以顺序是「先追加一块不可见的、量完
+    再一次写到位」，中间那几秒屏幕上什么都不出现；代价是**一次操作留两条历史**
+    （「生成地板」与「铺满区域」），`⌘Z` 一次看起来就是「那块地板没了」。
+    量不出来（地址错、断网）就在 12 秒后把那块永远不可见的条目删掉并提示一句，
+    而不是在右栏留一个删不掉的幽灵。
+    铺出来的是**几何拉伸 + 贴图按米重复**两层东西：几何被拉到区域大小，而贴图按
+    区域尺寸反向重复，所以砖的实物边长与区域大小无关（见设计决定 35，
+    「一个 uv 重复铺几米」这个数记在 `utils/modelList.ts` 的 `span` 上）。
+  - **切回 3D 不会把工具关掉**，只是画不了，而工具条这时**整条收起来**。
+    收起来的只是那五枚按钮：工具状态与画到一半的墙链原样留着，切回 2D 接着点就行；
+    这段时间想主动退出工具用 `Esc` 或右键两次，提示行也会说清为什么
+    （「绘制只在 2D 俯视角下可用」）。
+    这一条偏离了「切回 3D 就落回选择」的早期想法：那样会**丢掉半条墙链**，
+    而它想防的「在 3D 里误画」本来就已经被 `floorplanEnabled` 挡住了。
+  - **不跟 `OrbitControls` 抢左键**。2D 档下 `enableRotate` 是 `false`，
+    而 three-stdlib 的 `OrbitControls` 在左键分支里第一句就是 `if (scope.enableRotate === false) return`
+    ——`state` 停在 `NONE`，后续 `pointermove` 什么也不做，拖拽绘制与轨道控制零冲突，
+    **不需要任何互斥代码**。唯一的例外是 `Shift`：那条分支只看 `enablePan`，
+    所以 2D 下 `Shift+左键拖拽` 是**平移**。于是划了一条线：`Shift` 只用于「点」不用于「拖」
+    （点击有 `CLICK_MAX_DRIFT = 4px` 兜着，手抖仍是点击），地基工具下带 `Shift` 的
+    `pointerdown` 直接丢弃。
+  - **「算不算一次点击」复用 `src/utils/pointerClick.ts`**，不另写一套阈值——
+    漂移的后果是「拖一下画布画出一堆墙」，与「拖视角顺手选中模型」是同一类 bug。
+  - **拒绝要有话说**。编辑器没有 toast 体系，而「斜着点不落点」这类拒绝如果不说一句，
+    表现出来就是「点了没反应」。所以视口底部居中的那条 `.ed-draw-hint` 兼一个 1.6 秒的
+    临时态：先显示该工具的常驻说明，被拒绝时临时换成一句解释再自动变回来。
+    常驻说明本身也是必须的——「点回起点闭合」「只能横平竖直」「再点一下删掉」这几条
+    规则在画面上没有第二个落点。
+- **「平面图」页在右栏**（导轨第六枚图标）。`01 墙体` 是墙高 / 墙厚，**改一次作用于全部墙**
+  （同时新画的墙也照这个值，见设计决定 31）；`02 地基` 是宽 / 深 / 中心点，加一个「删除地基」
+  ——地基是整个户型里唯一没有「列表里删掉一行」这条路的部件，不给这个按钮就只能靠再拖一个
+  覆盖掉它；`03 墙` / `04 门窗` / `05 房间` 是三份清单。
+  三份清单都不是 schema 驱动的一节，与「操作历史」同一个理由：一行的内容各不相同
+  （房那行有输入框与色块，另两份是一段只读的位置说明），还要按下标或 id 定位到配置里的
+  某一条，字段声明那套表达不了。
+  **墙与门窗两份清单在同一个组件里，因为它们是同一件事的两面**：洞口不存自己的坐标，
+  只存「挂在哪面墙上 + 沿墙几米」，所以删一面墙必须同时写 `walls` 与 `openings`——两个组件
+  的话要么够不到另一份、要么两次 `applyConfig`，后者会把一次删除记成两步历史。
+  墙与门窗**没有名字**，行首的 `墙 2` 是数组下标的派生，与 `04` 那行「挂在 墙 2 上」指的是
+  同一根；对应上画面靠的是行里那段中点 / 沿墙米数（精确端点与这一面墙自己的高厚挂在悬停说明上，
+  那是这个界面里唯一能看到「高厚不一致」的地方——`01` 那两格改的是全部墙、读的也是第一面墙）。
+  房间只能删和改名改色、**不能新建**：它的形状是墙的函数（`findEnclosedArea` 泛洪出来的多边形），
+  想改形状就去改墙。
+- **底部没有状态栏，也没有事件控制台**。两条加起来要吃掉近 50px 视口，而它们显示的东西
+  在别处都有：模型 / 三角面 / 绘制 / 帧率 / 相机 / 阴影在视口 HUD 上，
+  保存状态在顶栏的圆点与时间上，已绑事件数就是 HUD 的 `EVT n/5`。
+  只有「操作回执」这一类（加载进度、撤销落点、导入警告、事件代码的编译与运行报错）
+  在别处没有第二落点，所以改道到浏览器控制台、统一带 `[tdm]` 前缀（见设计决定 21）。
+  事件跑成功时**不**额外打一行载荷摘要——那正是用户自己那句 `console.log` 的位置，
+  编辑器再插一句只会把两处输出搅在一起。
+- **场景预设都不写 `models` 分组**，所以套用预设不会重置你调好的变换——
+  多模型之后这一条更要紧：预设要是顺带动了列表，摆好的好几个模型就得重新来一遍。
+  这是「预设只碰它该碰的」里最早定下的一条；后来整条口径收窄成只管光照与阴影
+  （设计决定 41），相机、地面、画布底色、环境贴图也一并交了出去，`models` 是同一
+  口径下没被点名过的那一个。
+- **tab 导轨只放图标**。7 个中文标签横排要 420px 以上，右栏总共 306px；
+  改成 24 格描边图标后导轨只占 40px。路径声明在 `useInspectorSchema.ts` 的
+  `NAV_ICONS` 里（和字段一样是数据，不是七个手写 SVG），名称由悬停提示和
+  `aria-label` 补上——中文竖排虽然可读，但七个词竖着扫一遍不如一个形状快。
+- **可视化即真实场景**。右侧每一个控件都直接写 `scene.config`，没有一个是摆设；
+  改动会进历史栈，⌘Z 能撤销。
+- **拖放导入 glTF**。把 `.glb` / `.gltf` 拖到视口上即可，走 object URL，不需要先起静态服务。
+- **配置导入导出**。`导出配置` 下载 `<场景名>.3dmaker.json`（`{ version, name, exportedAt, config }`），
+  导入做浅校验——版本号高于当前会拒绝，字段残缺则由深合并兜住，不会把场景打坏。
+  `⌘S` 写进 localStorage，顶栏的状态点会从灰（未保存）变琥珀（有改动）再变绿（已保存）。
+
+快捷键：`⌘Z` 撤销 / `⌘⇧Z` 重做 / `⌘S` 保存 / `Esc` 一层一层往回退——
+先关弹窗，再放开选中的那个门窗，再退出绘制工具，最后退出预览模式。
+光标在输入框里时 `⌘Z` 交还给浏览器，不会把整段输入吞掉；`Esc` 也一样交给输入框
+（那是「放弃这次编辑」的意思），不会顺手把画到一半的墙链丢掉。
+「放开选中」那一层与工具那一层一样带这道闸，只有「退出预览」不带——预览下没有可编辑的输入框。
+
+---
+
+## 几个刻意的设计决定
+
+改动这些地方前请先理解原因，否则很容易踩回坑里。
+
+**1. 运行时依赖全部声明为 `peerDependencies`**
+
+`vue`、`three`、`pinia`、`@tresjs/core`、`@tresjs/cientos` 都是 peer。原因不是洁癖：
+
+- `three` / `vue` 出现两份实例会直接导致 WebGL 上下文与响应式失效
+- `pinia` 的 `app.use()` 注入依赖模块级 symbol，两份副本会让 `useSceneStore()` 报「no active Pinia」
+- `@tresjs/core` 的 `provide/inject` 同理，TresCanvas 内部靠它解析 `Tres*` 组件
+
+`@tresjs/cientos` 官方包也是把 `@tresjs/core` 声明为 peer（精确锁 `5.9.0`），这里跟随同一约定。
+
+**2. 库样式是手写 SCSS，入口必须引入 `./styles/index.scss`**
+
+- 不注入任何全局 reset：作为库去重置宿主应用的全局样式是不可接受的副作用。插件自身的样式约束全部收敛在 `.tdm-root` 作用域内，样式源码只有 `src/styles/index.scss` 一个文件，组件模板里的类名都是 `.tdm-*` 语义类。
+- 入口 `import './styles/index.scss'` 是一句**副作用导入**，必须留着：漏掉它构建依然成功、`vue-tsc` 也不报错，但产物 `dist/style.css` 里不会留下任何组件样式——宿主项目中渲染出来的是一片没有外观的裸 DOM，从报错上看不出问题。`pnpm smoke` 专门守这个回归。
+
+**3. 库构建只从 `src/index.ts` 一个入口出发，playground 进不了产物**
+
+`vite build --mode lib`（`pnpm build` / `pnpm build:only`）下 `build.lib.entry` 就是 `src/index.ts` 这一个文件，rollup 只沿着依赖图走，而 `playground/` 从来不在那张图上——所以编辑器那一整套 `.ed-*` 类与视觉令牌没有一条路径能进库产物。开发态（`pnpm dev`）走的是同一份 `vite.config.ts` 的另一条分支，两边靠 `mode` 分开。
+
+**4. `TD` 层不使用 Pinia，只收 props**
+
+`SceneContent.vue` / `SceneModel.vue` 位于 `TresCanvas` 内部，只通过 props 通信；Pinia 只在画布外的 `SceneViewer` / `SceneToolbar` 中使用。这样 3D 层保持纯粹、可独立测试，也不依赖 TresCanvas 内部的注入链。
+
+`useTresContext()` 的消费者有**三个**，不是零个也不是一个：
+
+- **`ScenePicker.vue`** —— 要在 3D 层自己做一次射线检测，就得拿到场景、当前相机和那张 canvas（`renderer.instance.domElement`），而这三样只有注入链上有。折中的做法是把它**单独放在 `SceneViewer` 的 `TresCanvas` 下**（不进 `SceneContent` 的组件树），代价被框在一个组件里。它同样不碰 Pinia：命中之后只发一个 `modelPick`，选中意味着什么由宿主决定。
+- **`SceneContent.vue` 里那句 `groundPointAt`** —— 新增的第二个。它要的不是场景，而是 `camera.activeCamera` 与 `renderer.instance.domElement.getBoundingClientRect()`：把屏幕坐标换算成地面坐标这件事，缺了这两样做不了，而**自己 `document.querySelector('canvas')` 是个陷阱**（一个页面上可能挂着多个画布——宿主自己的 + 我们的，量到错的那个不会报错，只会让射线整体偏移一个画布的位置）。它与 `ScenePicker` 的分工正好不同：那一个做的是真的物体射线检测（所以要设 `near` / `far`），这一个走 `Ray.intersectPlane` 打一张数学平面（所以不设）。它同样不碰 Pinia，只把结果作为**能力**交出去。
+- **`SceneSkybox.vue`** —— 要的是那只 **`scene` 本身**，而且是整条注入链上唯一的一个。天空盒不是场景里的一个物体，它就是 `scene.background` 与 `scene.environment` 这两个字段（见设计决定 36），所以它**什么都渲染不出来**（`<template />` 是空的），只在 prop 变化时往 `scene` 上写值、在卸载时把值还回去。它同样不碰 Pinia：六张图的地址是逐字从 prop 上读的。
+
+三处都不把结果做成事件：库只回答「命中了什么」「这一点落在地面哪儿」，以及自行接管了两个场景级字段，至于这意味着选中还是画墙，是宿主的事——这与 `measureModel` / `captureCamera` 是同一条分界线。（天空盒是三者里唯一**写**场景的一处，所以它的写入与还原范围被收得很紧，见设计决定 36。）
+
+**5. 传递 `THREE.Vector3` / `Euler` 实例而不是数组**
+
+TresJS 把 `position` / `rotation` 这类 prop 的类型标注为严格的 THREE 对象（运行时可传数组，但类型不接受）。直接传实例既满足类型，也避免每次渲染重新分配数组。
+
+**6. 表达式互斥的样式不要写成两个同权选择器**
+
+「已开启」与「悬停」是互斥的两种状态，若写成同权选择器，谁生效就取决于源码顺序——把两条规则换个位置就会坏，这种依赖不该留在代码里。所以激活态写成 `.tdm-toolbar button.is-active`（权重 `(0,2,1)`），而按钮悬停是 `.tdm-toolbar-btn:hover`（权重 `(0,2,0)`）：前者稳定压过后者，与两条规则写在 `index.scss` 的哪一处无关。改写这条规则前先看一眼 `src/styles/index.scss` 里那段注释。
+
+**7. `TresCanvas` 里不能用裸 `<template>` 包裹子节点**
+
+TresJS 的自定义渲染器把裸 `<template>` 当成一个叫 `"template"` 的元素去建对象，命中内部的 `isHTMLTag` 检查后返回 `null`，**子节点会被挂到 Scene 根而不是原父级**。也就是说下面这段会静默丢掉 geometry，且不报任何错：
+
+```vue
+<TresMesh>
+  <template><TresBoxGeometry /></template>  <!-- ✗ 几何体会跑到场景根上 -->
+</TresMesh>
+```
+
+`<template v-if>` / `v-for` / 多根 Fragment 都是安全的，只有「用一个裸 `<template>` 单纯做包裹」不行。
+
+**8. 相机只读回 `position` + `target`，且只在拖动结束时读**
+
+三条互相牵制的事实：
+
+- `OrbitControls.update()` 内部会 `object.lookAt(target)` —— 所以面板**只能**控制 `position` 和 `target`，写 `camera.rotation` 会被覆盖
+- `@change` 在 `autoRotate` 或 `damping` 开启时**每帧都发** —— 用它做读回，数字会一直跳
+- `update()` 会把半径夹到 `[minDistance, maxDistance]`、极角夹到 `[minPolarAngle, maxPolarAngle]`
+
+所以策略是：`:position` / `:target` 只绑定**稳定的 `Vector3` 常量**（Vue 的 `Object.is` 比较不会重新 patch 它们），后续改动全部走 `cameraPoseKey` 计算属性 + 命令式 `controls.update()`；读回只发生在 `@end`，外加一个「抓取当前视角」按钮覆盖自动旋转持续转动、永远不触发 `@end` 的场景。
+
+同理，面板上的 `minDistance` / `maxDistance` / 极角在写入时会**互相抬升**，否则拖出范围的值会被静默夹回，看起来像「滑到某个位置就弹回去」。
+
+**9. `<Sky>` 全场景只能有一个**
+
+它是 three-stdlib 里的一个 `BackSide` 大盒子 **mesh**，不碰 `scene.background`，而且它的 `material` 是**模块级单例**——渲染两个 `<Sky>` 会互相改材质。视觉上它会完全盖住 `clear-color`，所以底色和天空是互斥的（编辑器里把底色字段灰显掉就是这个原因）。
+
+顶点着色器里有 `gl_Position.z = gl_Position.w`，所以 `distance = 450000` 不受相机 `far = 200` 裁剪，**不需要联动相机远裁剪面**。
+
+**10. glTF 的阴影标记必须手动 traverse**
+
+通过 `<primitive>` 注入模型时，TresJS 不做任何 `castShadow` 遍历，`<primitive cast-shadow>` 只会设到最外层 Group 上。必须在 `state` 就绪后逐个 mesh 设置。`SceneModel.vue` 把这件和线框开关合并成**一次** traverse，并且只在阴影标记真的变化时才置 `material.needsUpdate`（`receiveShadow` 参与 three 的着色器程序缓存键，乱置会引发批量重编译）。
+
+> 顺带一个由此推出来的结论：**`castShadow` 在 `type === 'contact'` 下是空开关**。
+> 接触阴影是 `scene.overrideMaterial = depthMaterial` 直接烘焙的，绕开了 `WebGLShadowMap`，
+> 而 `castShadow` 正是后者的判定。所以物体级的「投射阴影 / 接收阴影」只在 `map` 与
+> `accumulative` 两种方式下渲染出来（编辑器里直接 `when` 隐藏）；在 `contact` 下摆一个
+> 拖了没反应的开关，比不摆更糟。`accumulative` 走 `ProgressiveLightMap`、经灯光 shadowMap，
+> 预期有效但**未实测**。同一条道理用在**整节参数**上就是设计决定 42（「阴影」页那三组
+> 各归一种方式，只露当前这一组）。
+
+**11. 接触阴影 / 累积阴影要显式指定 `frames` 和重烘焙时机**
+
+- 两者都是自己渲染到独立 target，**不依赖** `renderer.shadowMap.enabled`
+- `ContactShadows` 的 `frames` 默认是 `Infinity`，等于每帧重渲整个场景，必须显式传 `:frames="1"`
+- 它们只在第一帧烘焙一次，而第一帧时 glTF 还没加载完 —— 所以用一个 `revision` 传给 `:key` 强制重挂载，在模型地址 / draco / 阴影方式变化以及加载完成后各触发一次
+- **重挂载的代价不是零，而且累积阴影那边是漏的。** `AccumulativeShadows` 没有 `onUnmounted`（对照组 `ContactShadows` 有，逐个 `dispose()`），每次挂载都会新建两张累积 render target、8 盏随机灯与它们各自的 1024² 阴影贴图，卸载时一张都不还。于是 `revision` 每变一次就漏一次（拖一次模型、切一次 `castShadow` 都算），表现是「越用越慢」而不是「某一次突然很慢」。要修得在 `SceneShadows` 里手工回收，而那些对象在 cientos 的组件实例内部、外面够不着，所以眼下只能记着（见「后续可以做的事」）
+- `accumulative` 还有一张「改了就要重烘」的参数表：`frames` / `once` / `accumulate` / `scale` / `limit` 任意一个变化都会 `reset()` 并从零烘一整轮（`contact` 那边没有这个问题，它的参数改一个只重画一帧）。**别把这张表上的字段接到会连续变化的滑动条上**——右栏现在就是这么接的，见「后续可以做的事」
+- 两者的接收平面都在局部 `y = 0`，与 `Grid` 共面会 z-fighting，因此统一抬高 0.004
+
+**12. 阴影做了两层收窄，避免叠出两个影子**
+
+`<TresCanvas :shadows>` 按 `shadow.enabled` 全开（累积阴影内部的聚光灯也需要 shadowMap 才能出图），但 `SceneSun` 主光的 `cast-shadow` 额外要求 `type === 'map'`。否则用接触阴影时会同时出现一张真实阴影贴图。
+
+**13. 撤销/重做不靠「recording 标志位」**
+
+常见写法是在 undo/redo 期间置一个布尔量、在 `nextTick` 里复位。这里换了个自洽的做法：撤销是把 `config` **原地**还原成某个快照，还原后 `changedGroups(当前快照, config)` 天然是空数组，监听器自己就跳过了。少一个需要精确复位的状态，就少一类时序 bug。
+
+**14. 一切写入都是「原地深合并」**
+
+`deepAssign` 原地改 `config` 而绝不替换它——撤销/重做、导入配置、属性面板的写入都依赖这个引用保持不变，换引用会让 `watch` 丢失目标，历史栈直接失效。`patch` 里的 `undefined` 表示「本次不改这一项」，不是「清空」。
+
+**15. 库产物不能碰编辑器的样式**
+
+编辑器的视觉令牌（`--signal` 等）和 `.ed-*` 类全部在 `playground/styles/editor.scss`。库构建只从 `src/index.ts` 一个入口出发（见设计决定 3），playground 不在依赖图上，两边是各自独立的两套样式。
+`pnpm smoke` 会检查 `dist/style.css` 里不含 `--signal` / `#ff9d2e` / `--ink-300`，混进去就报错。
+
+**16. 拾取挂在包裹 Group 上，而且是命令式挂摘**
+
+`SceneContent.vue` 里给 `SceneModel` 和内置示例几何体套了一层永远渲染的 `<TresGroup>`，`position` / `rotation` / `scale` / `visible` 全在它身上，监听器也挂在它身上。四个理由：
+
+- `<primitive>` 注进来的 `state.scene` 就绪时机由 `useGLTF` 决定，而 Group 是 TresJS 自己建的，挂载即存在
+- `useAsyncState` 默认 `shallow: true`，`state.scene` 恰好是个裸对象——如果哪天它变成深 `ref`，`addEventListener` 会把 `_listeners` 写到 Proxy 上，而 pmndrs 从场景图里读的是**原始对象**，会静默失效。这个侥幸不值得依赖
+- 内置示例几何体也一并被覆盖，不必写两份
+- `SceneModel.vue` 保持零改动
+
+为什么不走模板 `@click`：TresJS 把它变成 three `EventDispatcher` 上的 `addEventListener`，而 5.9 的 dist 里 `removeEventListener` 出现 **0** 次——内联箭头函数会一直往 `_listeners.click` 上堆（three 只对同一引用去重）。加之 5 类事件全部关掉时**必须真的把监听器摘掉**：只要挂着，指针在画布上移动时每帧都要 raycast 一次模型。所以用稳定的函数引用命令式挂/摘。
+
+`visible: false` 挡不住拾取——three 的 `Raycaster` 只查 `layers`，`Mesh.raycast` 不查 `this.visible`。门控条件是「至少启用一类事件 **且** `model.visible`」。
+
+**17. 5 类事件里有 3 类是自己合成的**
+
+pmndrs 的 `click` / `dblclick` / `contextmenu` 全在 `up()` 里合成，判据 `getIsClicked` 从 `intersection.object`（命中的**最深层 mesh**）上读 down 时间、要求 down 与 up 命中**同一个 object**。多 mesh 模型上「按在盔体、松手在面罩」这个再常见不过的手势会读不到 down 时间，**静默漏报**。
+
+同一段代码里 `pointerup` 是在 `if (!isClicked) return` **之前**无条件发出的，所以自己拿 `pointerdown` + `pointerup` 合成是可靠的，顺带把三个事件各自的守卫合并进同一机制：
+
+- 位移 < 4px、按压 < 500ms（三者共用，所以拖动旋转视角不会误触发）
+- 按 `event.button` 分流：`0` 走单击（再叠 500ms 间隔判双击）、`2` 走右击、其余不响应
+- **时间戳一律取 `event.timeStamp`**，不用 `Date.now()`：pmndrs 是批处理投递的（攒着在下一帧 RAF 里消费），用处理侧的时钟会在后台标签页恢复后算出几万毫秒的间隔，双击永远凑不成
+
+只有 `pointerenter` / `pointerleave` 是 pmndrs 原生支持的，直接用。它们自带一个很有用的性质：`computeEnterLeave` 会把上一帧的进入链与新链做差集，鼠标在模型内部各部件之间移动时那条链一个事件都不发——「进入模型」而不是「进入某个网格」这个语义是白拿的。而它们的 `event.object` 是**外层包裹组**（冒泡路径上却是最深层 mesh），所以载荷统一取 `event.intersection.object`，让 5 类事件的 `object` 语义一致。
+
+右键的原生菜单：`OrbitControls` 恰好也 `preventDefault` 了 `contextmenu`，但那是它的副作用、不该依赖。根元素上按需拦截——**只在 `events.contextmenu.enabled` 为真时**，无条件 `.prevent` 会改变宿主页面自己的行为。
+
+**18. 事件代码进配置，但库绝不执行它**
+
+配置里那段 `code` 是个字符串，随导出/导入/撤销一起走。把「执行」留给宿主是有意的：库会被打进宿主应用，而配置可以来自任何一个刚下载的文件，库要是在运行时编译它，等于替宿主开了一个「配置即代码」的口子。`pnpm smoke` 会断言 `dist/index.js` 与 `dist/index.cjs` 里不含 `new Function` / `eval` ——建议与文档都不如一条会失败的测试。
+
+配套的一处防御：`SceneViewer.cloneModelPatch` 会对 `events` 逐类型浅拷一层。`applyPatch` 在目标缺键时是**直接把源对象装进去**（别名，不是拷贝），而宿主那个对象不是 reactive——就地改它不会触发深度 watch，`changedGroups` 只能等下一次别的改动顺带比对时才发现，表现是「配置被悄悄改了，历史栈里查无此事」。`position` / `rotation` / `scale` 早就有这道防线，`events` 是第二个、而且危害更大的一个。
+
+**19. 模型 id 是随机 uuid，随模型更换重新生成**
+
+早先的设想是让 id 从地址派生、干脆不进配置——这样绝不会「过期」。但那样一来，
+`DamagedHelmet.glb` 换到 `DamagedHelmet_v2.glb` 只要压出同一个 slug，宿主看到的就是同一个 id；
+而它最重要的用途恰恰是让宿主判断「这是不是我上次看到的那个物体」。uuid 没有这个问题。
+
+代价是要想清楚「什么时候换」。结论是**只在 `setModel` / `clearModel` 里换**，
+且地址没真变就不换（面板失焦、prop 重放都会重复提交同一个地址）。于是：
+
+- 同一份资源始终同一个 id——反复渲染、切换面板都不会漂
+- 换资源（含卸载回内置几何体）换 id——这正是宿主想区分的
+- 撤销回换模型之前，id 跟着一起回去——因为 id 存在 `config.models[n]` 里，历史栈自然带它
+- 导出导入原样保留——同上，快照里就有它
+
+多模型之后「换哪一个」也需要交代：`setModel` / `clearModel` 默认作用在**当前选中的那个**
+模型上，`addModel` 给新条目现生成一个 id。所以列表里每一条各自有自己的 id 与它自己的历史，
+在列表里点一下（纯界面状态，不进历史）不会影响任何 id。
+
+「id 永不变」这个需求也没被堵死：`SceneViewer` 的 `model` 对象里显式写一个 `id` 即可。
+桥接层里 url 先落、其余字段后落，所以宿主给的 id 最后落笔、说了算——
+顺序调过来就会被 `setModel` 新生成的 id 冲掉。
+
+`DEFAULT_SCENE_CONFIG` 里每个模型的 `id` 都是空串，由 store 建立时补一个。不能把 uuid 写进常量：
+模块级常量是全宿主实例共享的，写死一个 uuid 会让每个宿主都拿到同一个 id。
+
+与此同时 `deriveModelId(url)` 并没有废弃，它改任 `model.name` 的默认值来源——
+`damaged-helmet` 这类可读短名正好是名字该长的样子。派生的 id 有对齐问题，
+派生的**名字**没有：名字只给人看，重复了也不影响任何逻辑——多模型下这条比从前更重要，
+因为「两行同名」现在是真的会出现在列表上，而列表上区分它们的是 `id`。
+
+**20. 模板 ref 指向 three 对象时，一律 `shallowRef` + 同名 `ref` 属性，不用 `useTemplateRef`**
+
+Vue 3.5 的 `useTemplateRef(key)` 末尾是 `readonly(shallowRef(null))`——它防的是「宿主往模板 ref 上赋值」，代价是宿主**也**只能读到只读视图。而 `readonly()` 是**深层**的：读 `.value` 拿到的不是 TresJS 创建的那只 three 对象，而是它的只读代理，连 `position`、`shadow.map`、`_listeners` 也一并被包住。后果按严重程度排：
+
+- `group.addEventListener('pointerdown', fn)` **直接抛 TypeError**——three 的实现从 `this._listeners = {}` 起手，赋值被 readonly 吞掉之后紧接着读它的属性。表现不是「慢」或者「偏一点」，是 5 类事件的监听器**一个都没挂上**，而 console 里只有一条看不出出处的类型报错。
+- `camera.position.fromArray(...)`、`light.shadow.map = null`、`shadow.camera.updateProjectionMatrix()` 这类写入**被静默丢弃**：dev 下附一条 `Set operation on key "x" failed: target is readonly`，生产构建里连这条都没有。换言之，同一个坑在开发时是个警告，上线后是一条不回滚、不报错的 `if (false)`。
+- 顺带一提，`three` 的 `Object3D` 是用 `Object.defineProperties` 定义 `position` / `rotation` / `scale` 的，所以警告里的 key 是 `Vector3` 内部的 `"x"` / `"0"`，指不到真正写它的那行代码。
+
+`shallowRef` 不做任何包装，`.value` 就是 TresJS 创建的那只裸对象；模板上的 `ref="xxx"` 必须与 setup 里的变量名**逐字**相同——字符串 ref 是按 setup 绑定名解析的。
+
+为什么只有 three 对象中招：Tres 标签的模板 ref 落在 element vnode 上（`vnode.el` 就是那只 three 对象），而 DOM 元素与组件实例都**不在** `readonly()` 的有效 target type 里（前者 `toRawType` 得到 `HTMLDivElement`，后者在 `expose()` 里被 `markRaw` 过），`readonly()` 对它们原样放行。所以同一份文件里 `tdmControls.value.instance` 从来没报过警，而 `group.addEventListener` 一直是坏的——「这里没报警」完全不能推出「这里没问题」。
+
+`pnpm smoke` 里有一条断言钉住它：`src/` 下凡把 `ref` 挂在 `Tres*` / `OrbitControls` 标签上的 `.vue`，都不得出现 `useTemplateRef`。这条只守得住「没用它」，守不住「用对了没有」，但两者的交集正是唯一会出事的写法。
+
+**21. 编辑器自己的日志走浏览器控制台，前缀 `[tdm]`**
+
+编辑器里的 `pushEvent()` 早先写进视口下方那条可展开的「事件控制台」。那条面板连同右下角的状态栏一起被去掉了，理由只有一条：**它们占的是视口高度**（两条加起来近 50px），而它们显示的大部分东西在别处都已经有了——模型 / 三角面 / 绘制 / 帧率 / 相机 / 阴影在视口 HUD 上，保存状态在顶栏的圆点与时间上，已绑事件数就是 HUD 的 `EVT n/5`。
+
+只有「操作回执」这一类没有第二个落点：模型加载进度、撤销 / 重做落在哪一步、导入配置时的警告、以及**事件代码的编译与运行错误**（写错一个括号就什么都不会发生，没有别的地方能告诉你为什么）。所以它们改道 `console.log`。
+
+前缀不是装饰：用户在事件弹窗里写的 `console.log` 是**宿主代码**的输出，也落在同一个控制台里，没有前缀；编辑器的提示都带 `[tdm]`，两者混在一起才分得清哪句是编辑器说的。
+
+代价要明确记着：**这类提示不再自己冒出来，得开着 DevTools 才看得见**。导入一份含事件代码的配置时，从前有一条自动出现在视口正下方的横幅，现在只是一行控制台日志，醒目程度确实下降了。可以接受是因为它不是唯一信号——启用了几类事件在 `EVT n/5` 和右栏的「事件绑定」那一行上一直可见，`⚠` 前缀也保留着。这是个取舍：不拦你，但把话说出来。
+
+**22. 预览是一块盖住整屏的弹窗，既不是把页面换掉，也不是一扇缩在中间的窗口**
+
+点「预览」的那一刻，`.ed-stage` 变成 `position: fixed; inset: 0; z-index: 100` 的底衬——**零内边距、不透明底色**（`--ink-000`，用 `background` 简写顺手清掉蓝图网格那几层 `background-image`），视口在它里面照旧 `flex: 1` 铺满整屏。编辑器那三块 chrome 一块都不删，只是被整个盖住。标题栏（`PreviewBar.vue`）**浮在画面之上**：`position: absolute` 不占布局（一占布局，视口高度就成了「100vh − 标题栏高度」，那就不是满屏了），顶上垫一条从半透明深色渐到透明的衬底——按钮得在亮画面（一面白墙、一片天空）上照样读得出来，而用渐变不用实色是因为实色会在画面顶端切出一条硬边。
+
+这条改过两回，两回的教训都留着：
+
+- **第一版**靠 CSS 把顶栏与左右两栏 `display: none` 掉、再把 `.ed-app` 的网格压成一行，让视口顶上来占满整页。**画面几乎一样，读起来却是「页面被换掉了」**——用户的原话就是这个：点完不知道自己在哪儿，也不知道怎么回去。出口只有 Esc，而那句「进入预览模式（Esc 退出）」走的是 `pushEvent`，只进控制台，界面上一个字都没有（见设计决定 21）。那一版留下的另一半改动是**标题栏上那个看得见的「退出预览」按钮**，它与版本无关，一直在。
+- **第二版**把 stage 抬成浮层（画布不再重建，见下），但四周留了 14px 内边距、底衬做成半透明加 `blur(2px)`，去透出压暗的编辑器，本意是让它像一扇窗口浮在工作台上。用户看完的原话是「我要的效果是全屏弹窗预览而不是局部预览」——那圈内边距正好把「全屏」做成了「居中的一块」，而「弹窗」二字要靠的恰恰是它盖满整屏。
+
+第二版还多给了一条退出路径：点底衬关闭（`@click.self`，与事件绑定弹窗「点遮罩关闭」同一条手势）。**第三版把它删了**——全屏之下没有「窗口外面」这种地方可以点，那条判据永远命中不到，留着就是一段读起来像真、其实不触发的代码。现在退出只有两条：标题栏上那个按钮，以及 Esc，两条都写在标题栏里。
+
+**这一路上最贵的坑是 CSS 同分覆写，它让前两版全都白改。**`.ed-stage--preview` 与 `.ed-stage` 的特异性完全一样（都是 0,1,0），同分就按**源码顺序**决胜负——而 `.ed-stage` 的基础块定义在文件靠后的位置，于是预览块里那几条声明**一条都没落到元素上**：`position: fixed` 被基础的 `position: relative` 顶掉、`padding: 0` 被 `padding: 14px` 顶掉、`background` 简写清掉的网格又被基础的 `background-image` 铺回来。表现是「点了预览，画面纹丝不动，只是编辑控件不见了」——两次「没有全屏」都是它。而**布局那一侧从头到尾都是对的**：`inset: 0` 没问题，TresJS 那侧也没问题（`useSizes` 默认走 `useElementSize(canvas.parentElement)`，是 ResizeObserver，容器一变大就 `renderer.setSize`），所以「容器满了但 canvas 还是旧尺寸」这种担心不存在。
+
+修法是把预览块的选择器写成**两个类**（`.ed-stage.ed-stage--preview`，0,2,0），而不是把它挪到文件末尾：后者也能修，但下一个人重排文件时就会复活。`prefers-reduced-motion` 里那条要跟着一起写成两个类，否则它压不住预览块那条 `animation`（它原本就是靠源码顺序赢的）。
+
+**给任何基础块加状态变体之前，先看特异性，别指望源码顺序。**
+
+老路还埋着一个陷阱，将来若有人想「再省一点、把 chrome 隐藏掉」就会踩上：`display: none` 的元素**不是 grid item**，它整个从网格流里消失，后面的兄弟会顶上来占第 1 行。顶栏正好是被隐藏的那一个，工作区于是落进本该给顶栏的 `0px` 行里，整个视口被压成一像素高——预览模式看起来是一块纯黑的空屏，控制台里干干净净。现在不隐藏任何 chrome（网格照旧是三行四列），这个陷阱也就不存在了，但**它会在每一块被隐藏的 chrome 上重演一次**：底部两条栏还在的时候，隐藏的是三块，工作区同样顶到第 1 行、同样全黑。
+
+浮层方案另有一条不写下来看不出来的好处：**画布没有重建**。全程只有 `SceneStage` 一个实例，进出预览不会重新加载任何一个 glb、也不会新建 WebGL 上下文。真去 `Teleport` 一份副本、或者干脆开第二个 `SceneViewer`，代价是整场模型再拉一遍；更麻烦的是 `canvasApi` 那张登记表（`captureCamera` / `measureModel` / `groundPointAt` / `viewportAspect`）会被两个实例互相覆盖，而覆盖是静默的。
+
+**23. 点选走画布级的「一次点击一次 raycast」，而不是让模型常挂监听器**
+
+要做「点一下画布就选中指针底下那个模型」，最省事的写法是给每个模型的包裹组常挂一个 `pointerdown`/`pointerup`，复用现成的物体事件链路。这条路被否掉的原因只有一个：pmndrs 的过滤门是 `parentHasListener || hasObjectListeners(type, object)`，**挂一个监听器就等于让那个模型的整棵子树在指针移动时每帧被 raycast 一次**。而这条开销正是库把 5 类事件默认全关的理由（见「`0/5` 才是免费的」）——编辑器需要的是一个常驻能力，不能拿它去换逐帧的射线检测。
+
+所以另开一条画布级的通道：`pickable` 打开时挂两个 DOM 监听器（`pointerdown` / `pointerup`），射线只在**真的抬起指针、且这次交互够得上一次单击**时才走一次，静止时开销为零，也不需要任何模型开 `events`。「够不够得上单击」判的是与 `SceneModelNode` **同一个** `isClickGesture`——两套阈值一旦漂移，拖着转视角就会顺手选中一个模型。
+
+两点配套的取舍值得记下来：
+
+- **身份不写在 three 对象上。** 「这个网格属于哪个模型」存在一个模块内的 `WeakMap` 登记簿里（`utils/modelNodeRegistry.ts`），而不是 `userData`。`userData` 会被 `Object3D.toJSON()` 原样序列化进宿主导出的资产里，这份标记纯属库的内部约定、不该出现在宿主的产物里；用登记簿还顺带堵掉了「宿主通过 `#scene` 插槽塞进来的对象伪造身份」这个口子——簿子里只可能有 `SceneModelNode` 写进去的东西。代价是它不可枚举，调试时在 DevTools 里看不到。
+- **顺带修掉了遮罩吃指针事件。** 加载进度遮罩是 `inset-0` 的，之前没有 `pointer-events: none`，于是模型一加载，整张画布的指针事件（包括转视角）就全被它吃掉。这不是新引入的问题，但点选会把它放大成「加载中点击完全无效」，所以一并修了。失败提示条同理。
+
+**24. `cameraChange` 只在机位真的变了之后才发**
+
+OrbitControls 的 `onPointerUp` 是**无条件**派发 `end` 的（不看这一次按下到底有没有转动视角），所以「在画布上随便点一下」也会让 `@end` 走一次。回写是空 diff、历史栈不受影响，但事件照样发出去，宿主那侧就会凭空多一行「视角已更新」——而点选上线之后，画布点击恰恰是最高频的动作，这行噪音会盖掉真正的操作回执。
+
+所以在 `onControlsEnd` 里加了一道机位键去重：与上一次发出去的完全一致就不发。**只加在这一条路径上**：对外暴露的 `captureCamera()`（编辑器右栏的「抓取当前视角」）是用户显式点的一次动作，照旧无条件回写与派发。已知的不精确之处：改完面板里的相机参数之后点一下画布，会因为机位确实变了而多发一次——那行日志本身是真的。
+
+**25. 「拿到模板 ref 之后要做的事」必须写在函数 ref 里，不能挂 `watch`**
+
+`SceneModelNode` 拿到包裹组之后有两件事要立刻做：把它登记进身份登记簿（画布点选要靠它反查「这只组是谁」）、按当前配置把事件监听器挂上去。原先的写法是 `ref="modelGroup"` 加一个 `watch(modelGroup, …)`，**在真实浏览器里一次都不会执行**：字符串 ref 由 Vue 在**渲染之后的 post-render 队列**里赋值，而挂在那次变更上的 watch 回调就是不跑——同一只 ref 的依赖集里明明已经有订阅者，值也确实写进去了（`onMounted` 里读得到那只组）。没有任何报错，唯一的后果就是「点画布上的模型没反应」：`modelNodeOf()` 沿 parent 链一路找不到登记项，于是每一个模型都被判成空白处。
+
+改成**函数 ref**（模板上 `:ref="onGroupRef"`）就好了——函数 ref 是 Vue 在打补丁时**同步**调用的，拿到对象与处理它发生在同一刻，中间不经过任何调度。所以本仓库的规矩是：**凡是「拿到这只 three 对象就立刻要做的事」，一律写在函数 ref 里**，别指望用 ref 的变更去打发。
+
+这条与设计决定 20 是同一处坑的两个方向：那边说 three 对象**不能**用 `useTemplateRef` 读（拿到的是只读代理），这边说有了 ref 之后**不要**挂 watch 去观察它。
+
+顺带堵掉了同源的一个既有漏洞：一个**挂着就已启用 `events`** 的模型（典型来源是从保存的配置里恢复），同样因为那次变更观察不到而一个监听器都不挂，事件代码永远不会执行。现在两条入口——组刚拿到（`onGroupRef`）、配置变了（watch）——都调同一个幂等的 `syncPick()`，先一律摘、再按需挂。
+
+**26. 往响应式注册表里写回「同一只句柄」时必须跳过**
+
+函数 ref 有个容易忽略的性质：它**在每次渲染末尾都会被再调一次**（`patch` 尾部无条件 `setRef`，传的是同一只实例）。`SceneContent` 的 `registerNode()` 原先是「以当前表为底拷一份新 Map、写完再赋回去」，于是这次多余的调用会把 `measurers` 这只 `shallowRef` 判成「变了」——**每次渲染都脏一次**。读它的 computed 里就有 `ModelActions` 那颗「贴地 / 聚焦可不可点」的按钮开关，它一脏就重渲染，重渲染又走一遍函数 ref：在一次 flush 里转够 100 圈，Vue 就抛
+
+```
+Maximum recursive updates exceeded in component <ModelActions>
+```
+
+而这行字远不止是控制台噪音：它经 `handleError` 抛出去，成为一个 unhandled rejection，**在开发期会被 Vite 当成运行时错误弹出一层盖住整张画布的浮层**——于是画布上一个点击都到不了 canvas（`Input.dispatchMouseEvent` 与真人点击都一样，`document.elementFromPoint` 返回的是 `VITE-ERROR-OVERLAY`）。「点模型没反应」这个现象因此有两个独立成因，这是第二个。
+
+修法是给注册加一道判据：**同一只句柄就原样返回、不写**。判据取「同一个模型的组件实例在整个生命周期里是同一只」——重新渲染不会换实例，真换了（改 url、重新挂载）自然不等，语义上仍然幂等。
+
+**27. 选中视觉取物体走 `measurers` 那张已有的表，且 `OrbitControls` 必须打 `make-default`**
+
+选中一个模型要画框、要挂手柄，前提是拿到它那只**包裹组**（three 对象），而包裹组只在 `SceneModelNode` 的 `onGroupRef` 里出现过一次。有两条路可以反查：新造一张 `id → Group` 的反向注册表，或者复用 `SceneContent.measurers` 那张「id → 节点句柄」的表。选后者，因为**表已经在了**、还带着设计决定 26 那道守卫——只要给节点的 `defineExpose` 多加一个 `group`，外面读到的就是裸的 three 组（暴露出去的代理会自动解包 ref，读它还正常建立依赖）。新造一张表等于把「谁是谁」这件事的出处从一个变成两个。
+
+手柄这一侧有一条**必须**满足的隐藏条件：cientos 的 `TransformControls` 在拖拽开始时会去禁用轨道控制（`controls.value.enabled = !dragging`），而那个 `controls` **只在 `OrbitControls` 传了 `make-default` 时才被赋值**——不传就是 null，那一句空转，于是拖手柄的时候相机跟着一起转。这不是可以绕开的实现细节：cientos 把禁用写死在内部，唯一能喂给它的就是「当前默认控件」这个身份。好在补上之后不需要自己写 pointerdown 拦截——three-stdlib 的 OrbitControls 在 `onPointerMove` 第一句就是 `if (enabled === false) return`，所以这次拖拽里相机一步都不会动。
+
+顺带说明为什么**不做描边（Outline）**：`@tresjs/post-processing` 未安装在依赖里（加上它要动 peerDeps、EXTERNAL 与文档，是另一个量级的改动），而 cientos 的 `<Outline>` 必须**逐个 mesh** 挂，与本仓库「一个模型一个包裹组」的粒度不匹配。
+
+**28. 手柄的写回由库自己做，且 `modelTransformEnd` 只在值确实变了时才发**
+
+拖手柄的第一种设计是「库只发事件、宿主自己写 store」，但那样宿主一行代码都不写时手柄就是个装饰——而「在画布上拖出一个物理量」这件事本身就该生效。所以库直接写回，与既有的相机拖动那条路（`onCameraChange` 把机位写回配置）严格对称：**画布上的直接操作默认生效**，事件是给宿主的通知而不是开关。
+
+写回时的两条时序，都建立在既有的历史栈语义上：
+
+- 拖拽过程中**逐帧写、不带 label**。一次拖拽会产生几十次变更，逐次入栈没法看，而 store 里那个 400ms 的防抖窗口正是为这类连续改动准备的（与拖动滑块同一条路），整段拖拽本来就只留一条记录。
+- 松手时宿主（编辑器）带 label 再写一次同样的值，把那条挂起的记录换成可读的名字。带 label 的 `patchModel` 会先 `clearTimeout` 掉待提交的那次防抖、再立刻 `commit(label)`，所以**条数不变**。
+
+于是有一道**必须留在库这一侧**的判断：`modelTransformEnd` 只在起始与结束快照不相等（容差 1e-6）时才发。原因是 `commit` 的 `forcedLabel` **优先于空改动闸门**——「在轴上按一下没拖动就松手」也会走完一次 dragging 的开始与结束，照发就会多出一条什么都没改的历史记录。这个判断不能推给宿主：等事件发出去时值已经写进配置了，那边再也分不出「改没改」。
+
+**29. 「2D 俯视」是俯视的透视机位，不是正交相机**
+
+视口右上角那枚 `2D | 3D` 有两种做法。直觉上「2D」意味着正交投影——平面上没有近大远小，远端的两个物体才真的可比大小。但正交在 TresJS 里是**加一只相机并切换 `activeCamera`**，而这条路当前会踩到一个第三方缺陷：
+
+cientos 5.9 的 `OrbitControls` 把 vnode 的 `key` 取成 `(props.camera || activeCamera)?.uuid`，换活动相机会让它整体重挂；而 `useOrbitLikeControls` 注册 `change` / `start` / `end` 监听器用的是 `whenever(controlsRef, cb, { once: true })`——**新实例一个监听器都拿不到**。后果有两条，都正好打在上一轮刚上线的功能上：`@end` 静默失效，于是「松手把机位写回配置」断了（相机转了但配置不变，下次任何一次配置写入都会把视角弹回去）；同时 `useTresContext().controls` 永久指着已经 dispose 的旧实例，而 `TransformControls` 正是靠它做「拖手柄时禁用轨道控制」。
+
+换成俯视的透视机位则只需要动一处库代码：`CameraConfig` 本来就完整描述一个机位（`position` / `target` / `fov` / `min` `maxDistance` / `min` `maxPolarAngle`），写 `config.camera` 就是既有的唯一「切视角」通路；唯一缺的是一句「这一档不许转」——`enablePan` 与 `enableZoom` 已经在了，这一版补上对称的 `enableRotate`。正交取景所需的那一整套额外字段（`left/right/top/bottom`、resize 时的重算、`up` 与视线共线时的退化）则完全不需要。
+
+**注视点与起始高度都是写死的。** 注视点是**世界原点**（网格中心），进来时的高度是 **110**，两个都不算。早先这版按选中模型的包围盒求一个刚好装得下的距离与中心，结果是同一个按钮在不同模型上给出完全不同的观感：椅子近、大楼远；而且换一个模型看，「谁跟谁对齐、差多少」还得重新对一遍坐标。而「俯视」这个动作想要的是**一把稳定的尺子**——转到 2D 就从同一个高度、对着同一个原点开始，任何两次俯视之间都能直接比大小、比位置。按内容取景那件事由右下的「聚焦」负责，那个动作才是算出来的，两者各司其职。代价是进来时的取景**固定、不随内容走**：110 是按默认那块 120 见方的地定的（45° 视场角下竖直装下 120 要 145，110 装下约四分之三、宽视口下横向整块都在），比这更大的场景一下看不全，内容整体远离原点时画面中央还会是空的——这是拿「可比」换「装得下」，对一个用来核对平面关系的档位是划算的。这个高度比默认的 `maxDistance`（150）低 40，所以它站得住、**往外还有得滚**：滚到上限的 150 正好把整块 120 见方的地装进画面（那需要 145）。两个数别改到相等——持平的话俯视里就只能往里缩；而把「最远距离」调到 110 以下，俯视就会被夹回去，那时以那个限制为准（它是相机权限，俯视档的高度只是它的一个使用者）。
+
+**2D 下只关旋转。** 走的是 `camera.enableRotate` 这个既有的权限字段（见上）。这一条是「转动即自动切回 3D」的替代方案：那个设计能自洽，但一旦转了、档位就跳走，「看一眼平面关系」这件小事会被打断两次。直接禁掉更符合这个档位的用途——俯视是拿来看**平面关系**的（谁跟谁对齐、间距多少），不是拿来换个角度参观的。而**缩放与平移都留着**：它们改变的是取景（多大、在哪），不改变「从正上方看下去」这件事，俯视还是俯视；而「凑近看一眼这一块」恰恰是这个档位里最常做的事，把它也禁掉只会让人先退到 3D、凑近了、再切回来，比留着更容易打断。收窄里**没有 `enableZoom`**：宿主关掉的缩放权限不该被这枚按钮顺手打开，与「宿主关掉的『允许平移』也不动」同一条。档位仍然从机位推导（撤销、点「重置机位」之后自己就对），只是不再需要靠「转走」来退档——缩放与平移都不改变视线方向，所以它们不会让档位跳走。
+
+**2D 下地面是无限延伸的。** 写的是 `ground.infiniteGrid`，与上一个 `camera` 的差别只是它在另一个分组。不这么做的话画面里会看见这块地的边：边长 120 是半个 ±60，而淡出要到 150 才彻底透明，于是边界那圈线还留着六成亮度——从正上方看下去正好横在取景里，缩得越远越明显，像一块浮着的板子。cientos 的实现是把平面几何按 `1 + fadeDistance` 放大（顶点着色器里的 `localPosition *= 1.0 + fadeDistance`），平面于是有 ±9000 出头，边界远在淡出之外、再也看不见；**网格图案是按同一个变量算的**，世界空间里仍然是 0.6 一格——放大的只有那块板子，不是格子，所以看起来就是同一张网格铺到看不见为止。它同样是这一档的取景手段而不是用户对地面的改动，离开时按进来之前的值还原。
+
+还有两个只有走到这一步才会撞见的实现细节：
+
+- **「最低仰角」必须比机位早一帧落地。** 这个限制量挂在 `OrbitControls` 上，由组件重新渲染时才写进控件——而把机位推进相机的 `syncCamera` 是一个 pre-flush watcher，同一个渲染帧里它跑在渲染之前（渲染里的 prop 补丁更是排在整趟 diff 的最后）。两者在同一 tick 里写下去，`syncCamera` 摸到的控件还带着旧的仰角下限，`update()` 会把正上方的姿态夹成一个斜角：配置里是正俯视、按钮亮着 2D，画面却是歪的；而 damping 关掉时 `update()` 压根不逐帧跑，这一夹没人会替它纠正。所以进 2D 是**两次写**——先放下限、等一帧、再写机位。历史里仍然只有一条：store 的 `commit` 是按快照 diff 提交的，第二次写入带的 label 会把前一步的 `minPolarAngle` 一起并进同一条记录。
+- **三条权限是写进配置的，所以在 2D 下导出的配置里它们是收窄的。** 这与 `minPolarAngle` 同源：它们是轨道控制的权限、本来就住在配置里。切回 3D 会原样还原（不是一律按默认值打开——宿主本来就关掉的那一项不该被这枚按钮顺手打开）；只有「配置本身就是从俯视来的、没有可还原的机位」那一种情况才退回默认值，否则按钮说着 3D 而相机转不动，那是这一档在说谎。
+
+哪天真要正交，它是一次独立的改动，要一起解决：新增正交相机 + 切 `activeCamera` + 绕开上面那个重挂缺陷（自己重挂 `end` 监听器、自己回写 `useTresContext().controls`）+ 维护 resize 与 `up` 退化 + 新增正交取景需要的配置字段。在这之前，透视机位拿到了八成效果而回归面积为零。
+
+**30. 机位过渡是「相机追配置」，不是「把插值写进配置」**
+
+要让切档看起来是滑过去而不是跳过去，有两条路。一条是把插值出来的中途机位逐帧写进 `config.camera`，相机照常跟着配置走；另一条是配置在写入那一刻**直接就是终点**，只有相机在后面追。取后者，因为配置是编辑器里一切读数的来源：档位是**从机位推导**的（设计决定 29），走前一条路时 `viewModeOf(scene.config.camera)` 在整段过渡里读到的都是半路的机位，于是「2D」那一段要等飞完才亮起来——点下去到按钮响应之间隔着 400ms，比没有动画更难受；顺带，飞行途中导出的配置会拿到一份停在半路的机位，历史栈里也会被塞进一串中间快照（除非再加一层防抖）。走第二条路，下游的一切——面板读数、按钮高亮、历史记录、导出——在点下去那一瞬就都是终点的样子，动画只发生在画面上。
+
+动画只能写在 `src/` 里，写不到 `playground/`：宿主那侧拿不到活的相机。`canvasApi` 只有 `captureCamera`（读一次，且是用户显式点的动作）、`measureModel`、`viewportAspect` 三个口子，没有任何持续读机位的地方；而 `SceneContent` 那条「不访问 Pinia、只认 props」的约束（设计决定 4）也决定了它只认 `camera` 这一组 prop。要在编辑器里做这段动画，就得先给库加一个「每帧读写相机」的 API——那还不如把动画做进库：一处实现，宿主写一个 `cameraTransition` 就都有了，默认值 `0` 让现有宿主的回调面一个字不用改。
+
+插值走**球坐标**（半径 / 极角 / 方位角），不是位置线性插值。约束在球坐标里恰好是两条单坐标区间：半径、极角各自夹进 `[min, max]` 之后，两端合法的路径**整条**都合法。位置插值把两个坐标耦合成一条直线，中途的半径可能比两端都小（两个等半径的点连起来离球心更近），撞上下限时 `update()` 会在半路把相机夹一下，路径就被拧变形了。所以 `clampToLimits` 起飞前按 `update()` 里那三句（极角夹 → `makeSafe` → 半径夹）把两端先夹一遍，飞行途中 `update()` 因此一次都拧不动写下去的机位。这条不变量比它看起来要紧：从 2D 回 3D 时「最低仰角」是跟着机位**同一次写入**还原的，起点（正上方）在新下限之下，不先夹的话前 60% 的插值都在下限以下、一律被按在 45° 上——半径与注视点照常走，唯独抬头那一段被压到最后三分之一，看起来是先平着滑过去、再猛地立起来，而不是一次均匀的过渡。每一帧仍然走与瞬移那一帧完全相同的那条路（同一套夹取、同样派发 `change`），落地那一帧再用配置里的原值重写一次——球坐标往返带着 1e-16 量级的浮点误差，而「停下之后相机与配置逐位相同」是别处依赖的性质（面板读数、`captureCamera` 的去重）。
+
+**打断的规则是「落地」，不是「停在半路」。** 飞行途中用户按下指针、或滚一格滚轮（three-stdlib 的 `onMouseWheel` 无条件派发 `start` 与 `end`，`onPointerUp` 也无条件派发 `end`），此时让相机**立刻落到终点**再把手交给用户。停在半路会留下一个谁都不认的机位：配置说着 2D、画面上是半路，而紧接着那次 `end` 还会把这个半路机位写回配置、在历史里多出一条。落地则保证动作要么没发生、要么走完。
+
+两个只有走到这一步才会撞见的细节：
+
+- **极点上的方位角没有意义，得借另一端的。** 2D 的机位在正上方，它相对注视点的偏移恰好是 `(0, d, 0)`，`atan2(0, 0)` 给出 0；此时「走短弧」会让方位角从 π 转到 0——从 −Z 一侧进 2D，画面上是一边下降一边水平转 180°，地平线跟着打转。所以只要有一端贴在极点上，就取另一端的方位角，整段飞行待在一个竖直平面里。这段判断必须排在 `clampToLimits` **之前**：夹取会把「贴极」这件事本身抹掉——下限 45° 一夹，正上方就成了 45°，`sin(phi)` 也不再接近 0，顺序反了就会走成上面那段要避免的画面。
+- **「减少动效」与「起点即终点」是两道闸。** 前者在起飞前**现问一次**，不在 setup 里存成常量：库会被 `renderToString` 渲染一遍（冒烟测试就是这么跑的），那时候没有 `window`。后者是 1mm 的容差，挡住的是「拖动视角松手后的自动回写」——库把活的机位原样写回配置，不挡的话在画布上点一下都会换来一次 450ms 的无效飞行。
+
+**31. 户型图：开洞靠切段不引 CSG，数据进 `SceneConfig` 不另立 store**
+
+户型图那一层有三个决定当场就能看出代价，所以记在这里。
+
+**门窗开洞是把墙切成实心段，不做布尔运算。** 一段带窗的墙会变成：窗台以下的矮墙、窗顶以上的过梁、四根框条、一片玻璃，全是最普通的 `BoxGeometry` 加一个 `rotation.y = -atan2(dz, dx)`。没有 CSG、没有 earcut、没有 polygon-clipping，**一个依赖都没加**——`three` 本来就是 peer 依赖。参考项目选的就是这条路，这也是它能整段移植过来的原因。代价是「墙上开洞」这件事的实现细节（谁先切、怎么夹取、洞口比墙还高怎么办）全都得自己写对，且这些细节全在 `src/utils/floorplan.ts` 里那组**不依赖 three、不依赖 DOM** 的纯函数中——它们因此能在冒烟测试里直接跑（那一组几何断言就是这么来的），这是纯函数分层换来的最大好处。
+
+**平面图的数据进 `SceneConfig`，不另立一个 store。** 于是撤销、历史、导出、配置导入**全部白拿**：每落一面墙、放一个门都是一次带标签的 `applyConfig`（`⌘Z` 退一段墙，历史面板里显示成「绘制地基」「绘制墙体」「放置门」「标记房间」），导出的 JSON 里自然就有 `floorplan` 段。代价是**公开面变大**——`SceneConfig` 多了一个分组，而户型图的几何引擎（`wallPieces` / `findEnclosedArea` / `removeWall` …）不得不导出去：不导出的话宿主想自己画一层楼板、或把平面图接到自己的业务数据上，就只能抄一遍，而抄漏一处（比如洞口夹取）的表现是「墙体切出负长度、变成一块法线翻转的黑面」，不报错。所以这一次往外放的符号比前几轮都多，是有意的。
+
+**引用一律用 id，不按下标。** 门窗不存自己的坐标，只存 `hostWallId` + 沿墙米数；房间记的是自己的多边形。于是 `removeWall` 能顺手把挂在那面墙上的门窗一并删掉，而**「数组下标重映射」这件事根本不存在**——参考项目里它内联的 `undoLast` 就漏了那一步级联，只能靠下标重映射硬撑，删一面墙之后门窗会落到隔壁墙上。
+
+**「墙高」只有一处真相。** 参考项目那个 `globalWallHeight` 只写进 `rooms[].wallHeight`，导出时又被当成所有墙的高度用——一份值存在房间上、却当墙的在用。这边直接落在每面墙自己的 `height` 上：面板上改一次作用于**全部已有墙**，新画的墙则取 `walls[0]` 的取值（一面墙都没有时才用库的默认值，`DEFAULT_WALL_HEIGHT = 3.9`）。于是不会出现「面板上写着 3.9 米、画出来却是 2.8 米」这种只因为它还没画过墙的状态。
+
+**顺带两处对参考项目的刻意改进**，都是「用起来最别扭」的地方：
+
+- **吸附到已有墙的端点**（0.4 米内）。参考项目只吸附到格点，于是从别处延伸过来的墙想接上原有的角就得手动对准——差一个格点就是一个豁口，房间识别的泛洪会直接从那儿漏出去。两段墙必须共用**同一个坐标**才围得出房间，所以这一条是必要的。
+- **每落一点就提交一段真墙**，不攒到闭合才一次落库。点到第四个角时第三段本来就该是「实」的；副产物是每段墙各是一步历史，`⌘Z` 退掉一段——这正是画墙时想要的手感。参考项目那种攒法换来的是「画到一半反悔只能按 Esc 全丢」。
+
+**32. 划一块区域铺一块真地板：生成的是普通模型，不是地基的外观**
+
+点「地基」之后可以从左栏挑一块地板，划出的矩形就按那块地板铺满。三个决定值得记下来。
+
+**生成物写进 `config.models`，不给 `floorplan.foundation` 加外观字段。** 铺出来的地板在右栏「场景模型」里是一个**普通模型**：能单独选中、缩放、删除，也能再复制一块去别处。给地基加字段的话，这块地板就被钉在「地基的一部分」这个身份上——改尺寸要去平面图页、不能选中、不能复制，也不能用摆在它上面的常规做法微调。而「一块地板」本来就是一个模型，让它享有一个模型能用的一切，比给它一个特殊身份省事得多。代价是**它不跟着区域走**：区域改了得重新铺，原来那块留在原地自己删——地基是户型的一部分，地板是摆在场景里的一个物体，两者本就该分开。
+
+**「没选地板就落灰板」这条老路径一直够得到，且两者是二选一。** 再点一次左栏那一格就是取消选用；不留这条路的话，第一次选完之后「先落一块灰板看看位置」这个用法就再也回不来了。两条路**不会同时落东西**：一块铺满区域的地板会把灰板整个盖住，而两者高度只差不到一个深度单位（2D 相机在 110 米处、深度缓冲约每 7 毫米一个单位，见 31 那节里 `TOP_GAP` 的推导），叠着画就是逐像素比大小、成片闪。地板因此落在 `y = 0.015`：比网格高 2 个深度单位、比房间色块的 `0.035` 低 20 毫米，三层平面各让开一格余量。之所以不贴着灰板的 0.005：那块板能在噪声带里站住靠的是它材质上那组 `polygonOffset`，而 glb 的材质是加载出来的，我们够不着、给不了同样的保证。
+
+**尺寸要等 glb 加载完才知道，所以是「先摆一块不可见的、量完再一次写到位」。** 区域的宽深在松手那一刻就已知，而模型的原生脚印要等加载完，中间隔着一次网络往返（两个地板资产是 7~9 MB）。「先追加一块不可见的」让这几秒里屏幕上什么都不出现，否则会看到一块 1:1 的模型先落在原点、再跳到位；`measureModel` 不看 `visible`，藏起来照样量得出。代价是**一次操作留两条历史**（「生成地板」与「铺满区域」，`⌘Z` 一次看起来就是「那块地板没了」）——压成一条只能自己先 fetch 一遍 glb 量好尺寸再入场景，那是重复下载加重复解析，而且 draco 压缩过的 glb 在裸 `GLTFLoader` 下会直接失败。量不出来（地址错、断网）就在 12 秒后把那块永远不可见的条目删掉并说一句，而不是在右栏留一个删不掉的幽灵。
+
+铺法是**几何拉伸铺满 + 贴图按米重复**，两层分开算的东西，别混起来看：几何被拉到区域大小（区域不是正方形时「模型原本的形状」是失真的——对一块铺地用的平面这没有意义），而贴图**按区域尺寸反向重复**，所以砖的实物尺寸与区域大小无关、两个方向上都是同一个边长（见设计决定 35）。不裁剪——区域外的部分不切。
+
+---
+
+**33. 挑一个墙壁模型，之后画的墙用这个模型铺面**
+
+从左栏「墙壁」这一类里挑一个模型，**之后画的墙**就用它当外观，而不是灰盒子。三个决定值得记下来。
+
+**外观长在墙身上（`FloorplanWall.url`），不像地板那样生成一个独立物体。** 地基那次生成的地板是一个能独立存在于 `config.models` 的物体（见 32），而一面墙**不可能脱离 `walls[]` 独立存在**：它要参与房间识别的整数格泛洪、要在上面挂门窗、要跟着「墙高」一起改。所以外观只能长在墙对象上，代价是**它跟着墙一起进退**——`⌘Z` 撤掉一面墙，它的外观也一起没了（那是想要的行为：一次落笔就是一步历史）。
+
+**洞口照旧把墙切成段，每段各自铺。** 开洞的机制一个字没动（见 31），铺面是叠在几何之上的一层。于是有两个**必然的观感代价**，它们不是 bug，是两条需求拍板之后的算术结果：
+
+- **砖缝在门洞两侧、过梁上下都对不齐**。每段墙各自从自己的左端开始铺，相位不跨段连续。
+- **过梁与窗下的矮墙会被竖向压缩**：高度是「拉伸到段高」，所以 0.7 米高的过梁铺一块 2.8 米高的资产就是压 4 倍。要砖缝跨洞口连续只有一条路——给材质挂 `clippingPlanes` 并按墙起点锚定相位，代价是还要开画布级的 `renderer.localClippingEnabled`（**会波及宿主所有材质**），不值得为第一版做。
+
+**铺法是「沿墙长平铺重复 + 高度拉伸」，与地板那条「拉伸铺满」刻意不同。** 地板是一整张面，拉一拉无所谓；砖与木板有「尺寸」可言，把 2 米长的砖拉到 8 米会立刻看出不对。所以沿墙长按资产的**原生长度**重复整数块、余数均匀摊进每一块，高与厚才是拉伸（它们本来就该贴合这一段墙）。块数取 `round` 而不是 `ceil`：`ceil` 要么需要裁切机制、要么把最后一块压扁，而 `round` 的偏差是双向的、最坏 ±50%，在 1.2 / 2.4 这两个**最常见的洞口尺寸**上明显更好。真正让偏差消失的是资产不是取整规则——墙的端点被吸在 1 米整格上，**资产的长做成 1.0 米之后块数恒为整数**（写进了资产制作要求）。
+
+**只对之后画的墙生效。** 外观是这一次落笔的料，与「墙高」那种「改一次作用于全部已有墙」的量**刻意不同**：尺寸是这栋房子的属性，外观是这一笔画下去的选择。代价在明处——选料 → 画 20 面墙 → 改选另一种料，那 20 面墙**一点变化都没有**，唯一的路是 Shift + 点击逐个删掉重画。要做「把当前外观应用到全部墙」，实现是一次 `walls.map(w => ({ ...w, url }))` 加一次 `writeFloorplan`（历史里一步、可撤销），那是**下一轮**的事。
+
+**一个地址一份加载器，不是一面墙一份。** 渲染上「同一个外观的墙」合成一个组件（`SceneFloorplanWallSkin`），内部只调一次 `useGLTF`，再 `state.scene.clone()` 平铺到每一段上。这不是优化而是正确性：`@tresjs/core` 的 `useLoader` **每次调用都会新建一个 Loader**，而全仓库没开过 `three.Cache`——一面墙一份就是一次完整解析加一份独立的贴图副本，一栋 40 面墙的房子会把同一张贴图上传 40 次。反过来的约束是同一个 `state.scene` **绝不能交给两个组件**（`useLoader` 卸载时会 `disposeObject3D`），分组恰好让「共用一份 state」与「共用一个组件实例」是同一件事。`clone()` 出来的多块砖按引用共享 geometry / material，而 TresJS 对 `<primitive>` 卸载时不做 dispose、也不遍历子树，所以谁卸载都不会误伤别人。
+
+**退化时整面墙退回灰盒子，而不是「坏的那几段变灰」。** 加载中、404、资产不达标（零厚度等）、资产里一块实体都没有、以及根本没写 `url`——这几种在屏幕上是**同一个外观**。半灰半贴需要一条额外的组合规则，而它**只在资产坏掉时才被走到**，那种代码最容易烂掉；整面退回则是「改造前的那条路」本身，有现成的参照物可比。另外，资产可用时**绝不能**把墙段也画成灰盒子再让砖盖上去：两者是同一个包围盒、两组共面，会逐像素 z-fighting（与 32 那条「两条路二选一」是同一个道理）。
+
+**量「资产尺寸」时只算有厚度的网格，不算整个 glb 场景。** 这是这条链上最容易出错、也最难看出来的一步：`Box3.setFromObject(state.scene)` 量的是**整个 glb 场景**，而真实的墙资产常常是**从建模时的场景里导出来的**——`wall/wall1` 里除了墙还有一块 80 × 80 米的背景板（贴地、零厚度，出图用的道具）。一张背景板进来，后果是**量级上的**：量出来的「资产尺寸」变成 80 × 2.8 × 80，于是块数恒为 1、`sx = 段长 / 80`、`sz = 墙厚 / 80`，铺出来的是**墙正中间一片几十厘米宽、零点几毫米厚的薄片**，背景板则被压成一条细带趴在墙脚。屏幕上看到的是「铺是铺了，但只有一小块」，与「压根没铺」完全同形——而且**它不报错**：三个轴的尺寸都不小，`wallFaceUnusable` 没有任何理由拦。所以量尺寸与渲染**共用同一条逐网格的判据**（`wallFaceIsSheet`：某轴薄于 1 毫米就当片），片既不参与合并包围盒、也不跟着克隆过去。判据只看厚度、不看「像不像墙」，是因为实体可以是一根很矮的压顶、一块很窄的砖（它们本来就在墙的包围盒里，并进去不影响结果），而片是「面」、没有体积，混进来只会把包围盒撑爆。
+
+**那条日志有两种，`src/` 里的第一处 console 就是它。** 宿主拿不到这条链上的任何事件通道（`SceneFloorplan` 只收一个 prop、没有 emit），而「灰」是几种原因的共同外观——不打印的话它们完全同形，用户唯一的线索是「我按提示选了模型，墙却没变」。所以会打两种：**致命**的「资产用不了」（回到灰盒子）与**非致命**的「资产里有 N 张片被丢掉了」。后者不是可有可无的：片被丢掉之后，量出来的尺寸与用户心里的「我这个模型多大」对不上，而屏幕上只有一个「怎么铺成这样」的结果——留一条日志，下次同一块背景板就是十秒钟的事。去重的粒度是**日志本身**（消息里含地址），不是地址：同一个地址先后可能报出这两种，按地址去重会把后面那条真正要紧的吞掉。加载中不打印，加载失败也不打印——three 的 `FileLoader` 自己会打，再加一条只会让控制台更难读。前缀刻意不用编辑器日志的 `[tdm]`。
+
+**34. 2D 档下墙换成平面图的实色，贴面留给 3D**
+
+在正俯视那一档里，墙的贴图**看不见**——这不是观感偏好，是像素算术。那一档的相机在原点上空 110 米（`TOP_DISTANCE`），45° 视场角下竖直方向能看到约 91 米，一块 600 像素高的画布上就是 6.6 像素/米：**一面 0.18 米厚的墙在屏幕上只有 1~2 像素宽**。更关键的是方向——俯视看到的只有墙的**顶面**，而顶面上摊的是贴图的一条横切：`wall1` 那块 4 × 2.8 × 0.2 的墙板，顶面的 v 跨度只有 0.067，两厘米出头的纹理铺满 4 米长，压成一道色带。纹理真正的样子在 ±Z 侧面上，而侧面在这一档里一个像素都看不到。所以 2D 档改画**实色**：既读得懂，也省掉一次注定被压扁的采样。
+
+**规则搬进了库里（`viewModeOf`），因为渲染层也要用它。** 在这之前「现在算 2D 还是 3D」只住在编辑器的 `useViewMode.ts` 里——档位是从机位推导的，库压根不知道这回事。现在库要按档位换外观，这条规则就必须只有一份：两份实现悄悄不一致的表现是「按钮亮着 2D、墙却铺着贴面」，看起来只是渲染错了。所以它挪进 `src/utils/viewMode.ts`、从 `src/index.ts` 导出，编辑器那边改成从库里再转出去（两个既有调用点一个字没改）。值由 `SceneContent` 算——它是唯一拿得到 `camera` 的一层——再作为 `plan` 往下传到 `SceneFloorplan` / `SceneFloorplanWallSkin` / `SceneFloorplanWall` / `SceneFloorplanWallBox`。四个组件都给了默认值 `false`，所以公开面没有新增必需的东西。
+
+**实色必须是「不受光」的实色。** 这一档不能用 `MeshStandardMaterial` 加深颜色糊弄：主光 2.2 + 环境光 1.8 下，正对相机的顶面会被顶到接近纯白，调色板上的数值在这一档里没有意义。用的是 `TresMeshBasicMaterial`（先例是 `SceneFloorplanDraft.vue` 那道琥珀色草稿条）。墙取 `#475569`，这个值同时躲开三样东西：比地基板的 `#94a3b8` 暗（墙才从楼板里跳出来）、不与两种网格线（`#1e293b` / `#334155`）同色（否则墙会被读成一根主分隔线）、比背景 `#0b1020` 亮（没铺地基的地方也看得见）。
+
+**过梁单独给一支浅色（`#cbd5e1`），否则门窗在平面图里整个消失。** 判据是「底面离地」：`wallPieces` 只给洞口上下的补墙产出底面离地的 `wall` 碎片（窗台下的矮墙底面是 0），所以「抬在空中的那一块」就是过梁。为什么必须区分——**正上方看到的洞口就是过梁的顶面**：门框、玻璃、门扇都比墙薄（玻璃 0.02、门扇 0.045），全都躲在过梁底下；过梁若与墙同色，一个画好的房子在俯视图里看不出哪里有门、哪里有窗。给它一支浅色，洞口就成了一道亮口。这条判断**没有**改成给过梁一个新的 `role`（类型里那个从没被用过的 `slab` 看着正像为此预留的），因为铺贴面那条路只认 `role === 'wall'` 的碎片——改了 `role`，过梁在 3D 里就不再铺墙资产的贴图了，一行判断换掉一处 3D 行为不划算。
+
+**那一档不铺贴面，但组件不卸载。** `SceneFloorplanWallSkin` 在 `plan` 时让 `layout` 返回 `null`，整组落到「退回灰盒子」那条路上去（换成实色画）——**组件本身仍然挂载**，这样切回 3D 时那份十几 MB 的 glb 已经解析好、贴图也上传过了，不用重新拉一遍。代价是切档时那批 clone 会重建一次（`layout` 不再被缓存），而切档是人手点的、很少发生，重建只是 `Object3D.clone()`，比重新解析 glb 便宜得多。顺带还躲开了「贴面与灰盒子共面」的顾虑——那一档里贴面那一路压根没有东西被渲染出来。
+
+**35. 地板被拉伸时，贴图按「米」反向重复**
+
+这就是 32 里「拉伸铺满」那半句的补账。区域铺满之后，几何被拉到了区域大小，而**贴图是跟着几何一起被拉的**——UV 仍然是 0..1，于是「一个 uv 重复」覆盖的实物尺寸就等于整块区域：地基画 20 米宽，一块砖就变成 5 米。用户看到的现象是「地板只会根据我地基画多大模型就有多大，而不是自动平铺」。
+
+**做法是给贴图一个 `repeat`，而不是复制 N 份模型。** 两者在画面上逐像素相同（`repeat = [2, 2]` 就是并排摆 4 份原尺寸模型），但代价差一个量级：一块 100 × 100 的地基按「复制」要 100 个模型条目、100 次 glb 解析（两个地板资产是 7~9 MB）。所以「平铺」这件事发生在**贴图变换**这一层，几何该多大多大。
+
+**`repeat` 摊的是区域尺寸，不是 `scale`。** 这是最容易写错的一处：`scaleX = region.width / footprintX` 说的是「几何被放大了几倍」，它与贴图密度无关；而一个 uv 重复在缩放后覆盖的是**整块区域**，所以「想让一个重复 = `span` 米」就是「这块区域里有几个 `span`」。写成 `repeat = scale` 得到的正是要修掉的那个现象，而且**它看起来像对的一样**（两个数在 1 附近时几乎没差别），只在区域大起来之后才露馅。
+
+**「一个 uv 重复铺几米」（`span`）是资产的属性，记在模型清单上。** 它是从贴图里数出来的，不是算出来的：`tile1` 的一张图里是 4 × 4 块砖、砖要 0.6 米，于是 2.4；`wood` 的一张图里是 12 行板、板要 0.2 米宽，于是也是 2.4。同一个 2.4 铺在只有 8 行板的地板上会得到 0.3 米宽的板——所以它**不能**是一个全局常量。它一路从 `LibraryFile.span` → `LibraryEntry.span` → `PickedAsset.span` → `repeat` 原样搬运，中间谁都不解释它，解释只在 `useModelLibrary.ts` 那一处。清单里没写（或写了 0 / 负数 / NaN）时兜底 2.4：**猜一个总比不猜好**——不猜就是 `repeat` 恒为 1，一个没写 `span` 的新资产会原样复现这个 bug；猜错只是砖偏大偏小，**但每一块都一样大**，而且在清单里加一个数就能改回来。
+
+**它只能对贴图做，不能对材质做「所有贴图」做。** 遍历材质属性去认 `isTexture` 会把 `envMap` 一起重复掉（环境反射跟着平铺，看起来像贴了一层墙纸），所以槽位是**显式列名字**的（`map` / `normalMap` / `roughnessMap` / …）；同一张贴图挂在两个槽上是常态——glTF 把金属度与粗糙度打包进同一张图、`GLTFLoader` 按贴图下标缓存，两个槽拿到的是**同一个** `Texture` 实例——所以用一只 `Set` 去重。另外两条边界：改 `repeat` **不需要** `needsUpdate`（贴图变换走 `texture.matrix`，每帧现算），但**改 `wrapS` / `wrapT` 需要**（那是上传时设进 GPU 的采样参数），所以只在真的要从别的模式换成 `RepeatWrapping` 时才碰 wrap 并顺手 bump 一次——重复次数在拖动中是逐帧变的，每次都 bump 就等于每帧重新上传一张 2K 贴图。还有一处专为带 `KHR_texture_transform` 的资产写的：那种贴图的 `matrixAutoUpdate` 被 GLTFLoader 关掉了、改用扩展算好的矩阵，所以光写 `repeat` **不会生效**（没有人在重算那个矩阵），写的时候要顺手把 `matrixAutoUpdate` 打开——重算用的 offset / repeat / rotation / center 正是扩展自己写进去的那几个字段，重算一遍不丢东西。
+
+**`repeat` 的默认值是「不存在」，不是 `[1, 1]`。** 渲染层拿「这个键在不在」当「要不要去动模型自带的贴图」的开关：无条件写一遍 `[1, 1]` 会抹掉资产自带 `KHR_texture_transform` 的那一份 `repeat`。这条对应冒烟测试里那一条「默认值里没有它」。
+
+前提是资产的 **UV 恰好铺满 0..1**（一个 uv 重复 = 整个模型）。两块现有地板实测都是 `10 × 10 米零厚度平面、21 × 21 网格、UV 恰好 0..1`，正好合规；UV 跨度不是 1 的资产，实际密度会被乘上那个跨度，且**不会报错**——这是写进资产要求的一条。
+
+**36. 天空盒是六张图和两个场景字段，不是一个模型**
+
+左栏「天空盒」那一类里有**三十三格**：三十二个天空盒，外加排在最前面的**「空盒子」**（它点下去是**关掉**，不是一个天空盒，见下面「三种状态」那一段）。这一格点一下换掉的是**外面的那圈环境**——它不是一个摆进场景的物体，而 `SceneSkybox.vue` 这个组件**什么都不渲染**（`<template />` 是空的）。有几处值得记下来。
+
+**它是 `scene.background` 与 `scene.environment` 两个字段，不是一只 `Mesh`。** 一个球体或立方体包住场景也能看起来像天空，但那要多一层几何、多一份材质，还得处理「相机靠近边界」和「被别的物体挡住」；而 three 的 `Scene` 本来就为这件事留了两个字段——`background` 是画在一切之下的底，`environment` 是所有 PBR 材质的反射源，两者都可以直接吃一张 `CubeTexture`。代价是这两个字段**是场景级单例**，一旦写上就是全场景的，不存在「这个天空盒只作用于某几个物体」。
+
+**所以在本地实现，没有用 cientos 的 `<Environment :files>`。** 那个组件做的是同一件事（六张图 → `CubeTextureLoader` → 写字段），但它有两个不满足需要的性质：**它从不还原**——卸载时不会把 `scene.background` / `scene.environment` 放回去，于是「关掉天空盒」这件事它做不到（字段会永远留着上一次那张图）；**它也不释放**加载进来的贴图。第二条在三十多格来回切换的场景下是实打实的：`CubeTexture` 的每一面都要上传，一组 512² 六面约 8MB 显存（`bak6` / `bak32` 是 1024²，那一组约四倍），切一次漏一组。自己写就得把这两件事做对，也就是下面两条。
+
+**生命周期规则是「只还原『还是我们写进去的那个值』」。** 加载下一组之前先把当前的 `background` / `environment` 存进 `saved`（只存第一次，因为那才是「我们没碰过之前」的原值），换上是**先写新值、再 `dispose()` 旧值**；什么都没在用时不写任何值，也就不用还原。而 `detach()` 里那两句判断 `target.background === active` 是必须的：宿主的别处也可能改过这两个字段（宿主自己设背景、或者配置里本来就带着一个 `environment`），那时该还回去的是**别人后来写的那个值**，而不是我们进门前那一份——无条件覆盖会把别人的改动吃掉。这一条与设计决定 32 里「两条路二选一」是同一个道理的另一面：那边是别把两样东西画在同一个位置，这边是别把别人的值当成自己的。
+
+**异步加载要一个 token，因为「最后点的」不一定是「最后加载完的」。** 六张图是并行的，点的快一点就会有两次加载同时在飞；先发的后到是完全正常的，而它一旦落到 `swap()` 上，屏幕上就是**上一次点的那张天**。所以每次 `show()` 自增一个 `token`，`await` 回来先比一次，不是自己那一次就直接返回、一个字段都不碰；`onUnmounted` 里也自增一次，卸载后在飞的那几张就不会再往 `scene` 上写。这一版比初版**简单了一处**：被顶掉的那一次手里只有图、还没有 GPU 资源（纹理是比完 `token` 之后才造的），所以初版那两处「趁手里还攥着句柄把它 `dispose()` 掉」不再需要——`CubeTextureLoader.load()` 那种「同步返回纹理」的用法，本来就是为了让失败那一支也够得着句柄。
+
+**缺一个面不废掉整组——这也是这里不用 `CubeTextureLoader` 的唯一理由。** 它的完成条件是 `if (loaded === 6)`，六张少一张就永远不触发回调、一个字段都不写；而服务器上现在有**二十组只缺 `down.jpg`**（另外五张都在、缩略图也是好的），表现就是那一格**看着完全正常、点下去什么都不发生**。所以六个面改用 `ImageLoader` 各加载各的，谁没拿到谁就补一块纯色（怎么补、为什么是那个颜色，都在 `utils/skyboxFill.ts` 的文件头上，那里有实测：**贴着共享棱取色与真实底面的差是 8.1，整图平均是 41.8**；把「哪一行属于哪个极」倒过来量则是 63~66，所以方向也是量准的而不是推的），**六张全缺才维持原样**。两条代价是自觉接受的：`down.jpg` 那几条 404 会留在 Network 面板里（六个文件名是写死的、没有清单可查，那次加载本身就是最便宜的那次探测）；以及**这是公开行为的一处变化**——以前「六张里有一张拿不到」等于整组不生效，现在是照样换上、那一面是块纯色。不做开关：多一个开关就多一组要测的组合。
+
+**`environment` 与 `skybox` 是同一个位置的两种填法。这条不变量现在由渲染层裁定，编辑器里只剩一个写入方。** 两者写的都是 `scene.environment`，同时填时只可能有一个生效。原先「最多只有一个不是空的」是由**写入的那一方**保证的，一共两处：左栏点天空盒（清空 `environment`）、右栏「环境贴图」下拉框（清空 `skybox`，见 `useInspectorSchema.ts` 里那个 `apply`）。**那个下拉框已经删掉**（它的位置让给了场景预设，见设计决定 41），于是今天只剩左栏那一处——而这是在清一个**仓库里已经没有入口的字段**：`sun.environment` 仍然有效、仍然由宿主经 props 或导入 JSON 设定，只是编辑器不再替它清掉天空盒。反方向那条清空（选 `environment` 时清 `skybox`）也随之消失，因为**写入方不存在了，规则就没有落点**。
+
+代价说清楚：今天「配置里两个都有值」是一种**合法存在**的状态，靠渲染层那条 `v-if="environment && !hasSkybox"` 裁定（天空盒胜出），而不是被编辑器提前挡住。这一句本来就有、一直都在，只是从「给手写 / 导入 JSON 兜底的后备」升格成了**唯一机制**。这是这次搬家唯一一处行为收窄——原先从右栏选一个环境贴图会自动关掉天空盒，现在没有这个动作了。（**场景预设曾经是第三处**写入方，都写 `skybox: null`，理由是预设优先；预设收窄成只管光照与光影之后它不再写这两个字段，那一处早就消失了。）
+
+**关掉用 `null`，不是空数组。** `SkyboxFaces` 是定长六元组，没有「六个都是空串」这种合法值；而 `applyPatch` 只跳过 `undefined`、不跳过 `null`，所以「关掉」在这份配置里是写得出来、也存得下去的（撤销、导出、导入都跟着走）。这与 `FloorplanWall.url` 那条「没有外观时这个键整个不存在」看似相反，其实是同一条判断的两面：**那里是「这个键在不在」本身有意义**（渲染层拿它当「铺不铺贴面」的开关），**这里是「有这个键但值为 `null`」才是那个意思**（三个状态：有天空盒 / 明确关掉 / 默认没提过）。六个地址整个存进配置而不是存一个「天空盒编号」，理由与 `models[].url` 相同：配置要能自己站住，导出成 JSON 拿到别处不该依赖「那个编号在那台服务器上还是第几号」。
+
+**自己造 `CubeTexture` 就得自己设 `colorSpace`。** 初版用 `CubeTextureLoader`，这一步是它代劳的（`load()` 里第一句就是 `texture.colorSpace = SRGBColorSpace`），所以当时不需要在调用处补；现在纹理是自己 `new CubeTexture(六个面)` 出来的，那一句就必须自己写。漏掉它**不报错**，表现是天空整体偏暗偏灰——而这与「天本来就阴」分不开，所以它值得单独记一句。
+
+**左栏那一类的格子有三种状态，判据是 `skybox` 这个键在不在。** 没有这个键 = 模型条目（点一下追加到场景）；有这个键、值是**六元组** = 一个天空盒（点一下换成它）；有这个键、值是 **`null`** = 排在最前面的**「空盒子」**（点一下**关掉**，也就是把 `sun.skybox` 写成 `null`）。三种状态必须分得开，而**判据只能是「键在不在」，不能是它真不真**：`null` 与内置示例几何体的空 `url` 在真值上是同一个东西，用真假判的表现是「点空盒子往场景里追加了一个示例几何体」——不报错，只是动作完全不对（`LibraryEntry.skybox` 那一段记着这条）。另一半是天空盒条目的 `url` 也是**空串**，空串在这个编辑器里本来是**内置示例几何体**的地址，所以高亮与文案**必须分流**，不能共用 `sceneUrls`：不分流的表现是「场景里随便摆过一个内置几何体，三十多格天空盒就一起亮起来」。同理，天空盒的「正在使用」判据是**逐项比六个地址**（比的是「这一格现在是不是在生效」，不是「上次是不是点了它」），所以关掉天空盒、或者换成另一组之后，高亮都会自己灭掉（原先还有第三种情形：从右栏选一个环境贴图预设会顺手把 `skybox` 清成 `null`；那个下拉框删掉之后这条路径没有了，判据本身没变，仍然只看 `skybox` 这一格的值）；而**「空盒子」那一格比的是「现在一个天空盒都没在用」**，所以关掉之后是它亮着——用户一眼看得出背景为什么变了。点它时若本来就关着，那一下**什么都不写，只给一句 HUD 提示**：没有可改的东西，往历史里塞一条没改任何东西的记录只会让撤销变钝。
+
+**「空盒子」那一格不需要任何新的配置形状。** 它写进 `sun.skybox` 的值就是 `null`，与「把一个正在用的天空盒再点一次关掉」完全一样——上面那条「关掉用 `null`、不是空数组」同时是这两件事的依据。它在库里也只是 `SKY_BOX` 清单的**第一条、`file` 为空串**（`playground/utils/modelList.ts`），没有对应的服务器目录，也是这一类里唯一一条不发任何请求的条目：`thumb` 也留空，宫格于是退回那个立方体占位图形，正是一个空盒子的样子，不必为它单独画一个图标。**排第一而不是排最后**，是因为配置里这个字段默认就是关着的（`sun.skybox` 的默认值就是 `null`），排在尾巴上时用户得先滑过三十二格才知道原来还能关掉。代价是导轨上那句数量因此比服务器上的目录数**多一**（`天空盒 · 33 个天空盒`）——那个量词说的是「这一类有几格」，而它就是这一类的一格。
+
+**面到轴的映射是一份测量结论，不是照惯例推出来的——这一条值得单独记，因为它反直觉。** `SKYBOX_FACE_FILES` 初版照社区惯例写（`front` → +Z），用户一眼就看出来「各个方向没对齐」：四条竖棱全裂，量出来的接缝差 12.7~24.7，而图自己的相邻列差只有约 3~4。把这套资产的 `front` 挪到 −Z（即六个名字都按**相机朝向**读，而 three 的相机默认朝 −Z）之后就连续了，1.9~4.6。所以**「按惯例把它改回去」在本项目里恰好是改错**，这类「不报错、只有眼睛看得出来」的错最怕的就是下一个人照惯例修一遍。
+
+同一份测量也标出了它的**边界**：把整个天空盒绕竖直轴转任意角度，接缝一条都不会变（棱是立方体内部的，刚体转动不动它），所以**方位角的绝对值量不出来**，只能由命名惯例定——本轮取「相机默认朝 −Z」，旁证是这套图里烘焙的太阳落在方位角 60° 上下，与场景默认日照的 45° 同象限。真要与日照严格对齐时，转 180° 的正确做法是 `scene.backgroundRotation` / `scene.environmentRotation`（three 0.186 有这两个字段），**不是重排那张表**——重排还要连每张图的翻转一起动，而拼地址那套机制根本没有逐面翻转的位置。
+
+**37. 挑一樘门或窗，画洞口时把它装进去**
+
+这是设计决定 33 那条链的**第二次应用**：那次是「选一块墙皮 → 画的墙铺上它」，这次是「选一樘门 / 一扇窗 → 画的洞口装上它」。左栏「门」与「窗」这两类里挑一个模型，之后用对应工具在墙上落下的洞口里就是它，而不是程序生成的那套框条加门扇 / 玻璃。几处与 33 不同、或者当时没考虑到的地方值得记下来。
+
+**门与窗共用同一条链，这是这一轮的主体。** 两者在几何上是**同一件事**：洞口的墙被切开、洞里那一件换成一件真资产。差别只有**两处**，而且都在同一个渲染组件里现取——**替身碎片**（门填 `leaf` 门扇、45 毫米厚；窗填 `glass` 玻璃、20 毫米厚，两者都带着洞宽、洞高、世界位置与墙的朝向）与**人话里的名词**（「门模型」/「窗模型」、「一扇门」/「一扇窗」）。尺寸检查（`openingFaceUnusable`）、摆放算术（`wallFaceFit`）、判据（`openingFilledByModel`）、落笔（`placeOpeningAt`）、分组（`SceneFloorplan` 的 `openingModels`）**一个字都不分岔**——判据本来就是「一件资产装进一个洞口」，与那件事是门还是窗无关。**泛化而不是复制**是有意的：复制一份会得到两份各自漂移的实现，而那正是本仓库反复反对的东西（见设计决定 33 与「一个判据只有一份实现」那条）。
+
+**外观长在洞口上（`FloorplanOpening.url`），不是生成一个独立物体。** 理由与墙那一侧逐字相同：洞口脱离 `openings[]` 之后就没有意义了——它要记 `hostWallId`、要参与「此处已有门窗」的判重、要跟着墙被级联删除。所以只是给洞口加一个可选地址，写进历史的那一次落笔连它一起进退。
+
+**框和扇整套顶掉，因为库里的资产是「一整樘」。** 门洞里的程序构件一共 5 片（4 根框条 + 1 块门扇），窗洞是 6 片（4 根框条 + 1 根中竖梃 + 1 块玻璃，中竖梃是 1.2 米的窗宽超过 `MULLION_FROM_WIDTH` 才有的）。资产是整樘的，两者在同一个位置就是两组共面几何、逐像素 z-fighting。所以有外观的洞口，**它那套内饰件在整个场景里只被画一次**——由洞口那个组件来画，墙那两条路一律抑制。
+
+**抑制挂在碎片上（`FloorplanPiece.openingId`），不能挂在洞口列表上。** 这是一个支点：抑制的办法**不能**是「把这些洞口从 `openings` 里滤掉」，那样 `placeOpenings` 收不到它，**墙上就没有洞**，换进来的门模型会被整个埋在实心墙里——而且不报错，只是看不见。所以墙照旧被切开（洞口两侧的墙段、洞上方的过梁、窗台下的矮墙全都在），摘掉的只是洞里那套；判据做成碎片上的一个 `openingId`，而不是洞口列表上的过滤。
+
+**判据只有一条：写了地址。第二条（`kind === 'door'`）在这一轮里去掉了。** `openingFilledByModel` 现在就是 `!!opening.url`，它同时收窄类型（好让分组那处不必写非空断言）。那半条 `kind` 是**「只做门」那一版的产物**，当时的理由是真的：门那条渲染路按「取这个洞口那片**门扇**」找位置，而窗洞里没有 `leaf` 这个碎片，放一个写了地址的窗过去就是「框和玻璃一起消失」——墙那侧被抑制掉、模型那侧又拿不到东西可摆，两边都不画，而且不报错。现在渲染路按 `opening.kind` 分别取 `leaf` 与 `glass`（两者都带着洞宽、洞高、世界位置与朝向，是同一件事的两种碎片），那半条就没有存在的理由了，判据也退回它本来的含义：**外观是不是交给模型了，与洞口的种类无关**。
+
+`scripts/smoke.mjs` 里那条断言因此**方向是反过来的**：它现在断言「写了地址的窗**应当**被判成由模型负责、它的框条 / 中竖梃 / 玻璃**应当**被摘掉」，同时守着「窗台下面那块矮墙与过梁要留着」（那是墙，不是窗的构件）。谁要是把那半条 `kind` 加回去（那正是上一版的形状），冒烟会红——而不是等到用户报「窗上装了模型，程序和模型的框还叠在一起」。这条判据**只有一份实现**，墙那两条路与洞口那个组件都调它：两处各写一遍的下场是「一边画模型一边画构件」或者「两边都不画」。
+
+**一个地址一份加载器，与墙同一套。** `SceneFloorplanOpeningModel` 按 `url` 一实例（`SceneFloorplan.vue` 里按地址分组，key 用 url），组内每个洞口 `state.scene.clone()` 一份摆过去。理由是 33 里那三条（`useLoader` 每次新建 Loader、没开 `three.Cache`、同一个 `state.scene` 不能交给两个组件）——它们与「摆的是墙还是门」毫无关系。
+
+分组**不认洞口种类**：同一个地址下的门洞与窗洞进同一组、由同一个组件装（`SceneFloorplan.vue` 的 `openingModels`）。附带的约束写在那个组件的文件头里：**同一个地址不能既当墙皮又当洞口那一件**——两条链各自按 url 分组、各加载一份，而 `useLoader` 卸载时会 `disposeObject3D`，先卸载的那一份会把另一份正在用的几何体释放掉（表现是模型突然变黑或消失）。这是用法上的约束，不是代码里的检查。
+
+**按高度等比缩放装进洞口**（`wallFaceFit`，与 `wallFaceTiles` 共用同一份块心校正的算术）。三轴共用**同一个**系数，由「洞高 ÷ 资产高」定：门高正好顶满洞口，宽与厚跟着资产自身比例走，**永远不会被挤扁**。比洞口宽的部分嵌进墙里、被墙面挡住（看起来就是门套装在洞口上），比洞口窄时两侧露一条缝——两者都如实反映资产的比例，而不是把资产扭成洞口的比例。
+
+这一条是**实测改出来的**：初版让三轴各自拉满洞口，只要资产的宽高比不等于洞口的宽高比就必然变形——一套按 0.9 × 2.1 建的门放进 1.2 × 2.1 的洞口，宽度会被压掉四分之一，用户看到的就是「门被挤扁了，不是模型原来的宽度」。等比还顺带给出一个好性质：照洞口尺寸建的资产缩放系数正好是 1，一个顶点都不动。宽度与厚度**都不夹取**——夹取就是又一次非等比变形，只是换了根轴；真要做那是一套独立的裁切机制（`clippingPlanes` 还要开画布级的 `renderer.localClippingEnabled`），不是加一个 `min`。
+
+**洞口开多大，跟着料走**（`PickedAsset.width` / `height` ← 清单里 `DOOR` 那两行，`placeOpeningAt` 用它）。这一条是**第二次实测**才找出来的，而且它和上一条是**两个独立的病因**——修完等比之后用户仍然说「门怎么还是这么窄」，重新量了资产（那份 glb 已经重导过，整份文件恰好是 1.8 × 2.1 × 0.167 米、缩放系数 1.0000）才定位到：装法没错、比例一点没走样，**是洞只有 0.9 米**。一扇 1.8 米的门按原比例画成 1.8 米、居中对齐，只有中间 0.9 米落在洞里，两侧各 0.45 米**正好嵌进墙里被墙面吞掉**（门厚 0.167 < 墙厚 0.18，整个藏在墙体内部，一点都露不出来）。屏幕上就是「门怎么这么窄」，控制台一个字都没有——因为从算术上说它**什么都没做错**。
+
+所以洞口尺寸不能再是写死的 `DOOR_WIDTH`：它是**这件资产的属性**，与 `span`（「一张贴图铺几米见方」）是同一性质的东西，照同一条链搬运（清单 → `LibraryEntry` → `PickedAsset` → 落笔处），中间谁都不解释它。不写就退回 0.9 × 2.1 那个默认档，也就是改造前的老路径。**必须在 `placeOpeningAt` 最前面算出来**：上面那两条拒绝（墙太短、与已有门窗重叠）判的正是宽度，留到最后一行才用就会拿 0.9 米去判 1.8 米的门。左栏底部的提示行也顺带说了这一句（「洞口按 1.80 × 2.10 米开」）——那是下笔之前唯一能看见「它会开多大」的地方。
+
+顺带一提，这一条**不改等比的取舍**：宽度仍然不夹取，一扇 2.4 米的门配 1.8 米的洞口仍然会两侧嵌进墙里。真正让画面正确的办法是让清单里的数与资产一致，而不是在这里再加一层夹取——`DOOR_OVERSIZE_RATIO = 3` 那条警告（下一条）就是给「这两个数差得离谱」准备的。
+
+**「两扇窗贴着放」今天是靠磁吸做到的，而当初那条 1 厘米容差已经撤掉——它回答的是一个不存在的问题。** 用户提的「窗户与窗户之间最小间隔改成 0」当初是这么落的：判重的判据是「两洞中心距 < 各自半宽之和」，是**严格小于**，所以中心距正好等于半宽之和（间隔正好 0）的时候本来就放行；于是当时以为难处在「那个点是**零宽**的，而单击落点的换算有一两厘米抖动」，就加了一条 `OPENING_PLACE_TOLERANCE`（1 厘米），把门槛从「半宽之和」让到「半宽之和 − 容差」，那个零宽的点成了一条两厘米宽的带子。
+
+**错在这一步：落点抖不到那儿去。** 单击的落点先被 `snap()` 吸到**1 米格**上（`groundPointOf`），再到墙上量出 `offset`——墙起点落在整米上时，`offset` 就是一个**整数米**。手里那一两厘米的抖动在格点那一步就被吃干净了，`offset` 上留不下任何零头。要让那条容差真的触发，得凑出「(旧洞宽 + 新洞宽) ÷ 2 恰好落在某个整数之下 1 厘米以内」——2.5 米的窗对 2.5 米的窗，那个数是 2.5，离哪个整数都有一米半。所以它是一条**实际上触发不到**的代码，而用户报的现象另有原因。
+
+**真正的答案是让「贴齐」变成一个够得着的目标**：`openingMagnetOffset`（放置与拖动共用）。候选位置 = `邻居.offset ± (邻居半宽 + 自己半宽)`，也就是「与前一个洞口间隔 0 时，新洞口的中心该落在哪」；落点在某个候选的 `OPENING_MAGNET`（0.35 米）以内时，`offset` 直接取成那个位置（不再走格点）。于是「挨着放」不再要求用户的手恰好压在一条零像素的线上，而是**落在附近就会吸过去**；放完之后两个洞之间没有墙垛（间隔 0）、也没有负长度的黑面。两边同时命中时取**绝对差最小**的那一个，并列取 `offset` 较小的（左 / 上优先）——必须是确定性规则，否则冒烟里那条断言没法写。`others` 参数**不含它自己**（所以参数名是 `others` 而不是 `siblings`：把自己算进去的后果是「离原位一个洞宽处发黏」，不报错、只觉得别扭）。
+
+**磁吸的输入必须是未吸格的那个落点，这一条是拿 2.5 米的窗算出来的。** 放置这条路的落点先被 `snap()` 吸到 1 米格（`groundPointOf`），于是 `hit.offset` 永远是**整数米**；而贴齐位置常常落在半米上——2.5 米的窗对 2.5 米的窗是 `1.0 + 2.5 = 3.5`，离最近的整数差 **0.5 米，比磁吸半径 0.35 还大**。也就是说：拿吸过格的点当磁吸的输入，**磁吸对这两扇窗永远不会触发**，而用户瞄的正是那个半米位置（他按「洞口落在点击处」这个既有手感，点的就是新窗该在的中心）。所以 `placeOpeningAt` 多收一个未吸格的参数（`rawGroundPointOf` 来的），**只喂给磁吸**；落点本身仍然取格点（`?? hitOffset`），不磁吸时画出来的东西与改造前一模一样。（同一件事在拖动那条路上一样成立，而且更直白——那边吸的是移动量，磁吸接在步进后面就会给出「手走一米、窗跳一米五」，两处都算在原始点上。）
+
+**磁吸半径必须严格小于半格（0.5 米），这不是随手定的。** 半格是「最近格点」的影响半径，磁吸半径压到它以内，两者才各管一段：0.35 米只覆盖「用户明显瞄着那个贴齐位置」的一小圈，1 米步进照旧是这片画布上的主节奏。半径一旦超过半格，整格都会先被某位邻居的边拽走，落点吸整米这条规则就名存实亡了。同一个数字与 `ENDPOINT_SNAP`（0.4）是同一个精神。
+
+**磁吸目标用的是「洞口与洞口之间间隔 0」这条规则，没加 `OPENING_EDGE_GAP`。** 那 0.1 米是**洞口与墙角**之间的最小余量，两头各管一路；`openingFreeGap` 那边也是同一个取舍，理由写在设计决定 38 里（两头一个松一个紧的后果是「磁吸永远够不到自己算出来的位置」，手感发黏而不是报错）。
+
+**判重叠的门槛现在是 `EPS`（1e-9），不是严格小于。** 磁吸给出的贴齐位置与这里那次减法可能差最后一位（`1.9 − 1.0 = 0.8999999999999999`，比 `0.9` 小），严格小于会把磁吸**自己刚算出来的位置**判成「压上了」，症状是「瞄着边线点一下 → 此处已有门窗」。`EPS` 在微米以下、肉眼不可见，只把浮点噪声抖掉；这条算术与「磁吸算多少」共用同一个常量（`openingOverlaps`，见设计决定 38）。
+
+**它不让几何真的重叠。** 从别处导入的、手写 JSON 里本来就重叠的洞口由切墙那一步（`placeOpenings`）裁掉——后一个洞口从前一个的边线接上，墙上的洞仍然两两不重叠（冒烟里那条「重叠洞口被裁掉」守的正是这里）。放置这条路今天已经**给不出**重叠的位置了（磁吸给的是贴齐、格点给的是整米），那层裁取是为配置的另一条来路留的。
+
+**「再点一下删掉」那条判据不动，这是有意的。** 它判的是「落点落在**已有洞口自己的**宽度范围内」（`< 洞宽 ÷ 2`），而「贴着放」瞄的是**前一个洞口的边**（中心距 = 半宽之和 = `洞宽 ÷ 2 + 新半宽`）——两者隔着**新洞口的一半宽**（今天 1.25 米），那条路根本挡不着这个手势。给它也加容差只会让「点在自己想删的那个窗上」更容易失手，所以留着它。门与窗共用这一条（同一个 `placeOpeningAt`），所以「贴着放」对门同样成立。
+
+**量尺寸沿用墙那套「逐网格丢片」，判据也一模一样。** 一开始以为洞口那一件比墙需要多一条退路（「只有一片门扇」的资产丢完就一个网格都不剩），后来发现那个担心不成立：筛片的门槛是**最小那一轴 < 1 毫米**，而门扇是 45 毫米厚、玻璃是 20 毫米厚——**一片门扇或玻璃根本不会被筛**，会被筛掉的只有零厚度的面（那种资产装上去本来就是一张单面片、背面看不见）。所以两个函数对「片」的口径不必分家。而 `openingFaceUnusable` 比 `wallFaceUnusable` **仍然少一条、也刻意不共用**：洞口那一件**不查厚度**——厚度是跟着高度等比缩出来的，不是资产的性质，「门扇就是一片」被当成「没有厚度，当不了墙」拒掉是错的。措辞是另一套，而且**按 `kind` 现取**（「当不了一扇门」/「当不了一扇窗」）：阈值门与窗共用（都没有绝对尺寸门槛，只看够不够大），只有名词不同。
+
+**资产里混进了道具会点名，但照常装上去**（`openingFaceOversized`，本组里**唯一**一个不改变任何摆放结果、只往控制台说话的导出函数）。同一次实测查出来的第二件事：服务器上那份 `doubleGlassDoor.glb` 里除了整樘门，还带着地面（14 × 0.02 × 17）、左右两面墙（各 6.1 × 3.4 × 0.08）与一面远端墙（14 × 3.4 × 0.12）——节点名就叫「地面」「墙-左」「远端墙」。那几件每一件都有 4~12 厘米厚，而筛片的门槛是 1 毫米，**一片都不会被筛掉**，于是量出来是 14 × 3.42 × 17.12 米、等比缩完横着有 8.60 米。摆法本身没错（比例一点没走样），错的是那份资产，而在此之前这件事**在屏幕上与控制台里都是静默的**。阈值是「装完比洞口宽 3 倍以上」（定在 3 而不是 2：2 倍不一定是错——清单里没写 `width` 时退回默认档、或者故意开小洞配大门，都会落在那一档；真正的病灶量出来是 9 倍以上），判的是警告不是回退——撑得开不等于用不了，真在那里回退就成了「多宽的资产不算门」这个产品决定，而那不是算术能回答的。**门与窗共用这一个函数**，各传自己的 `kind`，于是那句「请只导出整樘X」的名词是对的（`scripts/smoke.mjs` 里有一条断言专门守这个名词）。
+
+**这一条只治标。** 根子在资产：**导出的 glb 里只放洞口那一件**，这条与墙那条「别把建模时的道具一起导出来」是同一句话，区别只是墙那次的道具是**片**（会被筛掉、只会多一条日志），门这次的道具是**实体**（筛不掉、直接进尺寸）。
+
+**窗比门多出来的那一件事是窗台，而窗台不由资产负责。** 窗洞不落地：默认开在离地 0.9 米处（`WINDOW_SILL`），那一块高度由**洞口**给——`wallPieces` 为它单独吐一段窗台矮墙（`wall-<id>-below`，门因为 `sillHeight` 是 0 而根本没有这一片），模型只要照「自己一整樘」建模即可，不用管它会被装在多高。摆放那一侧也不必自己算高度：替身碎片（玻璃）的位置里已经带着抬起来的那一段（`SceneFloorplanOpeningModel` 只读碎片给的数）。**那条矮墙不能被当成「洞口的内饰件」摘掉**——它是墙，模型装上去之后窗台下仍然是实的；冒烟里有一条断言专门守它（`wall-v-below` 必须在摘完之后还在）。
+
+**洞口尺寸由编辑器量，但它只填清单没写的那一格。** 用户提的「洞口最好也根据模型的宽度自适应」是这么落的：在左栏**点中一件洞口资产**（门或窗）时，`ModelMeasureProbe.vue` 把它的 glb 拉下来量一次包围盒，量出来的宽高交给 `applyMeasuredAssetSize`。落笔时洞口仍按 `picked?.width ?? size.width` 那条老路开——**`placeOpeningAt` 一行都没改**。
+
+**量出来的数不覆盖清单里写好的数，这一条是拿一道真门换来的。** 一开始这里是无条件覆盖，它会把 `DOOR` 里那樘双开玻璃门弄坏：那份资产导出的范围里混着地面（14 × 0.02 × 17）与三面墙，每一件都有 4~12 厘米厚、一片都筛不掉，量出来是 14 × 3.42 米，而清单写的 1.8 × 2.1 是**对的**——覆盖之后洞口被开成 14 米，落笔得到「这面墙太短，放不下一个门」，等于用一个 bug 换掉另一个 bug。
+
+根子上这两个数**本来就不是一回事**：清单里那个是「**洞口**要开多大」，一件设计决定（`LibraryFile.width` 那段写着「带门套的资产量出来会比门扇宽一圈，写哪个取决于想让墙上的洞开多大」）；量出来的是**资产的外廓**，一件事实。拿事实覆盖决定，只在那个决定本来就不存在（清单没写）时才成立。所以这个探针是**填空题，不是校对**——但差到 3 倍以上时它会点一句名（`SIZE_DISAGREE_RATIO`，与 `openingFaceOversized` 的 3 是两个判断、不共用常量），把两个数与地址都写进去，顺便解释了「为什么量出来的没生效」。
+
+为什么做在选中那一刻、而不是「落笔之后再回写洞口」：回写要多一条历史记录、要让「墙太短」与「洞口重叠」两条拒绝重跑一遍，而**渲染端的 TD 层组件碰不到 Pinia**（设计决定 4），回写只能由宿主绕一圈。预量把这些全省了。
+
+三件实测过的事，免得下次重新怀疑：
+
+- **`useGLTF` 在 `<TresCanvas>` 之外能用**（这一整份组件就架在这一条上）。`useGLTF` → `useLoader` 走到底只用到 `useAsyncState`（vueuse）、`watch` 与 `onUnmounted`，**没有一处 `useTres()` / `inject`**，所以它要求的是「在一个组件实例里」而不是「在画布里」。真跑过一遍：用 Vue 的无 DOM 渲染器起一个真组件实例、在画布外调 `useGLTF` 拉线上那份 `window1.glb`，**161 ms 拿到 `state.scene`**，量出 3.6000 × 2.7000 × 0.1670——与离线脚本逐位一致。组件本身不画任何 DOM 节点（`<span v-if="false" />` 编译成注释），所以它当第三个根节点也不会在宫格或 flex 列里挤出一块空位。
+- **代价是这份 glb 会被加载两次**（量一次、装到墙上时 `SceneFloorplanOpeningModel` 再加载一次；全仓库没开 `three.Cache`）。不能用「共用 `state.scene`」省掉——那是 `SceneFloorplanWallSkin.vue` 文件头点名禁止的（`useLoader` 卸载时会 `disposeObject3D`，先卸载的把另一份正在用的几何体释放掉）。资产百 KB 量级、只在选中时发生一次，换「尺寸不会错」，值。
+- **写回是异步的，所以有两个竞态**，各有一道守卫：量完时若用户已经换了另一件料、或取消了选用，那次结果丢弃。守卫比的是**地址**（`applyMeasuredAssetSize` 拿「现在待用的 url」与「量的那个 url」对照），不是「现在选的是谁」——回头去读当前选中会拿到**新**地址配**旧**测量值，写下去正是一门一窗的错配，而且不报错。所以 `ModelMeasureProbe` 的 `measured` 事件里带着 `url`，那不是冗余字段。
+
+补丁**不进历史**：它只改「下一笔落笔用什么尺寸」，配置与场景一个字都没动，撤销栈里也没有东西可退——用户连点两格比较尺寸不会堆一串没意义的记录。这与墙那条「选料只对之后画的墙生效」是同一个已接受的代价。
+
+**退化时整套退回程序构件，与 33 里「整面墙退回灰盒子」同一个口径。** 加载中 / 404 / 资产不达标 / 没量出包围盒 / **2D 档**——这几种在屏幕上是同一个外观（那套灰框条加门扇 / 玻璃），也就是改造前的样子；成功时整套换掉，**两者绝不同时在**。2D 档走回退那一支与贴面墙同一条理由：正俯视下看到的是一条压扁的横切，不如一块实色（窗的 2D 回退尤其明显：从正上方看一扇装好的窗就是一块被拉扁的顶面）。
+
+**只对之后画的洞口生效**，代价与 33 那条逐字相同（选料 → 画 20 个门 → 改选另一种料，那 20 个门一点变化都没有）；「把已有的门换成另一个模型」这一轮不做。
+
+**洞口不做镜像、也没有「开向」这个概念**——这是**已知限制**，不是 bug。资产里门扇朝哪边开是烘死在几何里的（窗同理，双扇窗哪一扇可开也烘死在几何里），编辑器没有「左右手」这个概念；同一个模型装在两面对开的墙上时，两扇门朝同一个世界方向开。要支持它得往洞口上再加一个「镜像」位，而「洞口该不该有朝向」这件事眼下还看不清（推拉门、双开门都会各有各的答案），所以留着不动。
+
+**38. 空档里点选门窗、沿墙拖动改位置**
+
+门窗放下之后**只能删掉重放**——洞里没有它自己的坐标（只记「挂在哪面墙上 + 沿墙几米」），画布上也没有任何拾取路径：`wallPieces()` 吐出来的碎片只把位置与朝向写进模板，它那个 `openingId` 一直只用于「哪些洞口的内饰件不画」（`dropOpeningFills`），从来没人拿它做过命中判定；`ScenePicker` 只认登记过的模型节点。所以「点一下选中它、拖着挪个几十厘米」这件事，在加上这一条之前是**完全做不到**的。（后来设计决定 43 又补上了第二件事：选中之后在左栏点一格就能**换掉它的模型**。）
+
+**只在空档（`floorplanTool === 'select'`）里生效，一个工具按钮都不加。** 有工具开着时点一下 = 落笔、再点同一个位置 = 删掉，这条路**一个字都没改**——两条路没有一处共用判据，所以「空档」不是「工具关掉之后什么都不做」这个既有事实的补充说明，而是一件新事。为什么不加第六枚「选择」工具：它不是第六种工具，而是**所有工具都关掉时画布本来就该有的样子**，多摆一枚只会让人以为「不点它就没法选」；进空档照旧靠「再点一次当前工具」/ `Esc` / 右键两次。发现的路径写在视口底部那条提示行上（「点一个门或窗就能选中它，选中后按住左键可以沿墙挪位置」）——那是这套交互**唯一**能看见入口的地方，所以只在场上有洞口、且 2D 档时出现，空场景里不常驻一句用不上的话。
+
+**命中判定用平面距离，不用 raycast。** 拿**未吸格的原始地面点**（`rawGroundPointOf`，不是给绘制用的那个吸过格的）走现成的 `findNearestWall`，再在同墙洞口里判 `|洞口.offset − 命中点.offset| < 洞宽 ÷ 2`（与「再点一下删掉」那条同一个形状）。用原始点是必须的：`snap()` 最多能把点挪开半米，一扇 0.9 米的门在 1 米格里挪半米就选到隔壁去了。多个洞口都命中时取中心最近的那一个。
+
+**落点是「1 米格 + 磁吸邻边」，但整米步进吸的是「移动量」而不是绝对位置。** 这一条是整个设计里最容易被顺手改「对」的地方：`origin + round((wanted − origin) ÷ 1) × 1`，而不是 `round(wanted ÷ 1) × 1`。绝对吸附会让**贴着放好的一扇窗**（`offset` 落在 3.5 上，半米）一动就跳——拖 0.1 米时磁吸还拽着它，拖满 1 米时 `round(4.5)` 给的是 5.0，屏幕上就是「我拖了一米、它跳了一米五」。按移动量吸则「手走一米、窗走一米」，而且**格相是从放置那里继承来的**：放置给的整米、磁吸给的贴齐位置都原样保持，导入的旧配置（墙起点不在整米上，比如 `start: [2.4, 0]`）也不会被硬拽到另一套格子上。磁吸本身算在**原始的 `wanted`** 上，不是算在步进值后面——贴齐位置落在半米上（2.5 米的窗对 2.5 米的窗就是 3.5），而整数格永远给不出半米，接在步进后面等于把磁吸关掉。
+
+**空档只由邻居夹取，两端不缩边距——这是实现里改掉的一处，值得记下来。** 一开始按「洞口与洞口之间 0、洞口与墙角之间 `OPENING_EDGE_GAP`（0.1）」那条既有规则写空档，于是墙两端各内缩 0.1 米。后果不是「差一点点」，而是**有的洞口根本挪不动**：`placeOpeningAt` 从来不夹 `offset`，所以「3 米的墙上、`offset` 1.0、宽 2.5 米的窗」是一个**合法状态**（它本身已经越过了 0.1 米的余量），而按 0.1 米夹出来的空档压根不包含它 → `openingFreeGap` 返回 `null` → 用户抓起这扇窗，得到「这个洞口两侧没余量，挪不动」。同一个规则在两头一个松一个紧，就是这个结果。所以空档的 `from` / `to` 初值是 `0` / `length`，只由邻居收窄（洞口之间仍然是 0 间隔，那是用户明确要过的）。空档比洞口还窄时（旧配置重叠、墙太短）返回 `null`，调用方**拒绝开始拖动**并闪一句说明，而不是返回一个退化的区间去夹——后者会「抓起来就跳一下」，还会把一个已存在的重叠悄悄改成另一种重叠。
+
+**不能穿过邻居换空档。** 空档在抓起那一刻固定住，拖动全程只在这个区间里取位置；要换到另一个空档得删了重放（或者用右栏那个 ×）。光标摆到墙外一米也照常算数（`findNearestWall([这面墙], 原始点, Infinity)`——限死这一面墙、不设距离上限），所以贴着墙边拖不会卡住，也**绝不会跳到别的墙上**。
+
+**高亮抬在墙顶之上（`wall.height + 0.015`），而且用这面墙自己的高度。** 俯视图里看到的是**过梁的顶面**（`PLAN_LINTEL`，顶面就在墙高上），贴地画的高亮会被它整个盖住——`depth-write=false` 只关写、不关**深度测试**。用默认墙高也是个坑：这面墙可能是 2.6 米的，板子会浮在半空。位置 / 朝向 / 跨度**从渲染出来的那一片碎片上取**（`wallPieces(wall, [洞口])` 里 `role` 与外观填充对应的那一片），不自己写一遍三角函数——同源才能逐像素对齐；取不到碎片时退回自己算（退化尺寸、被 `placeOpenings` 裁过的重叠配置都是合法输入，高亮整块消失比位置略偏更难解释）。这块板由**游乐场那份草稿层**画（`SceneFloorplanDraft.vue`），库一个字不动：能进配置的由库渲染，编辑态的东西由编辑器渲染。它带着 2D 闸，所以 3D 里一个都不画（抬在墙顶的板在 3D 里就是一块浮着的琥珀片，看着像 bug）。
+
+**写入分两段：拖动中是中间态，抬手补一条。** 拖动中每次都用**不带 label** 的 `applyConfig`（走 400ms 防抖、不立刻进历史），与 `SceneViewer` 拖模型那条路一致；抬手时补一条带 label 的（「移动门」/「移动窗」）。补之前要比一次「当前历史位置上那个洞口的 `offset` 是否已经是终值」——`commit(forcedLabel)` 在**零差异时照样 push**，不比对的话「拖到一半停手超过 400ms（防抖已经提交）+ 抬手」会留下两条内容相同、标签不同的记录，`⌘Z` 按一次看着像没撤。
+
+**拖动的收尾有三层，因为中间会丢事件。** `pointerup` 提交并清状态；`pointercancel` 与 `pointerleave` **保留最后位置**、只清状态（写入早就发生过了，还原才是错的）；`pointermove` 里再兜一条「`buttons` 里左键已经松开就结束」——浏览器没给 `pointerup` 时（指针被系统拿走、元素被摘掉）这是最后一层，否则表现是**鼠标移回来窗口继续跟着走**。命中开拖那一刻对 `.ed-viewport` 那一层 `setPointerCapture`，`pointerup` / `cancel` / `leave` 时先 `hasPointerCapture` 兜一层再释放；捕获期间浏览器不再给那个元素派发 `pointerleave`，所以悬停点不会被半途清掉。它抢不到任何东西：`Shift + 左键` 在按下守卫处已经退让（那条只看 `enablePan`，2D 下是真的在平移），而 2D 下 `enableRotate` 是 `false`，`OrbitControls` 的左键分支第一句就返回。
+
+**「动过了没有」只看漂移，不能复用 `isClickGesture`。** 那个判据还要求 500 毫秒以内，慢慢拖会被判成「没动过」——松手后既不收尾、`pointerup` 侧还会走进点击分支。所以拖动这里只比 `Math.hypot(dx, dy) > CLICK_MAX_DRIFT`（同一份阈值，不另写一个数）。
+
+**闸门与撤销的两处细节。** 拖动这条路会**真的改配置**，所以除了「2D 档」，还必须在预览下闸掉——于是把 `planView`（2D 且没开「允许旋转」且不在预览）从 `floorplanEnabled` 里抽出来，两条路共用同一对条件；提示行那条判断里 `enableRotate` 必须**先**于 2D 判，否则「2D + 用户手动开了允许旋转 + 已选中」会说「可拖动」，而拖动其实是死的。撤销 / 重做之后选中的那个东西可能已经不在配置里了（`selection` 里存的只是一个 id）：**不额外清**，靠「在配置里查不到就返回 `null`」兜住——撤销把洞口挪回去时高亮自己跟着走，这正是想要的行为；墙那一条同理（`selectedWall` 也是按 id 回配置里查）。`Esc` 那一层判的也是查出来的结果而不是 id 本身，所以悬空时 `Esc` 会继续往下走（去退出预览），不会被一个看不见的选中状态吃掉。
+
+**39. 左栏的模型库分类只能「追加」，插槽不是覆盖**
+
+宿主能往左栏里加自己的分类、也能接管某一类的列表怎么画，但**内置那五类改不动**——`SidePanel` 的 `extraSections` 只能往后接，合并出来的表恒是「内置五类 + 宿主那几类」。不让覆盖的原因是那四个 key 承重：`TOOL_ASSET_RULES` 把地基 / 画墙 / 门 / 窗钉在 `floor` / `wall` / `door` / `window` 上，宿主换掉其中一个（或换掉那一类里的东西），工具那条链就会静默指向一个不存在的分类——点「画墙」跳到「我的模型」去。所以**选料这件事不开放**：追加分类点不到任何工具，也进不了量尺寸那条链（`ModelLibrary` 的 `cellIntent` / `measureUrl` 都认 key）。条目形状倒是完全复用（`LibraryEntry`），于是「已在场景里」的底色高亮、空态文案、缩略图 404 兜底、「点一下追加到场景」全部白拿。
+
+**类型上怎么放宽的，是这一条里最该照抄的部分。** `librarySection` / `openLibrarySection` / `resolveLibrarySection` 的 key 由 `LibrarySectionKey` 放宽成 `string`（追加分类的 key 是运行时的），但 **`LibrarySection.key` 那个字面量联合一个字没动**——追加分类另立一个 `ExtraLibrarySection`（`key: string`、`icon?`），两者合成 `MergedLibrarySection`。若图省事把 `LibrarySection.key` 一并放宽，`DEFAULT_LIBRARY_SECTION_KEY` 会失去字面量类型（得加一句类型断言），而 `SECTION_ICONS satisfies SafeIcons`（内置分类漏画图标）与 `TOOL_ASSET_RULES`（工具绑到不存在的分类）两处守卫会**静默退化成 `Record<string, …>`**——不报错，守卫没了。放宽之后这两处守卫仍然只认那个联合，写错内置 key 不再是编译错误这件事，代价落在这里写清楚了。
+
+**合并表是唯一真相，两处读同一个数组、走同一个函数。** `SidePanel` 建表（`sections` computed），导轨高亮与宫格内容两处都吃它；`resolveLibrarySection` 因此从「自己拿 `LIBRARY_SECTIONS` 兜底」改成**显式收表** `resolveLibrarySection(key, sections)`——左栏现在有**两张**表（内置的、合并的），让读的人自己说清用的是哪一张，比函数偷偷挑一张可靠。泛型是为了保住元素类型（传内置表就还你内置项）。兜底仍是 `sections[0]`，也就是**内置第一条**：宿主把一个追加分类撤掉、而左栏正停在那上面时，落回的是内置分类而不是空白。
+
+**`#list` 要跨一层透传，而「条件插槽」在这里是可靠的。** 导轨在 `SidePanel`、宫格在 `ModelLibrary`，所以宿主给 SidePanel 写的 `#list` 由 `SidePanel` 转给 `ModelLibrary`。转法是 `<template v-if="$slots.list" #list="scope">`——`v-if` 与 `v-slot` 写在同一个 `<template>` 上是合法的，而且条件为假时那个插槽**真的不存在**（编译成 `ok ? { name: 'list', fn } : undefined`，用仓库里的 `vue/compiler-sfc` 实测过），所以 `ModelLibrary` 里 `!!slots.list` 判得准，不会把「一个空的透传壳」误当成「宿主接管了宫格」。宫格那一侧的分流是三分支紧挨着的 `v-if` / `v-else-if` / `v-else`：**追加分类 + 宿主给了 `#list`** 才交出宫格（连滚动容器和空态一起交出去），内置分类永远走下面那一支，宿主**覆盖不了**。`ModelMeasureProbe` 继续当最后一个根节点，`:key="librarySection"` 继续落在宫格那个 div 上——分类在「内置 ↔ 追加」之间切换**不会重建组件**，`broken` 与已经加载好的缩略图都还活着。
+
+**导轨那两项的合并判据写成函数、判据从模板里传进去，不是洁癖。** `railButtons(!!$slots.rail)`：宿主写了 `#rail` 就只剩内置那五项（追加项改由插槽给出，否则每项两个按钮），没写就连追加的一起代画。写成 `computed` 读 `slots` 是**错的**——`slots` 对象是父组件重渲染时才换掉的普通对象，在 computed 里读它不建立依赖，父组件先不写插槽、后来写上了，那个 computed 不会重算。读 `$slots` 必须发生在渲染期，这一条在这里留了注释。
+
+**`LibraryIconPath` 与 `useInspectorSchema` 的 `IconPath` 结构一样，却是各写一遍。** 那边 `import type` 过来是一条**真环**：`useInspectorSchema` → `useEditorState` → `useModelLibrary`，而 `useModelLibrary` 对 `useEditorState` 是上游（顶上那段纪律点名不许依赖「`import type` 擦得掉」）。两处形状一致由 `SidePanel` 取图标那一行兜着（`SECTION_ICONS` 那张表与 `section.icon` 同处一个 `??` 表达式），任一边改了字段都会在那里红。同一处的第三级兜底是立方体占位图：宿主忘了写 `icon` 时导轨上看得见、也知道该点哪里，而不是一格空白。
+
+**40. 由 JSON 零件表程序生成几何体**
+
+有些模型不是从服务器下载的 `.glb`，而是**由一段数据算出来的**：宿主从自己的后端拿到一张零件表（每一件是一个盒子或一根圆柱，带上尺寸、位置、颜色），编辑器照着它生成几何体。它的载体是 `ModelConfig.partsJson`——一段 **JSON 文本**，可选，与 `url` 并列。为什么需要它：这类资产的「模型」本来就只存在于宿主的数据库里，为了让它出现在左栏里而先去导一个 glb、再传上服务器，是把宿主的数据反向做成远程文件；而按需生成既没有网络往返，也能让宿主用同一份数据在自己的界面上画预览。
+
+**字段存的是字符串本身，不是解析好的对象。** 宿主与它的后端手里就是这一段文本，编辑器不替它解析、也不改写，一路原样存进配置、导出时原样带走，**只在渲染那一刻 parse 一次**。这么做换来两条：一是配置的 JSON 往返是**逐字**的（宿主存进去什么、导出来就是什么，中间经手几个人都不会被规范化）；二是它**不需要**在 `cloneModelPatch` 里单独拷一份断别名——那一段的名单上只有 `position` / `rotation` / `scale` / `repeat` / `events` 五样，**全是数组与对象**，而字符串是值，装进配置的就是值本身。这一条明确写在了那段注释上：下一个往 `ModelConfig` 里加数组型字段的人最容易照着 `partsJson` 抄，而数组是会别名出去的。
+
+代价是配置里**允许存在一段坏 JSON**（它照样能被存下、被导出）。校验因此发生在两个地方，各有各的理由：**进场景之前**（左栏那一点先读一遍，读不出来就不追加，并在日志里说清是哪一格、为什么），以及**渲染时**（读不出来就画不出东西，并在控制台说一句）。追加时那一道是主路径——把错误挡在「配置里根本没有这一条」这一步，比让人事后对着一片空白猜要好得多。
+
+**两个几何体来源互斥，`url` 优先。** `url` 与 `partsJson` 都能给出一件几何体，同时存在时用 `url`。这条约定**没有别的地方承载**，它就落在渲染端的分支顺序上（`SceneModelNode` 里 `v-if="model.url"` → `v-else-if="model.partsJson"` → `v-else` 内置示例），而左栏追加时按的是同一个顺序。只在一处交换顺序，画面与「配置里写的」就会各说各话，且哪里都不报错。
+
+**分支插在包裹组内层，所以选中、点选、包围框、变换手柄、测量、历史、导出全部白拿。** `SceneModelNode` 里那只 `TresGroup` **永远渲染**，`v-if` 只在它内部挑一条分支——于是新画出来的每一件都自动进了 `registerModelNode` 的登记（选中靠 `model.id`，与渲染的是 glTF 还是几何体无关）、`ScenePicker` 的 raycast、`measure`（量的是那只组），以及配置那一路。`ScenePicker` / `SceneSelection` / `SceneContent` / `stores/scene.ts` **一行都没改**。
+
+有一条**看着更省事的旁路是明确否掉的**：`SceneViewer` 的 `#scene` 插槽能把这些几何体画出来，改动量为零。但插槽内容在 `SceneContent` **之外**——点不中、没有包围框、没有手柄、不进配置、不进历史、不能导出。「画得出来但不是一个模型」，是这一整类工作里最费时间的一种，所以宁可改库也不走那条路。
+
+**`count` + `radius` 的摆法：「起点 +Z、每份跟着绕 Y 转 θ」。** 第 `i` 份的 `θ = 2π · i / count`，位置是 `(x + radius·sinθ, y, z + radius·cosθ)`，**朝向也绕 Y 转 θ**。这两半缺一不可，而第二半最容易漏——依据是 demo.md 那把椅子能逐件对上：`腿部横撑` 的长边是 `d`（沿 Z，0.45 米）、`count: 5`、`radius: 0.35`，只有「起点在 +Z、每份连朝向一起转」才让五条横撑成为**径向的辐条**；少了「跟着转」那一半，它们会围成一圈**切向**的方框。反方向的证据也在同一份数据里：没写 `count` 的零件（左右扶手立柱，各自写了 `x` 与 `z`）不旋转、原地不动——`count` 缺省 1 时 `θ = 0`，位置就是 `(x, y, z)`、朝向就是 0，两条规则合成一条。另一条同样从数据里读出来的是 **`y` 是中心高度**：底座（`h: 0.05, y: 0.28`）与气压杆（`h: 0.35, y: 0.48`）正好接得上。
+
+**校验的口径是「严格 + 逐件剔除」，与 `wallFaceUnusable` 那一族同一套。** 一件零件只要有一处不合格就**剔掉这一件**（形状认不出、尺寸不是有限正数、`count` 不是 1..64 的整数），其余照画，`dropped` 报出数、控制台点一句名；**整份读不出来**（空串 / 不是 JSON / 顶层不是数组 / 件数超过 `MAX_PARTS`）才一件都不画，并给一句人话。不静默修补的理由是最实际的那一个：**一个 NaN 顶点会让整块几何整块消失**（`SceneModelNode.measure` 上有完整机制），而那时画面只是少了个东西，哪里都不报错。「11 件里画出来 8 件」也一样——它在画面上是一个**看起来正常**的东西，不说就永远查不到。
+
+`MAX_PARTS`（512）与 `MAX_COUNT`（64）是**公开约定而不是内部实现**：一件 `count: 100000` 的零件就是十万个 mesh、十万次 draw call，所以超了**整份拒掉**而不是静默截断——截断出来的画面「差不多是对的」，最难查。两个上限都要有：只有件数上限的话，「一件零件、`count: 100000`」这种表照样过得去。
+
+**算术全在 `src/utils/modelParts.ts` 里，全是纯函数，所以能被冒烟测试跑。** 这一条在这一处格外要紧：几何体是从数据算出来的，**算错了不会抛异常**，只会画出一个形状不对的东西，而形状对不对只有眼睛看得出来。把算术从渲染里拆出来，至少「位置 / 朝向 / 参数个数」这几条能被钉死（`scripts/smoke.mjs` 里有四条）。它同时是**公开面**（`src/index.ts` 导出）：宿主生成端要按同一套摆法算位置，校验端要按同一个判据判能不能用，抄一份的下场与 `wallFaceFit` 那边写的一样。
+
+**一个类型上的教训值得单独记一笔。** `PlacedPart.geometryArgs` 一开始写的是扁平 `number[]`，注释里还写着「TresJS 的组件名没有类型声明，联合在这里买不到东西」——**这句话是错的，类型检查当场就把它挡了回来**。TresJS 用 `GlobalComponents extends TresComponents` 把 three 的每一个类都映射成了全局组件（`tres.d.ts:504`），所以 `<TresBoxGeometry :args>` 的类型就是 `ConstructorParameters<typeof BoxGeometry>`，一个**长度确定的元组**；宽口 `number[]` 在那边报「源可能更长」。改成判别联合 + 元组之后，模板里 `v-if="part.shape === 'box'"` 一收窄，参数表就恰好是那个三元组——「`shape` 与参数个数必须一致」这条不变式于是**写进了类型**。同一处还有一条：`<TresMesh :position>` 要的是 `Vector3` 而不是三元组（`WithMathProps` 把 three 的数学类属性换成了数学类本身），所以 `SceneModelParts.vue` 里逐件 `new Vector3().fromArray(...)` / `new Euler().fromArray(...)`，与 `SceneModelNode.vue` 换配置里那三个数是同一个手法。**逐件新建而不是共用一个再 `set`**：TresJS 把这些对象接过去当物体自己的 `position`，共用一份就是所有零件叠在同一处，而且拖一个会带着其余的一起动。
+
+**空串 `url` 有第三种意思了，这是这一条里唯一的坑。** 它原先只有两种：「内置示例几何体」与「不是模型（天空盒条目）」。现在多了「这一件由 `partsJson` 生成」——于是 `sceneUrls`（一个 `Set<url>`）**不能**再回答「这一格在不在场景里」：场景里只要有一个程序生成的模型，所有空 `url` 的条目会一起亮起「已在场景里」。这与天空盒那次是**同一个坑**（那边是三十多格一起亮），修法也一样：另起一个集合（`scenePartsJsons`）。三处分流各写各的判据、都写在明处——`isInScene` / `describeEntry` / `add`，其中 `describeEntry` 那一支不能少：漏了它，一个程序生成的模型会被读屏念成「追加内置示例几何体到场景」，而这一格的东西**不在服务器上**，听懂的用户会去服务器上找一个不存在的文件。
+
+**41. 场景预设只管光照与光影（并且住在右栏「日照环境」里）**
+
+那四条（清晨 / 正午 / 黄昏 / 夜晚）是**几个时间点的光照与光影**，对应 `sun` 与 `shadow` 两个分组里的十几个标量，一个顶点都不生成。这一条记的是**为什么只有这两组**——另一半原因（原先四条会连相机、地面、画布底色、环境贴图一起改）在这份文档的旧版本里还看得见，是被这一轮换掉的。
+
+**它们原先在左栏，是一个独立的页面（`PresetPane.vue`），现在是右栏「日照环境」的 03 节（`components/inspector/PresetList.vue`）。** 搬家的理由是**这两样东西本来就该挨着**：预设改的就是那一页的字段（太阳高度 / 方位、三盏灯的强度、阴影的浓淡），隔着半个屏幕点一下、再回头看数字变没变，是把一个「就地试试」的动作变成了一次往返。左栏因此只剩模型库一页，导轨上也不再混着两种项（一个页面级的 + 五个分类）——`LeftTab` / `leftTab` 那两个东西随之删掉，`RailItem` 那个 `kind: 'page' | 'section'` 联合也收成了一个接口。
+
+**它的位置是「环境贴图」那一节腾出来的，而那个下拉框连**字段入口**一起删了**（`sun.environment` 本身保留，宿主仍可经 props / 导入 JSON 设定）。删它的理由与预设收窄是同一条：**一次网络请求加一次全材质重编译不该长在一个点一下就该出画面的面板里**（下面第四条链）。留着它只有两种活法，都不好：留着下拉框，用户点一下要等两秒、还要顺手把天空盒清掉（一条只有入口才写得出来的规则，见天空盒那一节）；或者留一个点了没反应的控件。所以那个 `select` 与它的 `apply`、以及 `ENVIRONMENT_OPTIONS` 那份清单一起删掉，`useInspectorSchema.ts` 的日照环境页因此只剩 01 天空 / 02 光照两节，03 由 `PresetList` 自己画。
+
+**这次搬家顺带修了一处旧的不顺手：太阳高度与方位不再跟着天空一起收起来。** 它们原先挂着 `when: (config) => config.sun.showSky`（关掉程序化天空就整行消失），可那两个角**无论天空开不开都在驱动主光方向**（`SceneContent` 里那盏平行光的朝向就是照它俩推的）。预设写这两个数，于是关着天空的人点一下「黄昏」，画面里光真的斜了、面板上却找不到是哪个数在动——收起来的那两行正好是它的落点。现在两行常驻，解释这件事的那句提示也从「只在开天空时出现」改成常驻。
+
+**起因是「切一下预设，中间画布卡死好几秒」，而它是重活、不是死循环。** 排查沿两条线走：有没有「写配置 → prop 变 → 再写配置」的反馈环（`SceneViewer` 那四条 `{deep: true}` 的 prop 回写确实存在，但 playground 一个都没传，那条路走不到；控件与档位推导也都不回写），以及**点一下到底唤醒了多少帧**。结论落在后一条上：原来那四条预设每条都改 `shadow.type`、`environment`、`skybox`、`background`、相机与地面，而这几个字段各自挂着一条几百毫秒到十几秒的链。
+
+**四条链，量级一条比一条大，全都由「预设改了某几个字段」直接触发。**
+
+- **换 `shadow.type` = 换一个阴影组件。** `SceneShadows` 里 `contact` 与 `accumulative` 是两支 `v-if`，type 一变就是旧组件卸载、新组件挂载，而累积阴影是**挂载即开烘**：40 帧（`accFrames` 默认 40）里每帧 `prepare()` 遍历整棵场景把每个材质换成 `discardMat`、8 盏随机灯各渲染一张 1024² 阴影贴图、再往两张 1024² 的累积贴图里渲一发，`finish()` 再遍历一遍还原。一帧就是十几次全场景级渲染，40 帧叠起来正是「卡好几秒」。**这是主因**，而原来的四条预设里有两条用的是累积阴影——在它们之间切换等于每次重新开烘。
+- **改 `accFrames` / `accBlend` / `accScale` 与换 type 一样贵。** cientos 把这三个与 `frames` / `limit` 挂在同一张表上：`watch(() => [props.frames, props.once, props.accumulate, props.scale, props.limit], reset)`，而 `reset()` 清掉那两张累积贴图并把 `frameCount` 归零——整轮烘焙从头再来。**「范围」与「帧数」在代价上是同一件事，这一点从字段名上完全看不出来。**
+- **改 `sun.environment` = 一次网络请求加一次全材质重编译。** cientos 的环境预设从 `raw.githubusercontent.com` 拉一张 1k 的 HDR（实测 1.6MB、约 2s），落地后写 `scene.environment`，接着是环境贴图的生成与**所有材质 shader 的重算**。网络那段不占主线程，但它意味着「点完预设要等两秒才出画面」，重编译那几百毫秒是真的卡。
+- **`shadow.enabled` 从关到开会重编译整个场景。** `TresCanvas` 的 `shadows` prop 落到 `renderer.shadowMap.enabled = value` 加 `forceMaterialUpdate()`，而后者 `scene.traverse` 把**每一个** Mesh 的材质标成 `needsUpdate = true`。
+
+**收窄之后，剩下的字段每一个都验证过「点下去几毫秒内出画面」。** `contact*` 那三个在 `ContactShadows` 的 watch 表里（`opacity` / `blur` / `scale`），改一个只是 `updateOnNextRender()` 重画一帧 `contactResolution`（512²）——那个组件本来就 `:frames="1"`。`elevation` / `azimuth` / 三个强度是纯标量，进的是灯光与相机的 position / intensity。**所以「卡死」是结构性消失的，不是靠防抖或延时压下去的**——这一页现在没有留下任何一个能唤起多帧烘焙的字段。
+
+**例外只剩一处，而且只在第一次点击时可能发生。** 三条预设全都会写 `enabled` / `castShadow` / `receiveShadow`（写全那条规矩逼的，见下），于是它们**可能**变一次值：`enabled` 从关到开是前面那条全场景重编译，而 `castShadow` 在 `SceneContent` 的 `bakeKey` watch 表里——它一变就 `revision++`、阴影组件重挂载。对接触阴影是重画一帧，对**累积阴影是一整轮 40 帧的烘焙**。之所以说「只在第一次」：这四个预设写的都是同一组值，第一次点击之后 `castShadow` 就是 `true` 了，往后再点谁都不会再变。这一点代价是刻意留的——反过来（不写 `castShadow`）意味着一个用 `map` 方式、又恰好关掉了「投射阴影」的人点任何预设都没有影子，那是「预设坏了」而不是「第一次点略慢一拍」。
+
+**最阴的一个是 `accOpacity`：它不是太贵，是太便宜。** 它不在那张 watch 表里，只在烘焙那一趟被读一次（`material.opacity = Math.min(props.opacity, …)`），烘完之后再改它没有任何东西会重新读一遍——**画面上一点反应都没有**。写进预设就是「点一下明明改了参数却什么都没发生」，那比缺失更坏：用户会以为整个预设坏了。所以累积阴影那一组**一个都不写**，四条预设全都不碰 `acc*`。代价说清楚：用累积阴影的人点预设，能看到光变了（灯的角度与强度照常生效），但那块影子的大小与浓淡归他自己管，预设不插手——这也正是「不换 type」的必然结果。同一组数在 `ContactShadows` 那边是当场生效的，**两边待遇不同是 cientos 自己的取舍**，不是这里能选的，所以两边都写、只写一边的字段。
+
+**每个预设必须把它管的字段写全。** `applyConfig` 是深合并而不是整体替换，漏写一个字段就等于让它**继承上一个预设的值**：从「夜晚」（`receiveShadow: false`）切到「正午」时，正午若不写 `receiveShadow`，地上就一直没有影子，而面板里那个开关明明开着。所以 `sun` 那五项与 `shadow` 那几项每个预设都从头写一遍、不看上一个是谁。这条也是「预设不写某一整组」的代价所在：**不写的那一组由用户说了算，而这要求那一组有明确的主人**——累积阴影的参数归右栏「阴影」，天空与四个大气参数归右栏「日照环境」（天空是一个巨大的背面盒体，管的是「头顶上那层天长什么样」，与灯照亮什么无关；而 `elevation` / `azimuth` 在开着天空时**同时**驱动太阳的位置，所以用户开着天空时，预设挪主光也就顺便挪了太阳，那是对的）。
+
+**相机、地面、画布底色、环境贴图、天空盒各有主人，预设一个都不碰。** 相机是用户的取景，点一下预设就把镜头挪走，是拿一个装饰性的动作打断一件正在做的事；地面与底色在右栏「地面」与左栏「地板」；天空盒在左栏那一类里；环境贴图只剩配置字段（没有界面入口，理由见上面那条），而且这两样是一次网络请求。于是预设这个词在这份编辑器里的意思被钉死为**「换个光看看」，不是「把这个场景重置成这样」**。同一口径下最早定下的一条是不写 `models`（见上面那条），四条预设也不写 `models`。
+
+**顺带两条收益。** 一是高亮反推（`activePresetKey`）的判据只剩那十几个数，用户挪一下相机、关一下地面、换一组天空盒，高亮都**不会**跟着灭掉——那些字段本来就不在补丁里，与「现在是不是这个预设」无关。二是往后往这一页加预设有了明确的判据：**只写「点下去一帧内生效」的字段，写全它所在的那一组，不和用户抢任何东西的所有权**；要动阴影的实现方式或分辨率，那属于右栏「阴影」页，不属于预设。
+
+**这两条都写进了类型，不靠注释。** `ScenePreset.patch` 不再是 `DeepPartial<SceneConfig>`（那个宽口类型允许预设顺手改相机、地面、环境贴图），而是 `{ sun: PresetSun; shadow: PresetShadow }`，两个 `Required<Pick<…>>` 白名单：多写一个分组是 `TS2353`，漏写一个字段是 `TS2741`，而 `pnpm typecheck` 与 `pnpm build` 都跑 `vue-tsc`。三条都实测过——临时往一个预设里塞 `accScale`、塞一个 `camera` 分组、删掉一个 `fillIntensity`，各自被挡了下来。同 `PlacedPart` 那条教训一样的道理：**说好的不变式能交给类型就别留给记性**，这一页尤其经不起记错——写错的代价不是画面上有点不一样，是点一下卡几秒。
+
+**42. 「阴影」页的三组参数按实现方式只留一组，且分区级 `when` 是隐藏而不是置灰**
+
+三种实现方式（Shadow Map / 接触阴影 / 累积阴影）各有一套参数，**同一时刻只有一套在起作用**，另外两套写进配置也不会被读到：
+
+- `type === 'map'` 之外，主光的 `cast-shadow` 被 `keyCastShadow` 关掉（设计决定 12），而 `mapSize` / `bias` / `normalBias` 正是写给那盏灯的；
+- `SceneShadows` 里 `contact` 与 `accumulative` 是两支 `v-if`，不选中的那支**根本不挂载**，它的参数没有读者。
+
+原先这三组分区无条件全渲染，于是默认状态（`shadow.enabled: false` + `type: 'contact'`）下页面上有十来个滑杆，**拖了全都没有反应**，而界面一个字都不解释——用户的第一反应是「阴影配置坏了」，而不是「我拖的那一组归另一种方式管」。
+
+现在的做法是给分区加一个 `when`（`SectionDef.when`，与 `FieldDef.when` 同口径）：
+
+- **判据是 `shadow.enabled && shadow.type === X`，两道都要。** 总闸关着的时候三组全死（`SceneShadows` 整个没挂载、主光也不投影），只按 `type` 过滤的话，关着总闸仍会留下「接触阴影」那一组看着能拖的滑杆——那还是原来那个毛病，只是少了两组。
+- **三组分区序号都写 `02`。** 序号说的是「在页面上排第几块」而不是「在 schema 数组里排第几项」：同一时刻只会存在一组，它就是紧接着 `01 方式` 的第二块。编成 02 / 03 / 04 的话，另外两组消失时会留下一个跳号的空位，看起来像页面坏了。
+- **「实现方式」那一行补了一句提示**（「下面只显示当前方式的那一组参数」），否则用户不知道另外两组去哪了。
+- 这一条与设计决定 41 是一对：**预设不写 `acc*`，是因为那组参数改了要重烘一整轮；这一页把它们藏在对应的方式后面，是因为它们只在那种方式下才是活的。** 两处说的是同一件事的不同面——一个字段该由谁写、什么时候才存在，都在 schema 与类型的层面定死，不靠用户猜。
+
+**遗留的一处小瑕疵（未修）**：属于累积阴影的 `accOpacity` 与 `accBlend` 即使方式选对了也是死的。cientos 的 `AccumulativeShadows` 只有 `watch([frames, once, accumulate, scale, limit], reset)`——**不含这两个**，而它们只在 `update()` 里被读、`update()` 又只在累积帧期间跑（`frameCount < frames || frameCount < blend`，默认 `once: true`），40 帧烘完就再没人读。这一页里真正有效的只有「累积帧数」与「采样范围」（它们进 watch 表，改一次触发 `reset()` 整轮重烘）。本轮只按方式把三组分开、没有动这两个控件，理由见「后续可以做的事」。
+
+**43. 2D 里点中一个门窗，左栏跟着走过去，再点一格就换掉它**
+
+选中一个洞口这件事原来只有**视口底部那条提示行**能被发现（设计决定 38 末尾那段）。现在补上第二个入口：按下选中它的同时，左栏自己切到这一类（门 → 「门」、窗 → 「窗」），再点一格就把它换掉。几条要点：
+
+- **分类从 `TOOL_ASSET_RULES` 查，不写第二张映射表**（`sectionKeyForOpening`）。那张表是「这个工具从哪一类里挑料」的唯一真相，而「这扇门的外观资产住在哪」问的是同一件事——另起一张表的代价是将来加第五个配料工具要改两处，漏一处的表现是「点了门，左栏走到别处去」，不报错。
+- **「这一格点下去是干什么」是一份判别式**（`ModelLibrary.vue` 的 `cellIntent`）：`pick`（有配料工具开着、正停在它那一类）或 `replace`（空档里选中了一个洞口、正停在它那一类）。做成一个联合而不是并列两个 computed，是因为宫格三处读它（高亮、无障碍名字、点击分流）必须对同一件事给出同一个答案。两种模式**按构造互斥**：后者要求洞口被选中，而选中只可能发生在空档里。
+- **替换模式的高亮读配置**（`opening.url`），不是读那次点击的记忆（`pickedAssets`）：与「天空盒现在生效的是哪一个」「模型已在场景里」同一条口径，撤销一步、导入别的配置都会自己跟上。它复用的仍是 `.ed-lib-cell--picked` 那一圈琥珀——**不能**改用 `.ed-item--active`，因为那条的语义是「场景里已经有它了」，与「洞口现在装的是它」可以同时成立（门资产完全可能既被追加成一个模型、又被装在洞里），挤同一个通道就会互相盖住。
+- **尺寸跟着新料重开洞 ⇒ 那两道拒绝必须重跑**。判据抽成库里的 `openingRejectReason`（`'too-short' | 'overlap'` 两个原因码），与 `placeOpeningAt` **共用一份实现**，说人话留在编辑器（`REJECT_HINTS` 那条先例）；过不了就闪一句人话、一个字都不写。抽进库不只是洁癖：`scripts/smoke.mjs` 只加载 `dist/index.js`，判据留在 `playground/` 里就等于这条新路一行都测不到。
+- **不加第三道检查，`sillHeight` 不动**。「洞口探出墙端」是合法状态（`openingFreeGap` 顶上那段写着 `placeOpeningAt` 本来就不夹 `offset`），替换与放置同宽同松才对；加一道「必须在墙内」的症状是「同样一扇窗，放得下、换不上去」。`sillHeight` 是 `kind` 的函数，替换不换种类，顺手写一遍等于给导入配置里那个合法的怪数做归一化。
+- **「记成当前料」用设置语义（`setAssetPick`），不是 toggle**。`toggleAssetPick` 的契约是「点已选用的那一块就是取消」，而替换这条路上用户说的是「换这一樘」——用 toggle 的话，替换之后再点同一格会把料清掉，下一笔画门悄悄回到程序构件那套，而屏幕上什么提示都没有。
+- **url 与尺寸算下来都一样时只闪一句、不写配置**：带 label 的 `commit(forcedLabel)` 在零差异时照样 push（`src/stores/scene.ts`），不防的话点一下同一格就多一条撤销记录。
+- **左栏的替换模式与墙顶那块高亮同一道 `planView` 闸**（导出成 `replaceTarget`）。3D 里选中状态其实还活着，只是高亮不画；不同一道闸，用户切到 3D 后点一格就会改掉一个屏幕上不存在的洞口，而日志里只有一条正常回执。判据只写在一处，不让左栏自己各判一遍。
+- **撤销之后**洞口 id 不变，所以高亮与替换模式都还在，只有「现在装着哪一樘」那一圈退回去——与「撤销把洞口挪回原位时高亮跟着走正是想要的」同一条。`pickedAssets` 不进历史，所以「当前料」不退。
+- 本轮**不做**「换回程序构件」（撤掉外观、退回程序生成那套框加扇），理由与退路见「后续可以做的事」；替换模式下也**不量尺寸**，清单没写宽高的资产按「保持洞口原尺寸」兜底（量出来的数只能补到「待用的料」上，而替换已经写完了配置，异步回来的测量没地方放）。
+
+**44. 一面墙也能这样换：点中它、左栏切到「墙壁」、再点一格换掉它的墙面模型**
+
+与 43 是同一套路（选中 → 左栏跟着走过去 → 点一格换掉），补的是「能换外观的东西」里缺的那一个：墙。墙原先只有右栏「03 墙」那一行末尾的一枚 ×，而它只管删掉——**点墙身没有任何反应**，换外观这件事一辈子只有一次机会（画墙那一刻把当前选中的料写进 `url`）。
+
+- **只在 2D 档能点**，与洞口那条同一道 `planView` 闸（用户拍过板）。3D 里点墙仍然没反应：那要另写一条射线拾取（今天的命中走的是「地面求交 + `findNearestWall`」），还要解决「左键拖动是转视角」与「点一下选中」的冲突。两件事都不算难，但都不在这一轮里。
+- **选中是一份状态、不是两份**。洞口原先是一个 `selectedOpeningId`，加墙最省事的写法是再放一个 `selectedWallId`、然后约定「设一个时清另一个」——那让互斥变成两条 setter 都得记得的规则，而规则是会忘的。现在装进同一个 `selection` ref（`{ kind: 'opening' | 'wall'; id }`），**「一次只选中一个」按构造成立**，不需要谁记得清（与 `ModelLibrary` 的 `cellIntent` 是同一条路子）。读侧仍然是两个 computed（`selectedOpening` / `selectedWall`），而判据都是「**在配置里查得到**」而不是「id 不是 `null`」——理由见设计决定 38 末尾那段（撤销之后 id 会悬空）。
+- **高亮与靶子各合并成一个 computed**（`selectionHighlight` / `replaceTarget`），而不是「洞口的一个 + 墙的一个」并排：`planView` 那道闸、以及「两个不会同时选中」这条互斥，各只写一次。并排的写法会让这两件事各出现两次，将来改一处就会只改到一半。组件那边只换了读哪个 computed，模板一个字没动。
+- **墙的高亮是整面通长一条，不从碎片上取**：洞口那一块必须从 `wallPieces` 切出来的碎片上量（它得落在洞里、避开过梁），而墙要的正是**从这头到那头**——被洞口切开的段拼起来才是它。位置取 `pointAlongWall(wall, wallLength(wall) / 2)`、朝向取 `wallRotationY(wall)`；高度照样抬在墙顶之上（`wall.height + 0.015`），与洞口同一条理由（俯视图里看到的是过梁顶面，而 `depth-write=false` 只关写、不关深度测试）。**不能靠 `role === 'slab'` 去找它**：那个 role 从来没被 `wallPieces` 产生过。
+- **替换就是重写一个 `url`**：`wallPieces` 完全不认识这个字段（设计决定 10 那条「它是画笔留下的痕迹，不是几何」），所以这条路**一根几何都不动**。冒烟里那条既有检查（「写没写外观，切出来的碎片一模一样」）就是它的依据，这一轮在墙上也量了一遍。
+- **没有尺寸校验，一个字都不抄**：洞口那两道拒绝（墙太短 / 压着邻居）是**洞口的**问题——它要在墙上找一个放得下的位置。墙的外观看的是 `wallFaceTiles`（沿墙长平铺、高厚拉伸），**不问资产装不装得下**，所以那两道拒绝在墙上是**空集**。照抄过来只会得到一句永远不会触发的死判据。
+- **不预检资产**：画墙时也不预检，替换沿用同一条才是一致的。资产不达标（零厚度、全是背景板、404）时渲染端已经整面退回灰盒子，并打一条**点名了原因**的 `3dmaker:` console 警告（`SceneFloorplanWallSkin` 的 `notice`）——那句话替换前后都成立，不需要在左栏再加一道。
+- **绝不写 `height` / `thickness`**：这两个是「一次改全部墙」的全局量（`addWall` 那段解释了为什么不能另立一份），替换只动 `url` 这一个键；元素还得 `{ ...wall }` 展开着写（条件展开出来的 `url` 会在手写字段时被丢掉）。
+- **提示行按「选中的是什么」分句**：墙没有「沿墙拖动」这回事，所以洞口那半句「按住左键可以沿墙挪位置」不能带到墙上。而**未选中的那一句原先只在「场景里已经有洞口」时才出现**，于是「画了几面墙、还没放门窗」这个最常见的状态下，用户根本不知道画布可以点——这一轮改成有墙就说，并按有没有洞口决定说不说后半句（别描述做不了的手势）。
+- 本轮**不做**「换回灰盒子」：点「已装的那一格」是 no-op（`setAssetPick` 是设置语义），所以把 `url` 摘掉、退回程序生成的灰墙今天做不到。与 43 那条同一个缺口，见「后续可以做的事」。
+
+
+
+模型库里的资产是「一个模型一个目录，目录里放同名的 `.glb` 与 `.png`」（`tile1` → `floor/tile1/tile1.glb` 与 `floor/tile1/tile1.png`），`png` 缺了或加载失败就回退成占位图。除此之外没有别的约束——它会被当成一个普通模型摆进场景，原点、尺寸、朝向都随你。
+
+**天空盒那一类**（`skybox/`）**与上面这套摆放约定不同，它没有 `.glb`**：每个目录里是**六张 jpg**，文件名固定为 `back` / `down` / `front` / `left` / `right` / `top`，一张一个面——
+
+```
+skybox/bak1/{back,down,front,left,right,top}.jpg
+…
+skybox/bak38/{back,down,front,left,right,top}.jpg
+```
+
+编号连号、`bak` 后面直接跟十进制序号（不是 `bak01`、也不是 `bak-1`）。这份清单是在 `playground/utils/modelList.ts` 里**循环拼出来的**，数量由那个文件里的 `SKY_BOX_COUNT` 决定——服务器上加了目录而没改这个常量，表现是宫格里少几格，不会报错。**清单的第一条不是服务器上的目录，是本地的「空盒子」**（`file` 为空串，点它是关掉天空盒，见设计决定 36）：它是这类条目里唯一一个不指向 `skybox/` 下任何目录的，所以左栏格数 = `SKY_BOX_COUNT` + 1。
+
+- **六个名字按「相机朝向」读，不按世界轴读——`front` 是 −Z 那一面、`back` 是 +Z 那一面**，与社区惯例（`[px,nx,py,ny,pz,nz]` = `[right,left,top,bottom,front,back]`，`front` = +Z）差一个绕竖直轴的 180°。**这一条是量出来的，不是推的**：把六张图按某个摆法合成一张等距柱状全景图，量四条竖棱两侧各一列像素的差，拿它跟图自己的相邻列差（约 3~4）比——按社区惯例摆是 12.7~24.7（**四条棱全裂**，用户看到的就是这个），按这套摆法是 1.9~4.6（与普通相邻列无异，也就是连续）。完整依据在 `SKYBOX_FACE_FILES` 那一行上。**注意量得出来的只有「相对摆法」**：把整个天空盒绕竖直轴转 90°/180°/270°，接缝一条都不会变，所以方位角的绝对值只能按命名惯例定——换一批资产时若做法不同，要重量的正是这一点。
+- **每个面默认 512 × 512，但有两组是 1024 × 1024**（`bak6`、`bak32`，实测）。三十三组**每组内部都是等大的**，而这是硬要求不是巧合：立方体贴图的显存是**按第 0 个面（`+X` 那一张）的尺寸**一次性分配的（`uploadCubeTexture` 里的 `texStorage2D(..., cubeImage[0].width, ...)`），其余五张只往那块地方里写（`texSubImage2D`）——同一组内不等大时，多出来的那部分**不是被拉伸，而是根本没写进去**。所以换一批资产时「同组等大」要跟着一起核。1024² 那一组只是显存是 512² 那组的四倍（见设计决定 36 里那条显存账）。
+- **服务器上实际的存量与这份清单对不上**（2026-09-23 实测，服务器上那 38 个目录里只有 33 个有东西）：
+  - `bak12` ~ `bak31`：**只缺 `down.jpg`**，另外五张都在。缩略图（`front.jpg`）是好的，所以**格子看着完全正常**。缺的那一面现在会被补成一块**贴着四条侧棱取色**的纯色、整组照常生效（依据见设计决定 36），代价只是 Network 面板里一条 `down.jpg` 的 404。**不补也点得动**，补齐只是为了更像：真实底面 vs 一块纯色。
+  - `bak33` ~ `bak38`：六个目录**一张图都没有**。它们**根本没被列进左栏**——`SKY_BOX_COUNT` 是 32，循环到 `bak32` 就停了，界面上根本没有这六格。真往服务器上放了图，把那个常量改大就是那一刻的事；**别为了「对齐服务器」现在就把它改成 38**——那只会多出六格点不动的空目录。
+  - 结论：**「服务器上少一张图」不再是界面问题**。代码容忍它（缺哪面补哪面，六面全缺才维持原样并把背景留着），控制台里那条 `3dmaker:` warn 会点名是**哪一组缺了哪几张**。
+- **六个文件名是写死的，目录名才是那份清单管的**。所以「加一个天空盒」在服务器上就是建一个目录、塞六张图，代码一行不用改；反过来少一张图**不报错**，表现是缺的那一面补成一块纯色、整组照常生效（任何一张 404 或跨域被拒都是同一个结果，那时控制台里有一条点名了组名与缺图名的 `3dmaker:` warn；六张全缺才是「背景与反射维持原样」）。
+- **没有 `.png` 缩略图**，所以左栏宫格里的预览图直接用的是 `front.jpg`（见 `resolveSkyboxFace` 那一行）。这是这一类唯一一处与「一个目录一张同名 png」不同的地方。
+- **服务器必须发 `Access-Control-Allow-Origin`**，否则生产环境（`ASSET_BASE` 指向远端时）这六张图会加载失败——WebGL 上传纹理是跨域受限的操作。**这一条与 glb 那条链是同一个既有限制**，不是天空盒特有的；开发期走 `/3d-assets` 代理，不受影响。
+
+**程序生成的模型不在这套摆放约定里**（`partsJson`，见设计决定 40）：它**不联网、没有 `.glb`、也没有 `.png`**，几何体由一段 JSON 文本算出来，所以「一个目录一张同名 png」那条对它是空的。它属于宿主追加的分类，而不是内置那五类里的任何一种——内置五类的资产全在服务器上，这条链一行都用不上。
+
+- **没有图就给一个文本图标**（条目上的 `icon`，一个 emoji）。格子优先用它，其次是 `thumb`，都没有才退回立方体占位图形。它没有请求可失败，所以「这张图挂了」那本账与它无关。
+- **零件表的形状**：`shape` 是唯一必填的字段，只认 `'box'` 与 `'cylinder'`；盒子按 `w` / `h` / `d`（宽 / 高 / 深）读，圆柱按 `rTop` / `rBottom` / `h`（上半径 / 下半径 / 高）读；公共的有 `x` / `y` / `z`（**中心**位置，缺省 0）、`count` + `radius`（沿圆周均布，摆法见设计决定 40）、`color`（缺省一个中性灰）、`metalness`（0）/ `roughness`（0.8）、`name`（只为读日志）。**单位是米**，与配置里其它长度一样。
+- **尺寸必须是正的有限数**，`count` 必须是 1..64 的整数，件数最多 512 件——超了整份会被拒掉。一件不合格只剔那一件。**别把 NaN 写进去**：JSON 里也没有 NaN，坏数字到手会是 `null` 或字符串，同样会被剔。
+- **`color` 的语法不在这里校验**（`#rrggbb` / `rgb(...)` / 具名色都合法，判据在 three 的 `Color` 里）：写一个 three 认不出来的串，它会退回白色并在控制台说一句。
+- **验收它只能靠目视**：它不加载任何东西，所以 Network 面板里什么都没有；`pnpm verify` 那四条断言只盖得住「读出来的零件对不对、摆在圆周上对不对」，**盖不住形状本身对不对**（比如 `w` 与 `d` 是不是反了）。换一段零件表之后要真的看一眼。
+
+**地板这类「拿来铺满一块区域」的资产有两条要求**，因为它会被拉伸、而贴图会被反向重复（机制见设计决定 35）：
+
+- **UV 必须恰好铺满 0..1**，也就是「一个 uv 重复 = 整个模型」。UV 跨度不是 1 时实际重复密度会被乘上那个跨度——**不报错**，只是砖的大小不对。
+- **加一块新地板要顺手在 `playground/utils/modelList.ts` 里补一个 `span`**（这张贴图的一个 uv 重复铺几米）。它是**从贴图里数出来的**：数一个 uv 重复里有几格，再乘上单格想要的米数（`tile1` = 4 块砖 × 0.6 = 2.4，`wood` = 12 行板 × 0.2 = 2.4）。不写就走兜底 2.4 米——同样不报错，只是砖可能偏大或偏小。
+
+**墙面的资产要求更硬**（因为它是被平铺的，不是被摆的）：
+
+- **长 1.0 米 × 高 3.9 米 × 厚 0.18 米**，也就是 `CELL_SIZE` / `DEFAULT_WALL_HEIGHT` / `DEFAULT_WALL_THICKNESS` 这三个默认值。**长取整米是整段算术的支点**：墙的端点被吸附在 1 米整格上，段长绝大多数是整数米，资产长 1.0 米时平铺块数恒为整数、平铺偏差恒为 0。高与厚会被拉伸，取这两个数则铺在默认尺寸的墙上时伸缩恒为 1——**高现在这一条要盯一下**：`DEFAULT_WALL_HEIGHT` 是 3.9，而库里的 `wall1` 是 4 × **2.8** × 0.2，所以它铺在默认墙高上时竖向被拉 3.9 ÷ 2.8 = **1.39 倍**，砖会变成竖长方形，想要一比一就把它重新导成 3.9 米高。长**不是**整米也能用，只是块数要取整、每块会被拉伸一点：一块 4 米的墙板铺在 7 米的墙上会变成 2 块各 3.5 米——偏差是双向的、不会溢出段外（`wall1` 就是这种，能用，但把长改成 1 米会更准）。
+- **长沿 +X、高沿 +Y、厚沿 +Z**。在 Blender 里建就是长 +X / 高 +Z / 厚 +Y——导出成 glTF 后 Blender 的 +Y 转成 −Z，厚度的正负无所谓（是对称的）。**摆错方向不报错**，表现是砖缝横着走，所以第一次上手必须目视确认。
+- **要有厚度（一个盒子）**，不要单片：零厚度的网格会被当成「片」筛掉（见上面那段），一块实体都不剩时整面墙退回灰盒子（库里的两块地板正是零厚度平面，而「墙壁」就在「地板」隔壁同一张宫格里，选错一次就会命中）。
+- **一个 glb 里只放墙本身**，别把建模时的道具一起导出来。带一块背景板/地面进来不会出错（片会被筛掉），只会多一条日志——但要避免**反过来**的情况：一整个 glb 全是片，那时一块实体都没有。另外墙的根节点带非单位变换也不会出错，但没必要。
+- **要均匀可平铺的纹理墙**（砖、木、板），不要带顶线脚的整体墙面——过梁那一段会被竖向压缩，带线脚的墙压完是一坨。
+- **不要** Draco / KTX2 压缩、不要动画与骨骼：墙这条链上没有 `DRACOLoader`，`useGLTF` 的 `draco` 只能写死 `false`，而失败的表现是**墙永远灰着且不报错**。顶点也不要含 NaN。
+- **验收资产时必须切到 3D 看**：2D 正俯视那一档压根不铺贴面、把墙画成一块实色（见设计决定 34），所以在那一档里无论资产做得多好都看不出来——这不是资产没生效。
+
+**门的资产要求介于两者之间**（它与墙走同一套「一个目录同名 glb + png」，但它**不是被平铺的，是按高度等比缩放装进洞口的**）：
+
+- **一个 glb 里只放洞口那一件本身**（门或窗），别把门 / 窗所在的那个房间一起导出来——**这一条比对墙要紧得多**。墙那边混进来的背景板/地面是**片**（会被 `wallFaceIsSheet` 筛掉，代价只是多一条日志）；这一边混进来的地面与墙面是**实体**（4~12 厘米厚，一片都筛不掉），它们会直接进 `measured` 的并集，于是整份资产被当成一扇门缩进洞口。表现不是报错，是「洞里装了一个说不清哪里不对的东西」；控制台会有一条 `3dmaker:` 的警告点名量出来的尺寸（`openingFaceOversized`），看到它就说明该回去重导资产了。
+- **照一整樘门**（门框 + 门扇）建模，而不是只做一块门扇。门洞里的程序构件（4 根框条 + 门扇）整套会被顶掉，所以「框 + 扇」都得由资产负责——只做门扇的话，装上去就是一块悬在洞里的板、四周一圈空的。**尺寸不必迁就 0.9 × 2.1**：洞口会按**这件资产自己的尺寸**开（见下一条）。
+- **宽沿 +X、高沿 +Y、厚沿 +Z**，与墙面资产同一条。**摆错方向不报错**，表现是门横躺着或者侧着插进墙里。
+- **宽高可以写进清单，也可以一个字都不写——编辑器会在选中时自己量一遍**（`modelList.ts` 的 `DOOR` / `WINDOW` 里那对 `width` / `height`）。落笔时洞口就按这两个数在墙上开，模型装进来一比一填满；**都没有就退回 0.9 × 2.1（门）/ 1.2 × 1.2（窗）那个默认档**。机制是「门怎么这么窄」那个反馈的正解：装法本身是**三轴等比**的，所以一扇 1.8 米的门装进 0.9 米的洞**不报错、也不变形**——它照原比例画成 1.8 米宽、居中，而洞口只有 0.9 米，多出来两侧各 0.45 米**嵌进墙里被墙面吞掉**（门厚 0.167 < 墙厚 0.18，整个藏在墙体内部），屏幕上就是「门怎么这么窄」。写错的表现只有两个方向，都不报错：**写小了**（门比洞宽）两侧被墙吞掉；**写大了**（洞比门宽）门两侧各露一条缝，缝后面是墙的断面。
+- **但写了就是权威，量出来的不覆盖它**（这一点是拿一道真门换来的，见设计决定 37）。清单写的是「**洞口**要开多大」，量出来的是「**资产的外廓**」，两件事；而外廓可以是脏的——服务器上那份 `doubleGlassDoor.glb` 混着地面与三面墙，量出来 14 × 3.42 米。所以量出来的数只**填清单没写的那一格**，只在两种时候被用上：清单里没写，或者资产量不回来（404、全是片）时两边都没有→退回默认档。要手量就用 `node scripts/measure-glb.mjs <文件或地址>`，它的口径与渲染端、与编辑器量的那一遍**是同一套**（逐网格丢最小轴 < 1 毫米的片，余下取并集），打出来的就是能直接粘进清单的那一行。
+- **高度同时决定缩放系数**（装进去时三轴共用「洞高 ÷ 资产高」这一个系数），所以照资产自己的高度写就是系数 1、一个顶点都不动。清单里的 `height` 与资产的真实高度差得远时整扇门会跟着放大缩小——一件 1 米高的资产配 2.1 的 `height` 会整体放大 2.1 倍、宽度也跟着变 2.1 倍（多半会戳进墙里）。宽度那一项**不影响缩放**，它只决定墙上的洞开多大。
+- **一块门扇那样的薄板就行**，不必是一个厚盒子——门与墙在这一点上不同：厚度是跟着高度等比缩出来的，`openingFaceUnusable` 刻意**不查厚度**（查了会把「就是一片门扇」这种合法资产判死）。真正会被筛掉的是**零厚度**的面（门槛是 1 毫米）：`measured` 会逐网格把零厚度的片丢掉，一片都不剩时整组退回程序构件并在控制台点名。
+- **同样不要** Draco / KTX2、不要动画与骨骼，顶点不要含 NaN。
+- **没有缩略图会退回立方体占位图形**（与其它分类一样），所以 `door/<目录名>/<目录名>.png` 要与 glb 一起传。
+
+**门这一类目下现在只有一条**（`DOOR` 里的 `doubleGlassDoor`，写的是 `1.8 × 2.1`），要加就照 `FLOOR` / `WALL` 那样加一行、并把 `width` / `height` 填成**这件资产自己的尺寸**（上面那条讲清了写错的两个方向）。名字与服务器上的目录**逐字一致**才拼得对地址；对不上的表现**不报错**：左栏那一格的缩略图退回立方体占位图形（一条 404），装了门则是「洞里还是程序构件的门」加一条点名地址的 `3dmaker:` warn（回退路径，见设计决定 37）。
+
+**窗的资产要求与门是同一套**（同样是一个目录同名 glb + png、同样按高度等比装进洞口、同样三轴同吃一个缩放系数），差别只有三条：
+
+- **目录是 `window/`**，清单在 `modelList.ts` 的 `WINDOW` 里（眼下只有一条 `window1`）。地址是 `<ASSET_BASE>window/window1/window1.glb` 与 `.png`。
+- **窗**（`kind: 'window'`）**是另一类洞口**：它**不落地**，默认开在离地 0.9 米处（`WINDOW_SILL`），而窗台下面那块矮墙由**洞口**负责（模型装上去之后窗台下仍然是实的），所以资产只要照「自己一整樘」建模，**不用管它会被装在多高**，也不要为了「看起来完整」在资产里加一块窗台下的墙——那会和程序给的矮墙叠在一起。
+- **宽超过 1.05 米**（`MULLION_FROM_WIDTH`）的窗洞，程序构件那一侧会多一根**中竖梃**；装了整樘资产之后它整套被摘掉，所以资产要做成一整扇（带不带中梃都行，那是资产自己的外观）。
+
+**`WINDOW` 里那两个数现在写的是 3.6 × 2.7，是量出来的**（`node scripts/measure-glb.mjs`）。以前写的是 1.2 × 1.2——正好等于没料时的默认档，所以当时的行为与「不写」一样，而 `window1.glb` 实际是 2.7 米高：清单说高 1.2、资产实际 2.7，缩放系数被算成 0.444，一樘 3.6 米宽的幕墙被画成 1.6 米、塞进 1.2 米的洞口，两边各 0.2 米嵌进墙里被吞掉。**用户报的「窗户大小不对，没有根据模型大小显示」就是这两个数错了**——根子不在缩放算术，在那一行清单。
+
+**顺带记两笔 `window1.glb` 的实情**（量出来的，不是看名字猜的）：它整体是一樘 **3.6 × 2.7 × 0.167 米的玻璃幕墙**（`幕墙框` 3.60 × 2.70 × 0.15、三块 1.12 × 2.58 的中空玻璃），里面还包着一樘 1.80 × 2.10 的双开玻璃门（`门套-左/右/上` + `门扇-左/右` + 16 个拉手件）；零贴图零图片，23 块网格一块片都没有。所以 —— ① 它放进 `window/` 当「一樘窗」用是够用的（那条链只看外廓），但它本质上是一面**落地幕墙**；② `WINDOW_SILL` 0.9 米配上 2.7 米高，顶到 3.6 米（默认墙高 3.9 米），落地幕墙照理该是 `sillHeight: 0`——今天窗台是全局常量、不能逐件调，所以这里只记一笔。③ 宿主墙要**至少比洞口宽 0.2 米**（两侧各留 `OPENING_EDGE_GAP` 0.1），墙短了会得到一句「这面墙太短，放不下一个窗」——洞口按清单里的数开，所以这个下限也跟着清单走（清单写 3.6 就是 3.8，写 2.5 就是 2.7）。
+
+---
+
+## 验证覆盖到哪一步
+
+`pnpm verify` 会跑 `scripts/smoke.mjs`，直接加载 `dist/index.js` 在真实 Vue 应用里安装插件并渲染，覆盖 91 项：
+
+- **导出面与安装**：具名导出、install、全局组件注册、Pinia 复用/补建
+- **真实渲染**：组件树能渲染、store id 带前缀、根节点与工具栏文案齐全
+- **样式产物**：组件样式类齐全、作用域样式存在、无全局 reset 泄漏、无 playground 样式混入
+- **配置模型**：`models` 是数组且默认为空、新造出来的条目字段齐全、5 类事件各自是独立对象（防别名）、store 是深拷贝（不会污染 `DEFAULT_SCENE_CONFIG`）、深合并不清空未提及的分支、`undefined` 被跳过、导出往返幂等
+- **历史栈**：undo/redo 能还原与前进、resetConfig 复位
+- **物体级**：`deriveModelId` 表驱动（7 组输入）、三元组是整体替换而非逐项合并、**`repeat` 深拷进配置 / 整体替换 / 且默认值里不存在**（渲染层拿「这个键在不在」当「要不要去动模型自带的贴图」的开关，默认值里多一个 `[1, 1]` 会抹掉资产自带的 `KHR_texture_transform`）、`resetConfig` 会复位变换、`dist/*.d.ts` 里有 `objectClick` / `objectDblclick` / `objectPointerEnter` / `objectPointerLeave` / `objectContextMenu` / `ObjectClickPayload` / `ModelEventHandler` / `deriveModelId` / `receiveShadow` / `events` / `modelTransform` / `modelTransformEnd` / `ModelTransformPayload` / `TransformMode` / `selection` / `gizmo` / `gizmoMode`
+- **事件绑定**：默认 5 类齐全且全关、部分补丁不会顺手清掉同一项的另一半、代码能原样导出并写回、默认值没有被任何一个用例改脏
+- **多模型**：`addModel` 是追加不是替换、新条目带全套默认字段且引用独立、`selectModel` 只在合法下标上生效、`patchModel` 按条目寻址且不改动别的模型、`patchModel` 断开宿主对象与配置的别名、`applyConfig` 里的 `models` 是整体替换而不是逐条合并、`removeModel` 删除后选中项收回界内（含删空后仍可追加）、`setModel` 只影响选中项
+- **产物契约**：`dist/index.js` 与 `dist/index.cjs` 里不含 `new Function` / `eval` / 字符串形式的 `setTimeout` ——把「库绝不执行用户代码」从文档承诺钉成会失败的测试
+- **洞口外观**：这是设计决定 37 那条链，下面这几组断言都**不靠浏览器**——一件资产按高度等比装进洞口时三轴取同一个系数（`0.875 = 2.1 ÷ 2.4`）、按资产自己的比例摆成 `1.05 × 2.1 × 0.35` 米而**不是**被拉成洞口那 0.9 米（用的资产刻意三个轴都不一样长，所以「等比」与「逐轴拉满」分得开：改回拉满时第一条断言就会红，那正是用户实测反馈那个 bug 的守门人），中心落在碎片原点上（包围盒刻意不以原点为中心，所以「乘完缩放要减掉包围盒中心」那一步真的在验），且「装进洞口」与「平铺」两个出口在**资产比例恰好等于洞口比例**时**逐字段相同**（共用同一份 `place()` 的唯一预警，同尺寸那一路还顺带钉住「照洞口建的资产缩放系数是 1」）；`openingFaceUnusable` 与墙那把尺子**分开**且**少一条**——零厚度放行（厚度是等比缩出来的），空 / 含 `NaN` / 太窄 / 太矮各有一句，**同一把尺子换 `kind` 之后名词跟着换**（门说门、窗说窗，一行都不许错话），而且**合格的一扇窗放行**（窗比门矮得多，拿门的比例或绝对米数去判会在这里红）；`openingFaceOversized` 用**实测那份资产**当输入（14 米宽的房间）点得出名，而 1.8 米与 2 米的双开门放行、门槛恰好卡在 3 倍（2.7 米不响、2.8 米响），换成一扇窗时那句「请只导出整樘窗」的名词也对；洞口 `url` 跟着深拷贝与 JSON 往返一起走、没写时这个键不出现；**写没写外观切出来的碎片一模一样**（`wallPieces` 完全不认识 url —— 这是「墙照旧被切开」那个支点的守门人；同一面墙上也量了一遍，因为「换一面的墙面模型」正是重写那个 `wall.url`，见设计决定 44）；以及抑制的边界：被模型接手的洞口摘掉的正好是那 4 框 1 扇，**墙段与过梁一根不少**、另一个没写外观的洞口一片不少、一个都没写时**原样返回**；而**写了地址的窗**这一轮起**同样由模型接手**——摘掉它的 4 框 + 1 中竖梃 + 1 玻璃，**窗台下面那块矮墙与过梁要留着**（那是墙，不是窗的构件）。最后这一条是「判据只判 `url`」的唯一守门人：谁把那半条 `kind === 'door'` 加回去，它会红
+- **洞口落点**：这是设计决定 38 那条链里**唯一能不靠浏览器验**的部分（拖动本身只能目视），所以那几条算术特意放进库里、单独一组——磁吸算得出「间隔 0」那个半米位置（1.0 + 1.25 + 1.25 = 3.5）而在**够不着时老实给 `null`**：离它 0.5 米的整米格点必须是 `null`，这一条正是「磁吸的输入必须是**未吸格**的那个落点」的守门人（拿 `hit.offset` 当输入时它会红，而那等于把磁吸关掉）；两边都有候选时取更近的、**并列取较小的那个**（确定性规则，否则断言没法写）；空档只由邻居夹取、**两端不缩边距**（`from` 恰好等于磁吸目标——缩 0.1 米的话每一次磁吸都会被夹走一点，症状是「贴不上去、手感发黏」）、没有邻居时就是整面墙、比洞口还窄时给 `null`；拖动落点依次是整米步进 → 磁吸 → 夹进空档，且**吸的是移动量**（`origin 1.0` 时 `wanted 2.4 → 2.0`、`2.6 → 3.0`；改写绝对吸附会让贴着放好的那扇窗一动就跳）、磁吸赢过格点（邻居在 5.0、`wanted 2.7 → 2.5`）、右侧邻居挡着时**过不去**；以及「贴着放」放行**靠的是那一颗 1e-9 而不是运气**（1.9 放行、1.9 − 0.001 判重叠）。**这组里还有两条**是设计决定 43 那条「替换」链路唯一的自动化防线（那两个原因码本身）：洞口放不下时给出的原因码——0.9 米的门加两端各 0.1 米边距 = **1.1 米整放行、1.099 米拒**（边界取整是故意的：边距与门宽改一位这里就该红）、两条同时成立时**先报墙太短**（顺序换了文案会跟着实现漂且不报错）、墙够长才轮到判重叠；以及替换那条路**与放置同源**——贴齐位置（由 `openingMagnetOffset` 给）在这一层也放行、往邻居里挪 1 毫米判 `overlap`、**把自己传进 `others` 时必然重叠**（这正是替换时要 `filter` 掉自己那一条的守门人：不滤的话判据恒真，一个洞口都换不了）。`replaceSelectedOpening` / `replaceSelectedWall` 本身在 `playground/` 里，**冒烟够不着**——左栏怎么切、点击怎么分流、提示行说什么，唯一的防线是目视清单第 130-141 条
+- **模板 ref**：`src/` 下凡把 `ref` 挂在 `Tres*` / `OrbitControls` 标签上的 `.vue` 都不得调用 `useTemplateRef` ——这个坑在 dev 下只是一条警告，在生产里是静默失效（见设计决定 20）
+- **模型 id**：建 store 时补上 uuid 形态的 id、换地址换 id 而重复设同一地址不换、卸载换 id、撤销到换模型之前连 id 一起还原、`applyConfig` 携带的 id 原样保留（导出导入往返不丢）
+- **prop 桥接**：分组 prop 写入对应分支、不清掉同分组其他字段、与兼容用的扁平 `environment` 共存、`model` 对象形态写入物体级字段、`model` 分组胜过扁平 `wireframe`、不把宿主的数组别名进配置、不把宿主的事件对象别名进配置、`model` 字符串形态仍走 `setModel`
+- **视角档位**：`viewModeOf` 是「2D / 3D」这条约定的唯一实现（编辑器的档位按钮与 `SceneContent` 的 `planView` 都吃它的结果，错了会同时错两处、且往两个方向错），所以它单独有一组断言——默认那份斜机位必须是 3D；原点正上方必须是 2D；**容差两侧各测一点**（按角度造机位，偏 4.9° 仍在 2D、偏 5.1° 掉出去），不是照抄那个常数复述实现；机位与注视点重合、机位在注视点下方这两条退化情形都算 3D（除以 0 得到的 `NaN` 恰好也落回 3D，断言的是「有意」而不是「碰巧」）；正俯视但**平移过**的机位仍然算 2D（那一档本来就允许右键平移）
+- **墙面铺装**：墙的 `url` 跟着深拷贝与 JSON 往返一起走、且没写外观的墙上不出现这个键；沿墙平铺时铺满 / 不重叠 / 不留缝（逐块比边界，不是只比块数）、高厚各自拉伸到位；**资产的原点不在包围盒中心时也摆得准**（漏掉那一步整段砖会平移出去）；段长不是整数米时匀着摊、比半块还短的段不会被取整成 0 块、长得离谱的段被块数上限截住之后仍铺满；空包围盒 / 含 `NaN` / 太薄 / 太窄 / 太矮各给一句人话，且退化输入上绝不算出非有限数（`NaN` 灌进 `scale` 会让整个物体从画面上消失且不报错）；**建模时的背景板会被认成「片」筛掉、墙的尺寸不被它带跑**——用的是 `wall/wall1` 那次事故的真实数字（80 × 80 的背景板 + 4 × 2.8 × 0.2 的墙体），断言里同时钉住「脏盒子会被守卫放行」（这正是必须先筛的理由）与「脏盒子只铺出 0.4 米宽的一片」（历史上的那个现象），以及两个退化输入落在正确的一侧：一个顶点都没有的空网格判成片丢掉，含 `NaN` 的网格反过来要留下（丢掉的话它会绕过 NaN 守卫，整面墙变成「干净的半个几何」）
+- **天空盒**：`sun.skybox` 默认是 `null`；六个面通过 `applyConfig` 写进去之后能从 `exportConfig()` 原样导出；`skybox: null` 确实能把它写回「关掉」这个状态；撤销一步能把那六个面退回来。这组断言只覆盖**数据层的往返**——它守的是「关得掉」这条（`applyPatch` 只跳过 `undefined`、不跳过 `null`，改错了的表现是天空盒一旦开就再也关不上），而**画面**那一半属于下面的目视清单：六张图得真的发出去、真的拼成一张 `CubeTexture`，SSR 下连发请求的机会都没有；缺面兜底那一段（`utils/skyboxFill.ts`）还要一张能读像素的画布，Node 里没有。
+- **零件表**：这是设计决定 40 那条链里**唯一能不靠浏览器验**的部分（`SceneModelParts.vue` 画出来的几何体在 SSR 下根本不渲染），所以那四条断言全落在纯函数上——一张正常的零件表逐件读出来（盒子走 `w/h/d`、圆柱走 `rTop/rBottom/h`，没写的 `x` / `z` / `count` / `radius` / `name` / `color` 各补成 0 / 0 / 1 / 0 / 空串 / `#cbd5e1`，`metalness` / `roughness` 补成 0 / 0.8 而**刻意不是** three 自己的 0 / 1）；畸形的零件**逐件剔掉**而不是算出 NaN 顶点（15 件里留 1 剔 14：认不出的 `shape`、`w` 是 `null`（JSON 里没有 `NaN`，坏数字只会以 `null` 或字符串到场）、`w` 是字符串、缺 `w`、`h` 为 0、`x` 不是数、负 `radius`、圆柱负高、两个半径都是 0、`count: 2.5`、`count` 超 `MAX_COUNT`、字符串 / `null` / 数组各一条），剔完还逐件过一遍 `Number.isFinite`——**这一条是「一个 NaN 顶点会让整块几何整块消失且哪里都不报错」的守门人**（机制写在 `SceneModelNode` 的 `measure` 上）；`count + radius` 那条摆放约定的**两半各有一条断言**——第 0 份必须落在 `(0, y, radius)` 且长边仍沿 Z，第 1 份的**位置与朝向必须用同一个 θ**（72°），把「每份跟着转」删掉时第一条照样绿、第二条才会红，而那正是「五条横撑围成一圈切向的方框」那个现象的守门人（顺带钉住没写 `count` 的零件原地不动、圆柱参数表的末位是分段数 24、以及逐份的参数表**不是同一个数组**——共用一个数组就是五件几何体一起变）；整份读不出来时**只给一句人话、一件几何体都不给**——空串 / 纯空白 / 不是 JSON / 顶层是字符串 / 顶层是对象 / `null` 六种各自 `problem !== null`、`parts` 与 `dropped` 都是 0（整份的问题不记成「剔掉了某几件」），件数超 `MAX_PARTS` 也**整份拒掉而不是静默截断**（截断出来的画面「差不多是对的」，最难查），且那句人话里必须写着上限是多少。
+
+> 那条 `dist/*.d.ts` 断言是 CI 里唯一能守住「漏声明 emit」的手段：`SceneViewer` 的根是单根
+> `<div>`，漏声明 `objectClick` 会让宿主的 `onObjectClick` 静默落成这个 div 上的 DOM 监听器，
+> 永不触发也不报错；而 SSR 下 `TresCanvas` 只输出一个 `<canvas>`，children 根本不渲染，
+> 点击链路在冒烟测试里测不到。
+
+> 同理，`attachPick` 的挂/摘、5 个 handler 的判别、双击阈值、事件弹窗、以及那段 `new Function`
+> 执行器**全部**测不到——它们要么依赖真实指针事件，要么依赖 DOM 挂载，SSR 下连运行机会都没有。
+> 别为它们补冒烟用例（只会得到一条永远为真的断言），它们唯一的防线是 `pnpm dev` 目视清单。
+
+> 还有一处也测不到，值得单独点出来：**「地板按区域尺寸摊 `repeat`」那两行除法住在
+> `playground/` 里**，而冒烟测试只加载 `dist/index.js`，所以它连边都够不着（对比之下，
+> 墙面铺装那段算术为了能被测到，特意放进了 `src/utils/wallFace.ts` 并导出——见设计决定 33）。
+> 它只是两个除法，不值得为它往公开面里再塞一个函数；但**「`repeat` 摊的是区域尺寸而不是
+> `scale`」这个区分**恰恰是最容易写错、写错了又最难当场看出来的一处（见设计决定 35）。
+> 它唯一的防线就是上面第 76 条里那句「再划一块大得多的，砖的边长不变」——那是**必须目视**的一项。
+
+> 天空盒那条链**完全落在浏览器里**，冒烟测试只够得着它进出配置那一半（见上面那组断言）：
+> 六张图要真的发出去、六个面要真的拼成一张 `CubeTexture`、`scene.background` 要真的被画出来——
+> 这三步在 SSR 下连运行机会都没有（`TresCanvas` 下 children 根本不渲染），缺面兜底
+> （`utils/skyboxFill.ts`）还要一张能读像素的画布。所以
+> **面到轴的映射**（`SKYBOX_FACE_FILES` 那一行）与**「切一圈不漏贴图」**只能靠目视清单里的
+> 第 91、92 条，而映射错了**不报错**——天会整体转到别的方向上去，只有眼睛看得出来。
+> 这一点与设计决定 33 里那段「朝向契约只能靠文档约束，没有任何代码兜底」是同一条，只是那边的
+> 后果是砖缝横着走、这边是天地左右颠倒。
+
+**尚未覆盖**：
+
+- WebGL 实际出图依赖浏览器，冒烟测试不做验证。改动 3D 相关代码后请用 `pnpm dev` 目视确认，重点看这几项：
+  1. 阴影切到 `map` 时模型真的投射出阴影
+  2. 日照面板拖 `elevation` / `azimuth`，天空实时变化
+  3. 同时开 Sky 和接触阴影，天空没有被接触阴影的相机裁掉（源码推导为不影响，**未实机确认**）
+  4. 拖动视口松手后，相机面板的数字更新到新值且不抖动
+  5. 拖位置 / 旋转 / 缩放，模型实时跟着动，且每项正好产生一条历史记录（400ms 防抖合并生效）
+  6. 开等比锁拖 X 轴，Y / Z 一起变成**同一个值**，不是按比例放大
+  7. 5 类事件全关时点模型无反应；打开「单击」后点模型，**DevTools 控制台**出现用户那句 `console.log` 的输出（编辑器自己的提示都带 `[tdm]` 前缀，用户代码的输出没有）
+  8. **拖拽旋转视角不误触发任何事件**——自己合成 click 的位移/时间阈值唯一要证明的事
+  9. **在模型的任意两个不同部件上「按在这个、松手在那个」**——这是 pmndrs 原生 click 会漏报、自己合成必须能出的用例
+  10. 隐藏模型后点它不该有反应（门控是「至少启用一类 **且** `visible`」）
+  11. 打开「双击」后连点两下出 2 次单击 + 1 次双击；**连点三下只出 1 次双击**（判完即重置）
+  12. 打开「经过」「移出」→ 进出模型各一次；**在模型内部不同部件之间移动时一次都不发**
+  13. 鼠标划到加载遮罩上会多发一次「移出」，回来再发一次「经过」——这是「离开画布即移出」的定义决定的，不是 bug（这条对**任何**盖在画布上的元素都成立，包括插件自己的内置工具栏；只是编辑器里那个工具栏已经没法打开了，见 `04 组件` 被删掉的原因）
+  14. 打开「右击」→ 右键点模型出右击事件且不弹原生菜单；**关掉它之后原生菜单恢复**（抑制是有条件的）
+  15. 写一段语法错误的代码 → DevTools 里出一条 `[tdm] 事件代码编译失败：…`、场景不崩、后续点击仍能触发
+  16. 右键「点一下」会顺带把视角平移一两个像素（OrbitControls 的 PAN 没有像素阈值），改不了
+  17. 开着弹窗按 ⌘Z、或开着弹窗去点历史面板 → 关掉弹窗时代码不覆盖刚发生的撤销（draft 同步那条 watch 唯一要证明的事）
+  18. 导出配置 → 改掉代码 → 导入回来：代码原样恢复，且导入时 DevTools 里有一条 `[tdm] ⚠ 这份配置含 N 段事件代码…`
+  19. 移动模型后接触 / 累积阴影跟着重烘焙，且**拖动过程中不卡、累积阴影不变成噪点**（尾防抖是否生效）
+  20. 物体级「投射阴影」关掉后影子消失，再把阴影方式切到 `contact`，确认该字段按设计**隐藏**（而不是留一个拖了没反应的开关）
+  21. 左栏导轨**五个项**各悬停一次：提示**朝栏内展开**、不出框，文案是
+      `地板 · 2 个模型` / `墙壁 · 1 个模型` / `门 · 1 个模型` /
+      `窗 · 1 个模型` / `天空盒 · 33 个天空盒`（三十二个天空盒 + 第一格「空盒子」）
+      （数量也读得到——`aria-label` 与提示是同一句）；导轨上**没有第六项**，
+      第一项上面也没有分隔线（那条线现在只画在内置五类与宿主追加的那几类之间）。
+      打开时**默认落在「地板」**——规则是「第一个有模型的分类」，而不是「第一条」
+      或按语义排在最前的那个（`LIBRARY` 的顺序照语义排，与哪一类眼下有货无关）；
+      点「墙壁」→ 一格（`wall1`）；点「门」→ 一格（`doubleGlassDoor`），
+      **缩略图能出**才是服务器上真有
+      `door/doubleGlassDoor/doubleGlassDoor.png`；出不来就是立方体占位图形加一条 404
+      （这一条要如实记）；
+      **点「天空盒」→ 三十三格，第一格是「空盒子」（没有缩略图，是立方体占位图形），
+      后面每一格的缩略图都是「天空盒 N」对应的 `bakN/front.jpg`**
+      （这一类的数量是 `modelList.ts` 里一个常量循环拼出来的，手抄三十二行的错法
+      在这里会表现为「少一格」或「最后一格点出来是空图」，宫格数一眼看得出来。
+      注意这一类的量词是**「个天空盒」不是「个模型」**：它没有 glb，六张图也不是
+      摆进场景的物体，读成模型会让人以为那一格点下去是追加）
+      点回「地板」两张地板回来且**不闪白**；
+      **切分类没有淡入**（`ModelLibrary` 不重建），
+      靠内容瞬换 + 高亮移动 + 滚动归零给反馈。
+      （原先这里还有一条对照「预设 ↔ 库那种页面级切换有淡入」，随左栏那个页面一起
+      没有了；`.ed-side-body.ed-tabpanel` 那个类还在，只有首屏挂载那一次淡入。）
+      每格里只有一张方形缩略图（图挂了是立方体占位图），
+      图下面**常显一行名字**（过长出省略号、不必悬停；悬停时名字跟着格子底色一起提亮），
+      点一格追加一个模型，
+      场景里出现第一个物体、HUD 的 `MDL` 变成 1，且**右栏那一行显示的是中文名而不是 `model`**；
+      同一行连点两次得到两个独立模型；切走再切回来列表不闪空；历史面板里追加只占**一条**记录。
+      **宫格自己滚**：临时给某一类塞进 8~10 条，只有宫格出现滚动条、滚到底仍留 5px。
+      **切分类时滚动位置归零**（在长分类滚到中段→切走→切回，回到顶部而不是停在半中间），
+      且**不重新拉缩略图**（Network 过滤 `png` 不新增请求）、失败过的格**切回来仍是占位图**、
+      已追加进场景的格**切回来仍然高亮**。
+      回到「模型属性 → 00 场景模型」点一下列表切换，
+      下面的 ID / 名称 / 变换跟着换成另一条；按 `⌘Z` 撤销追加，列表收回一条、选中项自动回到界内。
+      **每行是一行三段**：行首图标（内置几何体 `⬡` / 外部地址 `▤`）、中间名称、
+      行尾闪电按钮（未绑事件时是暗的，绑了就转琥珀并显示条数），名字过长是截断省略号
+  22. 追加两个模型、分别点开「事件绑定」：**弹窗标题旁点名的是哪一个模型**，
+      给 A 绑的代码不会跑到 B 上（库按载荷里的 `id` 找回发事件的那个）。
+      行尾那个闪电按钮也能直接开：点它必须**同时把该行选中**，否则弹窗钉住的还是上一个模型
+  23. 列表行悬停才出现 `×`，点它移除那一条；删到空场景时下半部分三节一起消失、
+      只剩一句空态提示（而不是一屏空白控件）
+  24. **「模型属性」两块是 2 : 3 且各自滚动**：往场景里追加到七八个模型，
+      列表只在自己的框里滚、表头「00 场景模型」钉在顶上不动，下面 01/02/03 三节纹丝不动；
+      展开三节把所有字段放开（字段比 3/5 高），也不该把上面的列表挤走
+  25. 只读的 ID 框不响应点击、可以整段选中复制，值太长时是截断省略号而不是把面板撑破
+  26. **去掉底部两条之后布局不留缝**：`.ed-app` 是 `顶栏 / 工作区` 两行 grid（`--h-header` + `1fr`），视口应当一直铺到窗口底边
+  27. 点「预览」→ **一块占满整屏的弹窗盖住编辑器**：画面四边一直铺到屏幕边缘，
+      上下左右都不留缝（顶栏与左右栏都还在 DOM 里，只是被不透明的底衬整个盖住）。
+      标题栏**浮在画面顶上**、不占高度：左边「预览 · 场景名」与「只读……」那句说明，
+      右边一个「退出预览 `Esc`」按钮；它底下垫着一条深到透明的渐变，
+      所以画面顶端不该出现一条硬边、也不该看到画面被裁掉一截。
+      **两条出口都要能回去**：那个按钮、以及 `Esc`。
+      这一项从前是「顶栏与左右栏都消失、视口铺满整屏」，那时进了预览的出口只有 Esc，
+      而那句提示只进控制台、界面上看不见（设计决定 22）；中间还有过一版是「四周留 14px
+      透出压暗的编辑器」，被用户否成了「局部预览」；同时**网格只能写一行**——
+      `display: none` 的顶栏不再是 grid item，工作区会顶到第 1 行，而那一行当时是 `0px`，
+      于是整屏全黑
+  28. 拖两个 `.glb` 进视口：两个都留在场景里，**先拖进来的那个不会变成黑块**
+      （它的贴图仍从这个 blob URL 上取，所以回收必须等到卸载时统一做）
+  29. **打开就是空场景**：视口里只有地面与光照，HUD 的 `MDL` 是 0，
+      右栏「模型属性」上半部分是一句空态提示、下半部分三节整块消失（不是一屏空白控件），
+      `⌘Z` / 历史面板此时是空操作。置空之后视口不该是纯黑——网格线、地面、光照都还在
+  30. **点画布上的模型 → 选中它**：右栏「场景模型」那一行高亮、下面的属性面板跟着切过去、
+      右下角操作胶囊出现。点空白（地面 / 天空）与按住拖动转视角都**不改变**选中项
+  31. 两个模型前后叠着摆 → 点重叠处选中**更近**的那个；把前面那个隐藏再点同一处，
+      选中的是**后面那个**（隐藏的既不会被选中、也不挡住它后面那个）
+  32. 模型加载的那几秒里点画布 / 拖视角照常有反应（进度遮罩不再吃指针事件）；
+      此时点模型当然选不中——网格还没进场景，那是正常的
+  33. 切到预览模式 → 点模型不再改变选中项（`pickable` 为 `false`，监听器也摘了）
+  34. 同一个模型既开着 `events.click` 又开着 `pickable` → 点它，「选中」**先**发生、
+      事件代码的输出随后到。同时注意：点一下模型，控制台**不再**多出一行「视角已更新」
+  35. 开着 `pickable` 与关掉它对比 `PerfProbe` 的 FPS / `renderer.info.render.frame` 增长：
+      静止时完全一致（点选是「一次点击一次 raycast」，不引入逐帧射线检测）
+  36. 触屏：单指点按能选中；**双指缩放 / 平移不选中**（`isClickGesture` 里 pointerId 与
+      多指那两条判据唯一要证明的事）
+  37. 选中一个模型 → 画布上出现贴合它的青绿包围框；换选另一个 → 框跟过去，旧框不残留
+      （包围框是「按选中项重建一只 `BoxHelper`」，不是每模型一只）
+  38. 拖某个轴箭头 → **模型与包围框一起动、相机一动不动**；右栏「位置」的数字实时跟着跳。
+      相机跟着转就说明 `OrbitControls` 的 `make-default` 掉了（见设计决定 27）
+  39. 松手 → 历史面板**只多一条**「移动模型 · 名字」；控制台没有新行。
+      在轴上按一下**不拖动**就松手 → 历史不多记录、位置不变（设计决定 28 那道容差判断）
+  40. 拖完按 `⌘Z` **撤销一次**就回到拖动前的位置——整段拖拽是一步，不是几十步
+  41. 按 `E` 切旋转、`R` 切缩放 → 手柄形状跟着变；转出来的角度在右栏显示为度数且与实际相符；
+      缩放模式下改完，右栏的缩放数字与画面一致（等比锁不会自己打开）
+  42. 在右栏的输入框里打字时按 `w` / `e` / `r` **不切模式**（`typing` 判断生效）；
+      打开事件绑定弹窗、在代码框里打同样的字母也不切模式
+  43. 隐藏选中的模型 → 包围框、手柄、顶边那条模式切换条一起消失；
+      此时按 `W`/`E`/`R` 仍能改模式，但画布上什么都不会出现——那是对的，没有手柄就没有模式可言
+  44. 切到预览模式 → 包围框、手柄、模式切换条全部消失，画布回到只读
+      （库那侧靠 `:selection="false"` / `:gizmo="false"`，切换条靠一条 CSS，两道独立的闸）
+  45. 选中一个模型后看 `PerfProbe` 的 FPS：与不选中任何模型时相比不应有明显掉帧
+      （包围框只对**这一个**模型每帧做一次 `setFromObject`）
+  46. 触屏：单指拖手柄能改变换；**双指缩放不会误改模型变换**
+      （手柄不响应多指手势，与 `ScenePicker` 那条多指闸门无关）
+  47. 视口右上角出现 `2D | 3D` 两段式切换，与顶边中部那条手柄模式条同一套形状与底色；
+      空场景（HUD 上是 `MDL 0`）时它也在——它管的是相机，不是模型
+  48. 点 `2D` → 相机移到**世界原点正上方**：右栏「相机 → 02 机位」的 `位置` 变成
+      `0.00, 110.00, 0.00`、`注视点` 是 `0.00, 0.00, 0.00`；控制台多一行
+      「已切换到 2D 俯视视角（原点正上方 110.0）」。
+      把某个模型的位置改成 `[90, 0, 0]` 再点 `2D` → **仍然对着原点**，模型落到画面边上
+      或画面外——这是刻意的，注视点与距离都不跟着内容走
+      （要按内容自动取景，用右下的「聚焦」——那是另一套算法）
+      同时**地面变成无限延伸**：右栏「地面 → 01 显示」的「无限延伸」这时是开的，
+      画面里再也看不到这块 120 见方的地的边（本来那圈边界线在淡出里只减到六成亮度，
+      横在取景里很明显）；**格子的疏密没有变**，还是一格 0.6
+  49. 2D 下**左键拖不动视角**（按住拖，画面纹丝不动，HUD 的 `CAM` 也不变）；
+      **滚轮两个方向都能滚**（俯视还在，只是取景变大变小），**右键拖动平移照常**；
+      往外一路滚到 150 为止（那是「最远距离」的上限），那个距离上整块 120 见方的地
+      正好都在画面里；往里滚到底受 `minDistance` 限制
+      顺带验证「高度够不到上限时以那个上限为准」：先点 `3D` 回到三维，把右栏
+      「相机 → 04 限制」的「最远距离」从 150 拖到 60，再点 `2D` → 这次站在 60 上，
+      不是硬写 110（写入前自己夹了一次，所以按钮不会点了没反应）
+      右栏「相机 → 03 交互」此时是「允许旋转 关 / 允许平移 开 / 允许缩放 开」
+      （缩放这项**这一档不碰**，显示的就是宿主/用户原来的值）
+  50. 点 `3D` → **原地回到进入 2D 之前**那个机位（不是默认斜角），
+      两个开关与「无限延伸」**都回到进来之前的样子**（本来关着的就还是关着，
+      不是一律按默认值打开），历史里只多一条「切回 3D 透视视角」
+      （不是两条：进 2D 时先单独写下的「最低仰角」会被并进同一条）
+  51. 点 `3D` 后左键旋转**恢复**，滚轮缩放照旧可用
+  52. 把右栏「相机 → 04 限制」的最低仰角调到 30°，再点 `2D` → 仍然正俯视
+      （进 2D 时把下限临时按到 0，否则 `OrbitControls` 会把相机夹成斜角、
+      而按钮还亮着 2D）；点 `3D` → 最低仰角**回到 30°**。
+      再验证「缩放权限是宿主的」：先在面板里关掉「允许缩放」，进 2D →
+      **2D 里也缩不动**（这一档不会替宿主打开它），出来仍是关的
+  53. 在 2D 下按 `⌘Z` → 回到 2D 之前的机位且档位显示 `3D`；点一次「重置机位」，
+      档位同样自己变成 `3D`（**点预设不再算这一条**：预设已经不动相机了，见设计决定 41）
+  54. 在 2D 下拖手柄移动模型 → 手柄仍能拖、**相机一动不动**，包围框跟着走
+      （证明没有碰到 `OrbitControls` 的 `make-default` 那条链路）
+  55. 点 `2D` / `3D`、点「聚焦」、点「重置机位」、按 `⌘Z`、在面板里手改机位 →
+      相机都是**滑**过去的（约 450ms，两端缓入缓出），不是瞬间跳；而
+      **拖动视角松手**后的自动回写不会滑一下（起点与终点是同一个机位）。
+      飞行途中看右栏「相机 → 02 机位」：数字**立刻**是终点值，不必等画面追上
+      （配置在写入那一刻就是终点，相机在后面追）
+  56. 飞行途中在画布上**点一下**（或滚一格滚轮）→ 相机立刻落到终点并停下，
+      历史里**不多**记录（`@start` 那条路径：动作要么没发生、要么走完）
+  57. 把「相机 → 04 限制」的最低仰角调到 45°，再进 2D → 出 3D：
+      上升、拉远、移注视点三件事是**同步摊开**在整段过渡里的，
+      不会出现「先平着滑过去、最后再猛地立起来」
+      （这一条正是 `clampToLimits` 的理由：起点在正上方、违反了刚还原的下限，
+      不先把两端夹进约束里的话，前 60% 的插值会被 `update()` 逐帧按在 45° 上）
+  58. 系统打开「减少动效」后刷新 → 所有机位改动回到瞬移（`prefers-reduced-motion`）
+  59. 点「地基」→ **自动切进 2D**、**左栏自动切到「地板」那一类**（导轨上琥珀落在地板图标上）；
+      在网格上拖一个矩形松手 → 地面出现一块板，**网格线不会透过板子闪**（板子带
+      `polygonOffset`，见 `SceneFloorplanFoundation.vue`——2D 档相机在 110 米高，
+      5 毫米的几何缝不到一个深度单位，光靠抬高挡不住），切 `3D` 看得出厚度；拖不到 1 米见方
+      就松手 → 提示行说「至少要 1 米见方」，什么都没落下
+  60. 点「画墙」→ 逐点点击只能落成**横平竖直**（斜着点不落点，提示行给一句解释）；
+      点回起点自动闭合；切 `3D` 看到的是**有厚度、有高度**的墙，不是片
+  61. 在墙上点一下 → 出一道门；再点同一个位置 → 删掉。切 `3D` 确认门是**真的开了洞**
+      （下段墙没了、过梁留在上面、门套与半透明门扇在其中），不是贴了一片面片
+  62. 窗同理：确认窗台高度、玻璃、上下两段墙都在；把「墙高」调成比窗顶还低 →
+      不报错、也不出现翻转的黑面
+  63. 点「房间」→ 点墙围出的区域内部 → 出现一块色块 + 房间名，**色块正好盖住墙围出的
+      那块地方**（四边贴着墙的中心线，不偏不倚）；**色块压在板子之上**，没被地基的
+      `polygonOffset` 反过来盖住——两者只差 30 毫米，这是这一处最紧的一段余量；
+      点区域外面 → 什么都不发生（泛洪越界即放弃，提示行说明原因）。在同一个屋里
+      再点一下 → 「这里已经是「房间1」了」
+  64. **画一个 L 形房间**（六面墙）→ 多边形正确、色块铺满 L 的两条腿
+      （这是串边算法最可能出错的地方）；**把房间画在离原点远的地方**（比如 x 从 12 米起）
+      → 色块**照样对准**。这一档是刻意留的：「色块摆到形心」那一版（多边形的坐标
+      本身就是世界坐标，网格又平移一次）偏的正是**一个形心矢量**，
+      房间离原点越远偏得越狠，而房间名走的是另一条路、一直是对的——
+      所以症状是「色块偏了、字是准的」，原点附近的房间几乎看不出来
+  65. 对着一面墙按 `Shift + 点击` → 墙没了，**挂在它上面的门窗一起消失**
+      （不留孤儿洞口；控制台回执里报出连带删了几个）
+  66. 右栏「平面图 → 03 墙」把刚才画的每一面墙都列了出来（`墙 1` + 中点 + 长度，
+      顺序就是画它们时的顺序）；悬停某一行 → 说明里有精确端点与**这面墙自己**的高 / 厚
+  67. 在「03 墙」里点一面带门窗的墙的 × → 墙消失，**「04 门窗」里挂在它上面的行一起消失**，
+      历史里只多**一条**「删除墙体」（`⌘Z` 按一次墙与门窗全回来，不是按两次）
+  68. 「04 门窗」里点 × → 只掉那一行（行首是「门」或「窗」，正文写着挂在 `墙 N` 上、沿墙几米）；
+      手动改一份配置、把某个洞口的 `hostWallId` 改成不存在的 id 再导入 →
+      那一行显示「挂在已不存在的墙上」，而不是留一段空白
+  69. 房间清单照旧在 `05 房间`：改名、拖色块改色、`×` 删除
+  70. `⌘Z` → 逐次回退，每面墙各是一步；历史面板里这一批显示成「平面图」
+  71. 工具激活时按 `Esc` → 工具落回空档、画到一半的墙链被丢弃；
+      在输入框里按 `Esc` → 只放弃这次编辑，工具**不受影响**
+  72. 2D 下右键拖动 → 正常平移，**一笔都不会画出来**；滚轮缩放正常；
+      墙链非空时按右键 → 只退掉最后一点（而不是把工具关掉）
+  73. 点「预览」→ 绘制工具条整块消失，且**工具状态真的被落回空档**
+      （退出预览后不会自己又亮起来）
+  74. 导出配置 → JSON 里有 `floorplan` 段；导入回来 → 图形还原；
+      **导入一份没有 `floorplan` 键的老配置 → 不报错，平面图为空**
+  75. 开着「地基」工具点「瓷砖地板」→ 这一格出现一圈琥珀（缩略图边框）；
+      点「木制地板」→ 琥珀跟着移过去；点两次同一格 → 圈消失（回到「落灰板」那条路）。
+      **同一块地板先在库里追加一次（左条亮），再选来铺地基** → 两个标记同时存在、
+      互不遮挡，不会「点下去什么都没变」
+  76. 选着地板划一个 4×3 的矩形松手 → 一块瓷砖地板**铺满这块区域**：中心对得上、
+      四边不超出格点；**盯住网格线**看有没有成片闪烁或一条条黑线（这是这套高度里
+      最紧的一段余量，见设计决定 32）；切 `3D` 贴地看，确认它浮在地面上而不是嵌进去。
+      **再划一块大得多的（比如 12×9）→ 砖的实物边长不变**（`tile1` 是 0.6 米见方），
+      而不是跟着区域一起放大——这是设计决定 35 的全部内容，也是最容易写错的一处
+      （把它写成 `repeat = scale` 在区域还小的时候几乎看不出来）。
+      顺带看**两个方向**的砖是不是同一个边长：只给一个分量写 repeat 时，
+      图案会在另一个方向上被拉伸，而那一档俯视图里很不容易发现
+  77. 右栏「场景模型」里出现一行「瓷砖地板」→ 点它、切 `3D` 胶囊里的「缩放 / 删除」都正常，
+      与别的模型没有区别；**再划一块** → 第二块独立存在、两块互不影响
+  78. `⌘Z` 一次 → 那块地板消失（这是「先追加一块不可见的」的用意）；再 `⌘Z` → 数据也没了；
+      **重做两次**回到原样。选了地板但拖不到 1 米见方 → 只有那句提示，
+      **刚选的地板不能被丢掉**
+  79. 工具关掉再打开、切到别的分类再切回来、进预览再退出 → 选用态与已铺好的地板都不受影响
+      （选用是 UI 状态，不进配置、不进历史）
+  80. 临时把某块地板的 glb 地址改坏（改 `playground/utils/modelList.ts`）→ 视口里什么都不出现、
+      **12 秒后**提示行闪一句「没能加载出来」，右栏列表里那一行也自己消失了（幽灵被清掉）
+  81. **回归**：没选任何墙壁模型时画一面墙、再放一道门 → 墙、门套、玻璃、门扇与改造前
+      **一模一样**（灰盒子那条路的代码只是搬了个家）。开着「允许旋转」或切到 3D 时墙照旧不受影响
+  82. 点「画墙」→ 左栏**自己切到「墙壁」**、导轨上琥珀落在砖墙图标上；
+      该图标在 18px 下认得出是一堵砖墙，与同屏的「地板」（两块错开的中空横条）、
+      右栏的「平面图」（正方外框 + 三道打断的隔墙）**不糊在一起**
+  83. 点「墙壁1」这一格 → 缩略图上一圈琥珀、**场景里什么都没多出来**
+      （选料不动场景，也不进历史）；再点一次 → 圈消失，回到「灰盒子」那条路
+  84. 选着「墙壁1」画一面墙 → 落下的墙**铺上了这个外观**：砖缝沿墙长均匀、不重叠不留缝；
+      切 3D 贴地看，厚度与墙厚对得上、砖浮在墙面上而不是嵌进去；
+      再画一面 → 两面墙共用一份加载（Network 里那个 glb **只有一次请求**，不是两次）
+  85. 画一面带门的墙 → 门洞两侧与过梁**各铺各的**（砖缝对不齐）、过梁上的砖被**竖向压缩**——
+      这两条是设计决定 33 里写明的代价，不是渲染错
+  86. 临时把墙资产的地址改坏（改成 404）→ 那面墙**一直是灰的**（不是空白、不碎裂、不飞出去），
+      控制台里只有 three 自己那条 404；再把地址指向一块**零厚度的地板 glb**（内置的地板资产正好是）
+      → 同样整面退回灰盒子，且控制台里**多一条** `3dmaker:` 前缀的 warn，说的是
+      「没有一块有厚度的网格」而不是「顶点里有 NaN」，而且**只打一条**
+      （改一次墙高让它重渲染，不会重复打）
+  87. **拿一个带背景板的墙 glb**（`wall/wall1` 就是）画一面墙 → 墙铺满整段，
+      **不是**墙中间一小片；控制台里有一条非致命的 `3dmaker:` warn 说明丢了几张片。
+      把这份配置导出来再导入，外观与观感都不变
+  88. `⌘Z` 撤销一面带外观的墙 → **整面墙消失**（外观是墙对象的一部分，与它同一步历史）；
+      选料这个动作本身**不产生任何历史记录**（它压根不进配置）
+  89. 开着「画墙」选一件料、再点「地基」选一块地板、再切回「画墙」→ **两件料各记各的**，
+      高亮只在自己那一类里亮；切到别的分类再切回来、进预览再退出、按 Esc → 两个选用态都还在。
+      而「画墙」画出来的墙**不继承**已有墙的外观（外观只来自当前画笔，
+      与「墙高」那种作用于全部已有墙的量刻意不同），但**墙高 / 墙厚照旧继承**
+  90. 点「天空盒」→ 左栏切到天空盒类，导轨提示读作 `天空盒 · 33 个天空盒`（不是「个模型」，
+      三十二格天空盒加**第一格「空盒子」**），每格缩略图是那一组的 `front.jpg`，
+      而**第一格没有缩略图、是一个立方体占位图形**，名字写的是「空盒子」。
+      **一进来就该看见「空盒子」那一格是亮的**（配置里 `sun.skybox` 默认是 `null`，
+      亮的意思是「现在一个天空盒都没在用」）；它亮着时点一下**什么都不发生**，
+      只多一条 HUD 提示「当前没有天空盒」，而**历史面板里不新增记录**。
+      点「天空盒1」→ **背景当场换成那片天**
+      （六张图加载完之后），底色移到「天空盒1」那一格；同一格里**再点一次
+      → 背景回到背景色**（不是把同一张图再设一遍），底色**跟着移到「空盒子」那一格**
+      （不是全灭——那一格说的就是「现在没有天空盒」）。点「空盒子」关掉与「再点一次」
+      走的是同一条路：两者写进配置的都是 `null`。
+      再点「天空盒12」这一格（服务器上**只缺 `down.jpg`** 的那一组）→ **背景照样换过去**
+      （不再「点了没反应」），头朝下看时底面是一块**与四周接得上的纯色**、不是一块突兀的灰；
+      控制台里**恰好一条** `3dmaker:` 的 warn，点名了 `bak12` 与 `down.jpg`
+      （同一格连点两次不重复打）。这一项同时守三件事：空盒子只为「关掉」这件事存在
+      （判据是 `skybox` 这个键在不在，不是它真不真——见设计决定 36）、
+      缺一面不再废掉整组，以及补色是贴着共享棱取的、不是随手一块灰
+  91. **六个面转一圈复核一遍**：机位放低、能看到地平线，把相机**转满一圈**——
+      地平线应当是**连续的一圈**（没有哪一条竖缝两侧对不上）、天在上、地在下。
+      面到轴的映射已经在离线量过一遍（把六张图合成等距柱状全景图，量四条竖棱的
+      接缝差；现在的顺序是 1.9~4.6、与图自己的相邻列差同量级，初版那套是 12.7~24.7，
+      见 `SKYBOX_FACE_FILES` 与「资产制作要求」），所以浏览器里这一步是**复核**：
+      离线那次只量了 `bak1`、量的也是「合成出来的全景图」，与 three 真正渲染出来的
+      那一路之间还隔着一次引擎实现。**唯一量不出来的是方位角的绝对值**——
+      若发现天上的太阳与场景日照的方向差半圈，那不是错，见设计决定 36 最后一段
+  92. **连点四五格不同的天空盒**，背景每次都换对（不是「点太快时落在了中间某一张」，
+      那说明 token 那道守卫漏了）；DevTools 的 Memory 里 `CubeTexture` 数量稳定在 1，
+      显存不随切换次数涨（每次切换都释放上一组）
+  93. **互斥现在只剩一处写入方，两件事各验一次**：导入一份 `sun.environment` 非空的配置
+      （那个下拉框删掉之后，这条路是**唯一**能造出这个状态的，见设计决定 41）→ 画面上的反射
+      是那个环境贴图；再从**左栏**点一个天空盒 → 背景与反射都换成天空盒，导出配置里
+      `environment` 已经变成空串（清空那一句还在，写的是**没有入口的那个字段**）。
+      然后验渲染层的兜底：手改导出的 JSON，让 `environment` 与 `skybox` **同时有值** →
+      导回来应当是**天空盒胜出**（`SceneSun` 里那条 `v-if`）。同时生效的话
+      `scene.environment` 被写两次，看起来只是反射不对，不报错
+  94. 在**右栏「日照环境」的 03 节**点一个场景预设（比如「黄昏」）→ **只有明暗与影子变**：
+      天空盒还开着、画布底色没变、机位一动不动，同一页上「太阳高度」与三盏灯强度跟着动了
+      （数字就摆在上面两节里，不必再切到别处核对——这正是把这一块从左栏搬过来的理由）。
+      顺手验那条一起改掉的旧毛病：把「程序化天空」关掉，**「太阳高度」与「太阳方位」两行
+      仍然在**（它们无论天空开不开都在驱动主光方向），点预设时能看见那两个数在变。
+      **同一条里验这一轮的起因**：连着点四个预设、来回点十几次，画面**不能卡**；
+      再把右栏阴影方式切成「累积阴影」重来一遍，同样不卡，而影子那块的大小与浓淡
+      **不跟着预设变**——累积那一组预设一个字都不写，理由见设计决定 41
+  95. 导出配置 → 导回来：**天空盒原样恢复**，那一格也自己亮着；`⌘Z` 撤销一次 →
+      天空盒关掉；再撤销 → 回到上一组（六个地址与历史同步，不是「配置里有、画面不认」）
+  96. 临时把某一组的 `back.jpg` 改名（或指向一个不存在的目录）→ **背景照样换过去**，
+      那一面是一块**贴边取色的纯色**（不是全黑、不是半张天、也不是「维持原样」——
+      旧版六张少一张就整组不生效，现在只有六张全缺才是那个结果，见设计决定 36）；
+      控制台里有一条 `3dmaker:` 的 warn 点名了这一组与缺的那一张，且**只打一条**；
+      把名字改回来再点一次 → 那一面回到真图，且**不再打第二条**（正文不同了，
+      去重不按组件实例而按正文）
+  97. 点「门」→ 左栏切到「门」类，导轨提示读作 `门 · 1 个模型`；那一格的缩略图
+      **能出**才说明服务器上真有 `door/doubleGlassDoor/doubleGlassDoor.png`——
+      出不来就是立方体占位图形加一条 404（**这一条要如实记**，`modelList.ts` 里的
+      目录名与服务器对不上就是它）
+  98. 还开着「门」工具时**点「双开玻璃门」那一格** → 缩略图上出现一圈琥珀、
+      **场景里什么都没多出来**；视口底部那行提示变成「现在落笔会装门，用的是
+      「双开玻璃门」，洞口按 1.80 × 2.10 米开；再点一次左栏的「双开玻璃门」就取消；
+      点在这个门洞上再点一次删掉它」
+      （末一句是**门窗共有**的：门窗那两条操作说明被规则句整句替换掉了，不给它们留这一句，
+      选中之后用户就再也看不到怎么撤销；**中间那一句也是**——洞口尺寸跟着
+      料走，而这是下笔之前唯一看得见它的地方）
+  99. 选着「双开玻璃门」画一面墙、在墙上点一下 → **洞里装上真的门模型**；切 `3D`
+      凑近看四件事：**洞口是 1.8 米宽**（不是 0.9——墙上那两条竖缝的距离一眼能比出来）、
+      **门一比一填满它**（两侧没有缝、也没有嵌进墙里）、**门高顶满洞口**、
+      **程序生成的框条与黄色门扇一个都不剩**（抑制生效，不是两套叠在一起）；
+      洞两侧的墙段与洞上方的过梁**一根不少**。
+      第 2、3 条正是设计决定 37 里那两次实测反馈要守的东西——**先查洞口再查缩放**：
+      洞还是 0.9 米宽的话，下面两条看什么都是错的
+  100. 同一面墙上再放一个门（这次**先点一次「双开玻璃门」取消选用**）→ 洞里是
+       **原来的程序构件**（回退路径够得到，没被这次改造做没）；两个门并排时对比一眼
+       两套装法
+  101. 同一面墙上放两个门、**换一面斜着的墙**再放一个 → 三个模型各自跟随自己的墙，
+       位置与朝向都对（验 `rotationY` 没镜像）。想验「同一面墙上两个门各用一件料」
+       得先在 `modelList.ts` 的 `DOOR` 里加第二行、且服务器上真有那个目录
+  102. 先给一面墙挑一件墙皮（见第 84 条）再在上面装一个带模型的门 →
+      墙皮照旧铺、门照旧装，两条路不打架（`SceneFloorplanWallSkin` 那条抑制路径）
+  103. 切到 `2D` 档 → 门变成**一块实色**（回退路，与 2D 档的墙一致）；切回 `3D` 模型回来
+  104. 临时把 `modelList.ts` 里 `DOOR` 的某一行改成不存在的目录（验完改回）→
+      **洞里是程序构件的门**（回退），控制台里恰好一条 `3dmaker:` 的 warn 点名了地址，
+      **连点两次不重复打**；这是设计决定 37 里「地址写错不报错、只是回退」那句话的实况
+  105. **这一条要自己造资产才触发**：把一份「除了门还把地面与三面墙一起导出来」的
+      glb 传上去（服务器上那份 `doubleGlassDoor` 初版正是这样，后来重导掉了），
+      装上去之后控制台有一条 `3dmaker:` 的 warn，写着量出来 14.00 × 3.42 米、
+      缩完横着 8.60 米、是洞口的 9.6 倍、请只导出整樘门；而画面上**门照常装着**
+      （警告不改变任何摆放结果）。这就是设计决定 37 里 `openingFaceOversized` 那条
+      体检提示的实况——**它是提示不是门槛**，看到它该做的是回去重导资产
+  106. `⌘Z` → 撤一次门**连它的 `url` 一起退**（不是「门没了但外观还挂在撤销栈里」）；
+      导出配置 → JSON 里那个门洞里看得到 `url`，导入回来装的还是那个模型
+  107. 点「窗」→ 左栏切到「窗」类，导轨提示读作 `窗 · 1 个模型`；那一格的缩略图
+      **能出**才说明服务器上真有 `window/window1/window1.png`——出不来就是立方体
+      占位图形加一条 404（**这一条也要如实记**，目录名与服务器对不上就是它）
+  108. 选「窗户1」在墙上点一下 → **洞里的框条、中竖梃与玻璃整套换成真模型**；
+      切 `3D` 凑近看四件事：**窗洞不落地**（离地 0.9 米，窗台下面那块矮墙仍然是实的）、
+      **窗高顶满洞口**、**程序的那套一个都不剩**、洞上下的墙段与过梁一根不少。
+      洞口宽度该是**清单里写的那个数**（今天写 2.5，资产量出来是 3.6——两者不等是
+      **故意的、也是允许的**，见下两条），视口底部那句提示说的必须是同一个数。
+      这面墙因此至少要有 **洞宽 + 0.2 米**长（两侧各留 `OPENING_EDGE_GAP` 0.1），
+      短了会得到一句「这面墙太短，放不下一个窗」，**那也是对的**
+  109. **量出来的宽度只在清单没写时生效**（这一条是「窗户大小不对」那个反馈的验收，
+      也守着「别拿事实覆盖决定」这条）：临时把 `modelList.ts` 里 `WINDOW` 那一行的
+      `width` / `height` **整个删掉**（验完改回），再点中「窗户1」→ 视口底部那行提示
+      该读作「洞口按 **3.60 × 2.70** 米开」——**这两个数是量出来的**，清单里没有。
+      落下的洞宽度跟着走，控制台一个字都不该有。再试另一种：把那两个数**改成**旧占位
+      **1.2 × 1.2**（验完改回原值）→ 提示该读作「洞口按 **1.20 × 1.20** 米开」
+      （**清单赢了**），同时控制台恰好一条 `3dmaker:` 的 warn，把
+      `1.2 × 1.2`、`3.6 × 2.7` 与「差了 3.0 倍」都写出来、并说明落笔仍按清单。
+      **两条合起来才是完整的行为**：清单没写就量、写了就听清单、差得远就说一句
+  110. 同一个窗洞再点一次 → 连模型一起删掉，窗台矮墙跟着消失（不是「窗没了、矮墙还在」）
+  111. 同一面墙上放一个门 + 一个窗、**换一面斜着的墙**再各放一个 → 四个模型各自跟随
+      自己的墙，位置与朝向都对，且**门窗互不干扰**（两者走的是同一个组件、同一个地址分组，
+      差别只在替身碎片与日志名词）
+  112. 临时把 `modelList.ts` 里 `WINDOW` 那一行改成不存在的目录（验完改回）→
+      **洞里是程序构件的窗**（回退），控制台里恰好一条 `3dmaker:` 的 warn，
+      **措辞里的名词是「窗」而不是「门」**（这是「门与窗共用一份实现」那句话唯一
+      看得出来取错了的地方）。**这一条同时验了兜底**：量不回来时（404）
+      落笔用的仍是清单里的数，而不是把洞口开成一个零
+  113. 切到 `2D` 档 → 门窗都变成**程序构件那套实色盒子**；切回 `3D` 模型回来
+  114. **两扇窗贴着放**（这一条是「窗与窗之间最小间隔改成 0」那个反馈的验收）：
+      先放一个窗，再在**它右边约一扇窗宽处**点一下——落点会被**磁吸**到「与前一个
+      洞口的边线贴齐」的位置（间隔 0）；点得离那个位置半米以外就不吸，落回整米格上。
+      放完之后两个洞之间**没有墙垛**、也没有负长度的黑面，`⌘Z` 一次撤掉后放的那扇。
+      （上一条路径的完整来由见设计决定 37 里「容差撤掉、换成磁吸」那一组：
+      **磁吸算的是未吸格的那个点**，吸过格的落点永远够不着半米上的贴齐位置）
+  115. **资产比洞口宽时的一个后果，贴着放时看得出来**：清单写 2.5、资产是 3.6 米宽，
+      装法按高度等比（系数 1，高度正好都是 2.7），所以每扇窗两侧各有 0.55 米伸到
+      洞口之外——单独一扇时那两截藏在墙里完全看不见（这正是「写小了」那个已知方向），
+      但**贴着放时它们会落进邻居的洞里**，两扇的玻璃在那一小块互相穿插。
+      要两扇紧挨着又不想要这个，就把清单里的宽度改成资产自己的那个数（3.6），
+      那时洞口正好等于资产、一毫米都不外伸
+  116. **2D 里点一个门窗 → 它被选中**：墙顶亮起一块琥珀板，而且**看得见**
+      （它就是抬到过梁之上画的，贴地画的话会被过梁整个盖住），提示行说
+      「已选中一个窗（沿墙 3.50 米）…」；点空处 → 高亮消失、提示行回到
+      「点一个门或窗就能选中它，选中后按住左键可以沿墙挪位置」（见设计决定 38）
+  117. 按住选中那扇窗沿墙拖 → 它跟着走、每挪一米跳一格；**松手后 `⌘Z` 按一次**
+      就回到拖动之前（不是按两次），历史里那一条叫「移动窗」
+  118. 拖到邻居窗的边缘附近 → **贴上去**（两洞之间没有墙垛、间隔 0）；
+      再用力往那边拖 → **过不去**，停在紧挨着的位置（不能穿过邻居换空档）；
+      光标甩到墙外一米也照常跟着走，不会卡住、也不会跳到别的墙上
+  119. **工具开着时（门 / 窗 / 画墙任一）点门窗 → 行为与改造前一字不差**
+      （落笔 / 再点同一个位置删掉），拖动完全进不去；这一条是这次改动最容易出错的
+      地方（两条路共用了一个 `pointerdown` 处理函数）
+  120. **拖动只在「2D 档 + 没开允许旋转」时生效，两种挡法各有一句提示**，而且顺序是定的
+      （先看 `enableRotate` 再看档位）：切到 **3D** 之后提示行说的是「…但左键此刻会旋转
+      视角，拖不动它——请在「相机」页关掉「允许旋转」」（3D 默认就允许旋转）；
+      在 2D 档下把「允许旋转」打开，说的还是同一句；把旋转关掉、但机位还是斜的
+      （先转到 3D 再关开关），才是那句「切到 2D 俯视角才能沿墙拖动它」
+  121. `Esc` 分**四**级实测：选着东西时按一下 → **只清选中**（工具与预览都不受影响、
+      历史的长度也不变）；再按才退工具、再按才退预览；输入框里按 `Esc` 不受影响
+  122. 拖出视口外松手、再把鼠标移回来 → 洞口**不会**继续跟着走（指针捕获 + `buttons`
+      兜底那两条）；拖到一半停手 0.6 秒再松手 → 历史里最多一条多余记录、`⌘Z` 最多按两次
+  123. 点选 / 拖动期间**模型不会被顺手选中**（变换手柄不冒出来）——`ScenePicker`
+      只在点击手势上拾取，而这次多出来的这条手势与它共用同一个左键，要实测确认
+  124. **绘制工具条只在 2D 出现**：切到 3D → 左侧那五枚按钮**整条消失**；这时如果
+      还开着一个工具（比如画墙、链上停着两个点），工具与墙链**都还在**，切回 2D
+      工具条回来、能接着点下去，3D 里按 `Esc` 也能把工具退掉。在「相机」页打开
+      「允许旋转」、以及进预览，同样是隐藏的（那两种情况下也画不了，闸就是 `planView`）
+  125. **不接线时左栏只有模型库**：导轨**五项**（地板 / 墙壁 / 门 / 窗 / 天空盒）、
+       第一项上面没有分隔线、悬停提示还是「地板 · 2 个模型」这个格式，五类宫格与
+       空态文案照旧，控制台里没有新增警告。右栏「日照环境」页从上到下应当是
+       **01 天空 → 02 光照 → 03 场景预设**（四条预设 + 一句范围脚注），
+       第三条的表头与上面两节的编号连号、四条预设点一下能命中高亮，
+       手动改一下「主光」强度 → **高亮自己灭掉**（判据是配置反推）
+  126. 照上面那段示例临时给 `App.vue` 接一份 `extraSections`（改两行，验完删掉），
+       然后看：导轨上多出一项、**排在天空盒之下**、头上多一条新的分隔线；悬停读作
+       「我的工具 · 1 个模型」；点它 → 宫格换成这一类；格子在「已在场景里」时**有底色
+       高亮**、点一下真的往场景里追加一个模型；切回内置分类再切回来**图不闪白**
+       （组件没被重建）。再给 SidePanel 写一个 `#list` → 这一类由宿主接管（宿主的标记
+       原样出现），而**内置分类的宫格一点没变**；那一段不写 `icon` 时，导轨上应当是
+       立方体占位图而不是一格空白。再把那份 `extraSections` 里某几类的 `entries`
+       留成 `[]` → 导轨上那一项照旧在、提示读作 `0 个模型`，宫格是空态那句话
+       （**不接线时这一条不再有内置用例**：内置这五类现在都有货，空态只有宿主传得出来）
+  127. 把上面那段示例里的**两条**都接上看（验完删掉）：`🪑` 那一格的图是**居中的 emoji**、
+       不撑破版、没有请求发出去；点一下 → 视口里真的立起一把椅子（19 个 mesh：11 件零件
+       里两件带 `count: 5`）；**点它**能选中、按 `W` 能拖、变换手柄与包围框都在、
+       `⌘Z` 撤得掉、导出配置里那一条模型带着 `partsJson`；再切走再切回来**图不闪白**。
+       相邻那格是服务器上的联网资产，两条的观感/行为应当各是各的
+  128. 再摆一个**内置示例几何体**（内置那一条 `url` 为空），确认**程序生成的那一格与它
+       互不串亮**（这是空串 `url` 那个坑的验收点，见设计决定 40）：
+       宫格里只有各自对应的一格有底色。再把 `partsJson` 临时换成一段坏 JSON
+       （比如 `'['`）→ 点它**只出一句 HUD 人话、不追加任何东西**、左栏不亮；
+       换成一段「顶层是对象」的（比如 `'{}'`）→ 另一句人话。最后把它接进导出配置
+       再导回来 → 那把椅子照旧立着（`partsJson` 逐字往返）
+  129. **「阴影」页只露当前方式那一组**（见设计决定 42）：刚进编辑器 / 刚清空草稿时
+       （`enabled: false`、`type: 'contact'`）这一页**只有 `01 方式`**——「启用阴影」关着、
+       「实现方式」与「全局投射/接收」两行都在但灰显，**下面没有 02**；
+       把「启用阴影」打开 → 冒出 **`02 接触阴影`**（不透明度 / 模糊 / 采样范围 / 分辨率），
+       编号接着 01、没有跳号；摆一个模型进去，拖「不透明度」**影子当场变浓变淡**
+       （接触阴影把 `opacity` 挂在 watch 上，`:frames="1"` 只重画一帧）；
+       把「实现方式」换成 Shadow Map → 那一节**整块换成**「02 Shadow Map」，
+       而且这时**地上那道接触阴影消失、只剩主光投影**（换方式 = 换组件）；
+       再换成累积阴影 → 出「02 累积阴影」，地上换成一块多帧收敛的影子；
+       最后把「启用阴影」关掉 → **02 整块消失**，只剩 01
+  130. **点中一个门窗，左栏自己走过去**（见设计决定 43）：2D 里点一个门洞 →
+       左栏**切到「门」类**、导轨琥珀落在「门」上；那一格模型缩略图**被圈着**
+       （它就是这洞现在装的那樘；程序构件的洞口则**一格都不圈**）；
+       提示行读作「已选中一个门（沿墙 X 米）：按住左键沿墙拖就能挪位置；
+       **左栏点一格就换掉它**；删掉它用右栏『平面图 → 04 门窗』那一行」；
+       点空处 → 高亮与那一圈都灭掉，**但分类留在门类**（切分类是「带路」，不是选中态）
+  131. **点一格就换掉它**：墙上点一下放个门（程序构件那套灰框条）→ 在墙上点中它 →
+       左栏那**一格**（比如「双开玻璃门」）→ 洞里**当场换成真模型**、洞口按
+       1.8 × 2.1 重开（切 3D 看：门变宽了、墙上的洞跟着大）；
+       历史里多出**一条**「替换门模型」，`⌘Z` 按**一次**把尺寸与模型一起退回去，
+       右栏「平面图 → 04 门窗」那一行的尺寸从 `1.80 × 2.10` 退回 `0.90 × 2.10`
+  132. **再点同一格不产生历史**：接着点那一格 → 只闪一句「这个门洞装的就是「双开玻璃门」」，
+       **历史长度不变**（撤销栈里不多一条），洞口与配置一个字没动。
+       （它同时也是「当前料」的验收点：这时 `Esc` 掉选中、点「门」工具去画下一个门，
+       落笔**直接是这一樘模型**，不用再选一次）
+  133. **放不下就拒绝，而且一个字不写**：临时往 `playground/utils/modelList.ts` 的 `WINDOW`
+       里加一行更宽的窗（比如 3.5 × 1.2，**验完删掉**）→ 在一面 3 米的短墙上选中一扇已有的窗、
+       点那一格 → 闪「这面墙太短——「X」要 3.50 米宽，放不下」，
+       **洞口尺寸、模型、历史长度全都没变**；把它放到 4 米墙上再来一次 → 换成
+  134. 同一条临时清单行验**与邻居叠上**：两个窗挨着放，选中左边那个、点更宽的那一格 →
+       闪「这里两侧不够——换成「X」会和旁边的门窗叠上」；把清单里那个宽度改到不重叠 → 换成。
+       换成之后顺手试一下沿墙拖它：**可能**会闪「这个洞口两侧没余量，挪不动」
+       ——换宽之后两侧真的没余量了，那是既有行为，不是回归
+  135. **3D 里没有替换这回事**：2D 里选中一扇窗、**切到 3D** → 左栏那一圈**消失**、
+       点一格是「追加到模型」而不是替换（守的是 `replaceTarget` 那道 `planView` 闸；
+       没有它的话点一格会改掉一个看不见的洞口，而日志里只有一条正常回执）
+  136. 替换之后在新尺寸下把这段交互再走一遍：沿墙拖（整米步进 + 磁吸）、`Esc` 清选中、
+       撤销 / 重做、右栏「04 门窗」那一行删掉它——**尺寸换过之后这些照旧**
+  137. **点中一面墙，左栏自己走过去**（见设计决定 44）：2D 里点一面墙的墙身 →
+       它**通体亮起一条琥珀板**（比洞口那块长，是从这头到那头的一条，
+       不是被洞口切开的某一段）、左栏**切到「墙壁」类**、导轨琥珀落在「墙壁」上；
+       提示行读作「已选中一面墙（中点 X, Y）：**左栏点一格就换掉它**；
+       删掉它用右栏『平面图 → 03 墙』那一行」。
+       顺手验一下**未选中那一句**：把场景清到「画了两面墙、一个门窗都没放」→
+       提示行仍然要说「点一面墙就能选中它」（原先这句只在有洞口时才出现，见 44）
+  138. **点一格就换掉它**：点「墙-米黄」那一格 → 这面墙**当场换成新外观**（切 3D 看：
+       贴图变了）；历史里多出**一条**「替换墙面模型」、`⌘Z` 按一次退回去；
+       点空处 → 高亮灭掉，**但分类留在墙壁类**（切分类是「带路」，不是选中态）
+  139. **再点同一格不产生历史**：接着点那一格 → 只闪一句「这面墙贴的就是「墙-米黄」」，
+       **历史长度不变**，配置一个字没动
+  140. **替换不动几何、也不动尺寸**：换过外观之后切 3D 量一下——这面墙的**起点 / 终点 /
+       高度 / 厚度一个都没变**、墙上的门窗一个都没动、**其余每一面墙的厚度也都没变**
+       （`height` / `thickness` 是一次改全部墙的全局量，替换只该动 `url`）
+  141. **3D 里没有这回事**（与 135 同一道闸）：2D 里选中一面墙、**切到 3D** →
+       左栏那一圈**消失**、点一格是「追加到模型」而不是替换；
+       在 3D 里按 `Esc` 也照旧能清掉这个选中（与洞口同一个键、同一条优先级）
+- 编辑器的交互（拖放导入、快捷键、导入导出文件、**空档里点选门窗并沿墙拖动**、
+  **左栏点一格替换选中的洞口或墙**）
+  没有自动化测试，只有类型检查和构建覆盖——上面那组「洞口落点」断言验的是它
+  **调用的那几条算术**，指针怎么走、高亮画在哪、历史里有几条记录，一行都盖不到
+
+已用真实宿主项目验证过的接入路径：`pnpm pack` 出 tarball → 宿主 `pnpm add <tarball>` → `vue-tsc` 通过 → `vite build` 通过。
+
+---
+
+## 后续可以做的事
+
+- **没有「换回程序构件」这条路**（设计决定 43）：洞口一旦写上了外观地址，就只能换成另一件资产，**回不到程序生成那套框加扇**——包括左栏点同一格（那只会说一句「装的就是它」）。退路只有一条：删掉这个洞口、再用「门」/「窗」工具**不选料**重放一个。做的话要在左栏或右栏给一条明确的「撤掉外观」（写配置时把 `url` 键整个删掉，而不是写空串——空串会让 `openingFilledByModel` 的判据翻回程序构件那一侧，于是洞里既没有模型、框扇也被抑制）
+- **墙也没有「换回灰盒子」这条路**（设计决定 44）：选中一面有外观的墙，左栏点一格只能换成另一件资产，**回不到程序生成的灰墙**（点同一格只会说一句「贴的就是它」——`setAssetPick` 是设置语义，不是 toggle）。退路只有一条：删掉这面墙、用「画墙」工具**不选料**重画一面。做的话与上面那条是同一个动作——**把 `url` 键整个删掉，而不是写空串**：渲染上两者等价（`SceneFloorplan.vue` 判的是 `!url`，空串照样落回灰盒子），但数据上不等价，「没外观时这个键整个不存在」是 `FloorplanWall.url` 明写着的契约（设计决定 10），写空串会让「这面墙有没有外观」在 `'url' in wall` 与 JSON 往返之间给出两种答案
+- 补充单元测试（Vitest）覆盖 store 与 composables
+- **把累积阴影那三个「改了就要重烘」的参数从滑动条上挪开**（`accFrames` / `accBlend` / `accScale`，见设计决定 41 与 11）：现在它们各是一条连续的滑块，而每变一个值都要从零烘一整轮，拖一次等于连着重烘十几次。要么让控件**松手才写配置**，要么在烘焙前加一道防抖；`shadow.type` 那一组不在滑块上（是下拉框），所以不受这条影响
+- **「阴影」页里 `accOpacity` 与 `accBlend` 两个滑杆是死的**（见设计决定 42）：改动它们不会触发任何东西，画面一点反应都没有，而不是「改了要等重烘」。要么删掉这两个控件，要么给累积阴影挂一个显式的「重烘」按钮——后者等于把设计决定 41 里那 40 帧重新引进来，所以更可能是删掉
+- **给 `AccumulativeShadows` 的重挂载补上回收**：cientos 那个组件没有 `onUnmounted`，每次重挂载漏两张累积 render target 与 8 盏灯的 1024² 阴影贴图（同目录的 `ContactShadows` 有 `onUnmounted`，可以照它写）。它不从配置上走，只能在 `SceneShadows` 那一层想办法，或给上游提 issue
+- 增加 `lib` / `umd` 之外的 Web Component 入口，用 `<script>` 直接嵌入非 Vue 项目
+- 接入 `@tresjs/post-processing` 提供辉光、景深等后期效果
+- 用 `changelog` + `changesets` 管理版本发布
