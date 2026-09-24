@@ -13,7 +13,7 @@ import type { TransformMode } from '../src'
 
 defineOptions({ name: 'App' })
 
-const { loadFromLocal, saveToLocal } = useConfigIO()
+const { saveScene } = useConfigIO()
 
 /**
  * 变换手柄的快捷键。
@@ -132,7 +132,7 @@ function onKeydown(event: KeyboardEvent) {
     case 's':
       // 保存不受输入焦点影响：在输入框里按 ⌘S 仍然是保存场景
       event.preventDefault()
-      saveToLocal()
+      saveScene()
       return
 
     default:
@@ -141,9 +141,12 @@ function onKeydown(event: KeyboardEvent) {
 }
 
 onMounted(() => {
-  // 有草稿就恢复。首次访问时静默跳过，不必为此弹一条提示
-  const restored = loadFromLocal()
-  if (!restored) pushEvent('编辑器就绪 · 拖入 glTF / GLB 或从左侧选择模型')
+  /*
+   * 页面不再恢复任何草稿——编辑器已经不落盘了。
+   * 「场景从哪来」是宿主的决定：宿主拿到组件实例之后调 `loadSceneData`，
+   * 编辑器这一层不替它猜。所以每次打开都是一张空场景。
+   */
+  pushEvent('编辑器就绪 · 拖入 glTF / GLB 或从左侧选择模型')
 
   window.addEventListener('keydown', onKeydown)
 })

@@ -375,3 +375,26 @@ export function changedGroups(before: SceneConfig, after: SceneConfig): string[]
     .filter((key) => JSON.stringify(before[key]) !== JSON.stringify(after[key]))
     .map((key) => GROUP_LABELS[key])
 }
+
+/**
+ * 把旧版配置里的单模型字段折成列表。
+ *
+ * 早先的配置写的是 `config.model`——**一个对象**。直接丢给 `applyConfig`
+ * 的后果不是报错而是「什么都不发生」：`models` 不在补丁里，于是沿用当前场景
+ * 的模型，而 `model` 这个键会被原样装进配置——用户看到的是「载入成功，但模型没变」，
+ * 没有任何一处会告诉他这份数据有问题。
+ *
+ * 只认真正的旧形状（有 `model`、没有 `models`），新配置原样返回。
+ *
+ * 放在 `src/` 而不是编辑器的导入路径里，是因为消费它的有两处、而它们分属两层：
+ * `SceneViewer` 的 `loadSceneData`（宿主用自己存的配置初始化）与编辑器的
+ * `importFile`（导入 `.3deditor.json`）。两边各写一份、又悄悄不一致，
+ * 正是那类不报错的 bug。
+ */
+export function migrateConfig(raw: DeepPartial<SceneConfig>): DeepPartial<SceneConfig> {
+  const legacy = (raw as { model?: unknown }).model
+  if (Array.isArray(raw.models) || !legacy || typeof legacy !== 'object') return raw
+
+  const { model, ...rest } = raw as DeepPartial<SceneConfig> & { model: ModelConfig }
+  return { ...rest, models: [model] }
+}

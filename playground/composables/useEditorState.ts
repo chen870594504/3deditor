@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import type { ModelBounds, SceneStats, TransformMode } from '../../src'
+import type { ModelBounds, SceneConfig, SceneStats, TransformMode } from '../../src'
 import { DEFAULT_LIBRARY_SECTION_KEY } from './useModelLibrary'
 
 /**
@@ -344,11 +344,20 @@ export const canvasApi: {
    * （状态机全在 `useFloorplanTool.ts` 里）。落不到地面时返回 null。
    */
   groundPointAt: ((clientX: number, clientY: number) => [number, number] | null) | null
+  /**
+   * 取当前场景数据交给宿主保存。
+   *
+   * 编辑器自己并不落盘——「保存」在这里的完整含义就是「把数据取出来交给宿主」。
+   * 走这条注册表而不是直接读 store，是为了让编辑器用上宿主将来要用的那条路：
+   * 编辑器是本插件的第一个消费者，接口设计错了这样才暴露得早。
+   */
+  getSceneData: (() => SceneConfig | null) | null
 } = {
   captureCamera: null,
   measureModel: null,
   viewportAspect: null,
   groundPointAt: null,
+  getSceneData: null,
 }
 
 /** 由画布内的 PerfProbe 定期刷新，视口 HUD 与属性面板的只读读数都读它 */

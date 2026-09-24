@@ -7,7 +7,7 @@ import ScenePicker from './ScenePicker.vue'
 import SceneSelection from './SceneSelection.vue'
 import SceneToolbar from './SceneToolbar.vue'
 import { useSceneStore } from '../stores/scene'
-import { cloneFloorplanPatch, cloneModelPatch } from '../utils/config'
+import { cloneFloorplanPatch, cloneModelPatch, migrateConfig } from '../utils/config'
 import type {
   CameraChangePayload,
   DeepPartial,
@@ -16,6 +16,7 @@ import type {
   ModelPickPayload,
   ModelTransformPayload,
   ObjectClickPayload,
+  SceneConfig,
   SceneViewerProps,
 } from '../types'
 
@@ -278,8 +279,8 @@ function onCameraChange(payload: CameraChangePayload) {
  * 隔着 TresCanvas 拿模板引用是可行的——TresJS 换的是渲染器，
  * 组件仍然由 Vue 创建和挂载。
  *
- * 这三条是**内部通道**，与下面 `defineExpose` 那两个方法不是一回事：
- * 后两者是组件对宿主的公开面，而 `modelObjectOf` 只在库内部被选中视觉（`selectedObject`）
+ * 这几条是**内部通道**，与下面 `defineExpose` 里那些不是一回事：
+ * 后者是组件对宿主的公开面，而 `modelObjectOf` 只在库内部被选中视觉（`selectedObject`）
  * 用一次，交出去的是一只活的 three 对象，不该成为宿主的 API。
  *
  * `useTemplateRef` 返回的是 `readonly(代理)`，但这里可以照用：readonly 的代理
@@ -381,7 +382,53 @@ function onTransform(payload: ModelTransformPayload) {
   emit('modelTransform', payload)
 }
 
-defineExpose({ captureCamera, measureModel, groundPointAt })
+/**
+ * 取当前场景配置的深拷贝，可直接 JSON 序列化后交给宿主自己的接口。
+ *
+ * **不返回 null**，与上面三条不同：那三条要隔着 `contentRef` 问画布，
+ * 画布还没挂上时只能给空；这一条只读 store，而 store 一定在。
+ * 写成「可能为 null」只会让宿主多写一层永远走不到的分支。
+ *
+ * 出去的是**裸的** `SceneConfig`：版本号、场景名、导出时间这类外壳由宿主自己定，
+ * 库不替它立这个契约。场景名本来也不在 `SceneConfig` 里——它是编辑器的界面状态。
+ */
+function getSceneData(): SceneConfig {
+  return scene.exportConfig()
+}
+
+/**
+ * 用一份场景数据初始化场景，返回是否用上了。
+ *
+ * 与直接调 store 的 `applyConfig` 有两处不同，这两处正是它存在的理由：
+ *
+ * 1. **先走一遍 `migrateConfig`**，把旧版写 `model`（单对象）的配置折成 `models`
+ *    列表。少了这一道不会报错，只会「载入成功但模型没变」——详见那个函数的注释。
+ * 2. **载入后清空撤销栈**。这是「初始化」的语义：换了一个场景之后还能 ⌘Z 退回
+ *    上一个通常不是想要的，两段无关的历史混在一起也没法看。
+ *    （想要「可撤销的载入」，宿主自己调 `applyConfig(patch, '标签')` 即可。）
+ *
+ * 输入与 `applyConfig` 一样按 `DeepPartial` 收：只写要覆盖的分组，其余保持当前值。
+ * `undefined` 表示「本次不改这一项」，`null` 是合法的清空值。
+ */
+function loadSceneData(data: DeepPartial<SceneConfig>): boolean {
+  if (typeof data !== 'object' || data === null) return false
+
+  // 不带 label：紧接着 clearHistory 就把当前状态设成新起点了，
+  // 先 commit 一条再把它清掉是多此一举
+  scene.applyConfig(migrateConfig(data))
+  // clearHistory 会顺带清掉 applyConfig 排下的那条 400ms 防抖提交，
+  // 所以这里不会留下一个稍后触发的悬挂写入
+  scene.clearHistory()
+  return true
+}
+
+defineExpose({
+  captureCamera,
+  measureModel,
+  groundPointAt,
+  getSceneData,
+  loadSceneData,
+})
 </script>
 
 <template>
@@ -415,8 +462,8 @@ defineExpose({ captureCamera, measureModel, groundPointAt })
       <!--
         画布级的点选拾取。放在这一层而不是 SceneContent 里，是为了不动
         SceneContent 那句「不依赖 TresCanvas 内部的注入链」的承诺：
-        本组件是全仓库唯一需要 useTresContext 的地方，它只碰 3D 层的东西、
-        不访问 store，命中之后只说「这个 id 被点了」。
+        本组件是第一个绕开那条链的（全仓库共三处，见 DESIGN.md 设计决定 4），
+        它只碰 3D 层的东西、不访问 store，命中之后只说「这个 id 被点了」。
 
         它是空模板组件（渲染返回 null），只在 pickable 打开时才存在；
         关掉时连那两个 DOM 监听器都不挂。

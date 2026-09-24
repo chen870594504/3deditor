@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, useTemplateRef, watch } from 'vue'
 import { SceneViewer, activeEventTypes, useSceneStore } from '../../src'
-import type { ModelBounds, ModelTransformPayload, SceneStats, TransformMode } from '../../src'
+import type { ModelBounds, ModelTransformPayload, SceneConfig, SceneStats, TransformMode } from '../../src'
 import PerfProbe from './PerfProbe.vue'
 import ModelActions from './ModelActions.vue'
 import FloorplanTools from './FloorplanTools.vue'
@@ -37,6 +37,7 @@ const viewerRef = useTemplateRef<{
   captureCamera: () => boolean
   measureModel: (id: string) => ModelBounds | null
   groundPointAt: (clientX: number, clientY: number) => [number, number] | null
+  getSceneData: () => SceneConfig
 }>('viewer')
 
 /**
@@ -76,6 +77,15 @@ canvasApi.viewportAspect = () => {
  */
 canvasApi.groundPointAt = (clientX, clientY) =>
   viewerRef.value?.groundPointAt(clientX, clientY) ?? null
+
+/**
+ * 取场景数据，登记给顶栏的「保存」与 ⌘S 用。
+ *
+ * 与上面三条同一条路数，但这一条是编辑器第一次**以宿主的身份**去用库的公开面：
+ * 取数据这件事本身不落盘，落盘是拿到数据之后的事（编辑器不落盘，只打一条日志）。
+ * 走这条路而不是直接读 store，是为了让编辑器踩在宿主将来要踩的那条路上。
+ */
+canvasApi.getSceneData = () => viewerRef.value?.getSceneData() ?? null
 
 /**
  * 拖入过的本地文件的 object URL。

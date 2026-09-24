@@ -1,15 +1,12 @@
 import { computed, ref } from 'vue'
-import { activeEventTypes, useSceneStore } from '../../src'
-import type { DeepPartial, ModelConfig, SceneConfig } from '../../src'
-import { pushEvent, sceneName } from './useEditorState'
+import { activeEventTypes, migrateConfig, useSceneStore } from '../../src'
+import type { DeepPartial, SceneConfig } from '../../src'
+import { canvasApi, pushEvent, sceneName } from './useEditorState'
 
 /** 配置文件的格式版本，用于将来做向后兼容 */
 const CONFIG_VERSION = 1
 
-/** 本地草稿的 localStorage 键名 */
-const STORAGE_KEY = 'tdm-editor-scene'
-
-/** 导出到磁盘（或写进 localStorage）的文件形状 */
+/** 导出到磁盘的文件形状 */
 export interface SceneFile {
   version: number
   name: string
@@ -106,29 +103,15 @@ function countArmedEvents(config: DeepPartial<SceneConfig>): number {
 }
 
 /**
- * 把旧版配置里的单模型字段折成列表。
- *
- * 版本 1 的导出物（以及那时存下的本地草稿）写的是 `config.model`，
- * 一个对象。直接丢给 `applyConfig` 的后果不是报错而是「什么都不发生」：
- * `models` 不在补丁里，于是沿用当前场景的模型，而 `model` 这个键会被
- * 原样装进配置——用户看到的是「导入成功，但模型没变」。
- *
- * 只认真正的旧形状（有 `model`、没有 `models`），新配置原样返回。
- */
-function migrateConfig(raw: DeepPartial<SceneConfig>): DeepPartial<SceneConfig> {
-  const legacy = (raw as { model?: unknown }).model
-  if (Array.isArray(raw.models) || !legacy || typeof legacy !== 'object') return raw
-
-  const { model, ...rest } = raw as DeepPartial<SceneConfig> & { model: ModelConfig }
-  return { ...rest, models: [model] }
-}
-
-/**
  * 从文件导入配置。
  *
  * 只做浅校验：确认是对象、带 config 字段、版本号不超过当前版本。
  * 更细的字段校验交给 deepAssign——它天然会忽略配置里没有的键，
  * 缺失的键则保持当前值，所以一份残缺的文件不会把场景打坏。
+ *
+ * 写入用带 label 的 `applyConfig`，与库的 `loadSceneData` 刻意不同：
+ * 导入是编辑器里的一次动作，误导入应当能 ⌘Z 退回；而 `loadSceneData`
+ * 是宿主初始化场景，语义上要清空撤销栈。两者不该合成一条路。
  */
 async function importFile(file: File) {
   try {
@@ -179,47 +162,29 @@ async function importFile(file: File) {
   }
 }
 
-/** 保存到 localStorage */
-function saveToLocal() {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(buildFile()))
-    snapshot()
-    pushEvent('已保存到本地草稿')
-    return true
-  } catch (error) {
-    pushEvent(`保存失败：${error instanceof Error ? error.message : String(error)}`)
-    return false
-  }
-}
+/**
+ * 顶栏那个「保存」按钮，以及 ⌘S。
+ *
+ * 编辑器自己**不落盘**——原先写 localStorage 的那套已经整段去掉。场景存到哪儿
+ * 是宿主的决定（后端、文件、还是别的地方），编辑器插件的第一个消费者不替它做主。
+ * 所以这里的全部动作就是「把场景数据取出来」：取完打一条日志，在真实宿主里，
+ * 这一步之后接的是它自己的接口。
+ *
+ * 数据经 `canvasApi` 转调 `SceneViewer` 的公开方法，而不是直接读 store：
+ * 让这条路径尽量贴住宿主的真实用法，接口设计错了才会在这里就暴露出来。
+ *
+ * 末尾那次 `snapshot()` 是给顶栏那颗圆点用的。圆点的三态（灰 / 琥珀 / 绿）
+ * 完全寄生在 `snapshot()` 上，而它原先只被「保存到草稿」「恢复草稿」两处调用，
+ * 那两个函数已随 localStorage 一起删掉。不在这里补一下，圆点会永远停在灰色。
+ * 它的含义因此是「自上次把数据交给宿主以来有没有改动」。
+ */
+function saveScene() {
+  const data = canvasApi.getSceneData?.()
+  if (!data) return false
 
-/** 从 localStorage 恢复草稿，没有草稿时返回 false */
-function loadFromLocal() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return false
-
-    const parsed = JSON.parse(raw) as Partial<SceneFile>
-    if (!parsed.config) return false
-
-    scene().applyConfig(migrateConfig(parsed.config), '恢复本地草稿')
-    if (parsed.name) sceneName.value = parsed.name
-
-    // 恢复之后立刻打一次快照，这样顶栏不会一上来就显示「有未保存改动」
-    snapshot()
-    pushEvent('已恢复本地草稿')
-    return true
-  } catch (error) {
-    pushEvent(`草稿恢复失败：${error instanceof Error ? error.message : String(error)}`)
-    return false
-  }
-}
-
-/** 清掉本地草稿 */
-function clearLocal() {
-  localStorage.removeItem(STORAGE_KEY)
-  savedJson.value = null
-  savedAt.value = null
-  pushEvent('已清除本地草稿')
+  pushEvent(`已取到场景数据（${data.models.length} 个模型），交给宿主保存`)
+  snapshot()
+  return true
 }
 
 export function useConfigIO() {
@@ -229,9 +194,6 @@ export function useConfigIO() {
     savedLabel,
     exportFile,
     importFile,
-    saveToLocal,
-    loadFromLocal,
-    clearLocal,
-    snapshot,
+    saveScene,
   }
 }

@@ -30,6 +30,16 @@ export { useSceneStore } from './stores/scene'
 export { DEFAULT_SCENE_CONFIG, cloneFloorplanPatch, createFloorplanConfig } from './utils/config'
 
 /**
+ * 把旧版格式的配置折成当前格式。
+ *
+ * 导出它是为了让宿主自己存的那份配置也能过同一道迁移：`SceneViewer` 的
+ * `loadSceneData` 内部会调它，但宿主若是自己读盘、自己 `applyConfig`
+ * （那条路合法且常见），就没有任何一处替他做这件事。
+ * 而漏掉它的表现是静默的——见函数自身的注释。
+ */
+export { migrateConfig } from './utils/config'
+
+/**
  * 平面图的几何引擎。
  *
  * 这是本次改动里**公开面最大的一处**，是刻意的：户型图的数据在配置里
@@ -96,7 +106,7 @@ export type {
  *
  * `wallFaceIsSheet` 是同一段算术的**入口检查**（逐网格判实体还是片），
  * 宿主自己铺墙时同样绕不过去：它决定「量出来的包围盒」到底量的是墙，还是连
- * 建模时那块背景板一起量了。见 README 的资产制作要求。
+ * 建模时那块背景板一起量了。见 DESIGN.md 的资产制作要求。
  *
  * 洞口那一件也在这一组里（`wallFaceFit` / `openingFaceUnusable` /
  * `openingFaceOversized`）：宿主自己要往洞口里装模型（门或窗），用的就是同一份
@@ -111,7 +121,7 @@ export type { WallFaceBounds, WallFaceTile } from './utils/wallFace'
 /**
  * 「现在算 2D 俯视还是 3D 透视」。
  *
- * 库自己要用它：2D 档下墙换成平面图的实色外观、不铺贴面（见 README 设计决定 34），
+ * 库自己要用它：2D 档下墙换成平面图的实色外观、不铺贴面（见 DESIGN.md 设计决定 34），
  * 而这套界面的档位本来就是**从机位推导**的。导出去是因为宿主只要做与户型图
  * 有关的界面（自己画一条工具栏、自己决定什么时候允许绘制），迟早要问同一个问题，
  * 而抄一份的代价是两份规则悄悄不一致——表现是「按钮亮着 2D、画面是 3D」。
@@ -149,7 +159,7 @@ export { deriveModelId } from './utils/modelId'
  * 只会画出一个形状不对的东西，而形状对不对只有眼睛看得出来。
  *
  * `MAX_PARTS` / `MAX_COUNT` 是**公开约定而不是内部实现**：超了整份会被拒掉，
- * 所以生成端必须按它来。README 的「宿主可以往左栏里追加分类」一节有完整说明。
+ * 所以生成端必须按它来。DESIGN.md 的「宿主可以往左栏里追加分类」一节有完整说明。
  */
 export { MAX_COUNT, MAX_PARTS, parseModelParts, placeModelParts } from './utils/modelParts'
 

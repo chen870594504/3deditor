@@ -8,7 +8,7 @@ import { redo, togglePreview, undo } from '../composables/useSceneActions'
 defineOptions({ name: 'AppHeader' })
 
 const scene = useSceneStore()
-const { dirty, everSaved, savedLabel, exportFile, importFile, saveToLocal } = useConfigIO()
+const { dirty, everSaved, savedLabel, exportFile, importFile, saveScene } = useConfigIO()
 
 /** 隐藏的 file input：导入按钮点它，视觉部分完全自绘 */
 const filePicker = ref<HTMLInputElement>()
@@ -116,7 +116,7 @@ async function onFileChange(event: Event) {
         预览
       </button>
 
-      <button type="button" class="ed-btn ed-btn--primary" @click="saveToLocal">
+      <button type="button" class="ed-btn ed-btn--primary" @click="saveScene">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M5 3h11l3 3v15a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z" />
           <path d="M8 3v6h7V3M8 21v-7h8v7" />
