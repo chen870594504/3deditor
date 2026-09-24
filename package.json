@@ -46,6 +46,7 @@
     "typecheck": "vue-tsc --noEmit",
     "smoke": "node scripts/smoke.mjs",
     "verify": "pnpm build:only && pnpm smoke",
+    "prepare": "npm run build:only",
     "prepublishOnly": "pnpm build && pnpm smoke"
   },
   "peerDependencies": {
