@@ -104,7 +104,7 @@ const spots = computed(() =>
  * 后者也要说话——「11 件画出来 8 件」在画面上是一个**看起来正常**的东西，
  * 少的那三件没有任何视觉线索，不说就永远查不到。
  *
- * 前缀用 `3dmaker:` 而不是 `[tdm]`：那个前缀是给**编辑器界面**的日志用的
+ * 前缀用 `3deditor:` 而不是 `[tdm]`：那个前缀是给**编辑器界面**的日志用的
  * （`useEditorState` 的 `pushEvent`），而这句话是**库**在报告一件渲染不了的东西，
  * 宿主自己的控制台里也该一眼认出来是谁说的。
  */
@@ -118,7 +118,7 @@ function report(problem: string | null, dropped: number): void {
   if (!text) return
   if (WARNED.has(text)) return
   WARNED.add(text)
-  console.warn(`3dmaker: ${text}`)
+  console.warn(`3deditor: ${text}`)
 }
 </script>
 

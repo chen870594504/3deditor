@@ -66,14 +66,14 @@ function download(file: SceneFile) {
   const url = URL.createObjectURL(blob)
   const anchor = document.createElement('a')
   anchor.href = url
-  anchor.download = `${file.name || 'scene'}.3dmaker.json`
+  anchor.download = `${file.name || 'scene'}.3deditor.json`
   anchor.click()
   // 立刻回收：下载已经开始，blob URL 不再需要
   URL.revokeObjectURL(url)
   return anchor.download
 }
 
-/** 导出当前配置为 .3dmaker.json 文件 */
+/** 导出当前配置为 .3deditor.json 文件 */
 function exportFile() {
   const filename = download(buildFile())
   pushEvent(`已导出配置 → ${filename}`)

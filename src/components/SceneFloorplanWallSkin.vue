@@ -266,7 +266,7 @@ watchEffect(() => {
   const text = notice.value
   if (!text || WARNED.has(text)) return
   WARNED.add(text)
-  console.warn(`3dmaker: ${text}`)
+  console.warn(`3deditor: ${text}`)
 })
 
 /**

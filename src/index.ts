@@ -213,8 +213,8 @@ declare module 'vue' {
  *
  * ```ts
  * import { createApp } from 'vue'
- * import { createThreeDMaker } from '3dmaker'
- * import '3dmaker/style.css'
+ * import { createThreeDMaker } from '3deditor'
+ * import '3deditor/style.css'
  *
  * createApp(App).use(createThreeDMaker()).mount('#app')
  * ```

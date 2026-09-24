@@ -399,7 +399,7 @@ check('exportConfig 往返幂等', () => {
   assert(JSON.stringify(scene.config) === json, 'applyConfig(exportConfig()) 改动了配置')
   assert(exported !== scene.config, 'exportConfig 返回的是同一个引用，不是拷贝')
 
-  // 导出物必须能直接 JSON 序列化——它会被写进 .3dmaker.json
+  // 导出物必须能直接 JSON 序列化——它会被写进 .3deditor.json
   assert(JSON.parse(json).camera.fov === 45, '导出物无法往返 JSON')
   return '导出 → 导入不改变任何字段'
 })

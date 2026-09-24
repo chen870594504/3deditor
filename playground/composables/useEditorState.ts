@@ -280,7 +280,7 @@ function warnSizeDisagree(
 
   if (SIZE_WARNED.has(text)) return
   SIZE_WARNED.add(text)
-  console.warn(`3dmaker: ${text}`)
+  console.warn(`3deditor: ${text}`)
 }
 
 /** 预览模式：隐藏全部编辑器 chrome，只留视口 */

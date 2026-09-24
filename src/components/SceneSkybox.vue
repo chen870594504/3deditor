@@ -117,7 +117,7 @@ const loader = new ImageLoader()
  * 画面上的差别只是「底下一块纯色」与「背景维持原样」，都不报错，补过的那一面
  * 与真的那一面在画面上几乎同形。库这一侧没有别的事件通道（`SceneSkybox`
  * 只收一个 prop），**用户唯一的线索就是这里**。
- * 前缀沿用 `3dmaker:`（不是编辑器的 `[tdm]`，那是设计决定 21）。
+ * 前缀沿用 `3deditor:`（不是编辑器的 `[tdm]`，那是设计决定 21）。
  *
  * 反面是**不打印**：浏览器自己在 Network 面板里会把 404 与跨域都标红，
  * 这里再复述一遍只会让控制台更难读。
@@ -127,7 +127,7 @@ const WARNED = new Set<string>()
 function warn(text: string) {
   if (WARNED.has(text)) return
   WARNED.add(text)
-  console.warn(`3dmaker: ${text}`)
+  console.warn(`3deditor: ${text}`)
 }
 
 /** 换上这一份，把上一份扔掉。只在加载成功后被调用 */
