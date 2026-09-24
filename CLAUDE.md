@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `3deditor` 是一个**同时具有两个身份**的仓库：
 
-- **发布态**：npm 库包 `3deditor`（发在 npmjs.org 上），其他项目
+- **发布态**：npm 包 `3deditor`（**没有发到任何源上**，宿主直接从 git 装，见「分发」），其他项目
   `app.use(createThreeDMaker())` + `import '3deditor/style.css'` 获得 3D 场景能力
 - **开发态**：`playground/` 是一个可独立运行的场景编辑器，同时是插件的**第一个消费者**
 
@@ -139,7 +139,7 @@ pnpm preview      # 预览构建产物
 
 | 文件 | 读者 | 内容 |
 |---|---|---|
-| `README.md` | 用这个库的宿主 | 安装与令牌、注册插件、`SceneViewer` 的 props / emits、配置分组、`useSceneStore`、**对外方法**、导出清单 |
+| `README.md` | 用这个库的宿主 | 安装、注册插件、`SceneViewer` 的 props / emits、配置分组、`useSceneStore`、**对外方法**、导出清单 |
 | `DESIGN.md` | 改这个仓库的人 | 编辑器的设计、**45 条编号设计决定**、143 条**目视清单**、目录结构、发布流程、待办 |
 
 `README.md` 是一份**面向宿主的用法手册**，只有四类内容：怎么装进来、怎么用组件、
@@ -187,27 +187,36 @@ API 是什么（签名 / 默认值 / 字段含义 / 用法规则）、以及宿�
   这意味着 `VITE_ASSE_IMAGE_URL` 的任何改动都会直接进下一次提交，改它时要按第 6 条同时改四处，
   别只改一边——只改一边的表现是列表清一色加载失败，而这不会报错。
 
-### 发布
+### 分发
 
-包名 **`3deditor`**（**不带 scope**），发在 **npmjs.org** 上（仓库 `chen870594504/3deditor`，公开）。
+包名 **`3deditor`**（不带 scope），**没有发到任何 npm 源上**——宿主直接
+`pnpm add github:chen870594504/3deditor three pinia @tresjs/core @tresjs/cientos`
+从这个仓库装。仓库公开，所以匿名可拉，不需要令牌也不需要配 registry。
+宿主那侧的说法（含那道 `onlyBuiltDependencies` 放行）在 README 的「安装」一节里。
 
-**刻意不用 scope 包**。原先发在 GitHub Packages 上、包名是 `@chen870594504/3deditor`，
-换过来的原因只有一个：**GitHub Packages 即使包是公开的，拉取也强制带令牌**，不支持匿名安装
-（实测匿名 `GET https://npm.pkg.github.com/@chen870594504%2F3deditor` 返回
-`401 {"error":"authentication token not provided"}`，而同样的包在 npmjs 上是 200）。
-那意味着宿主那边不能只写一行 registry，每个项目、每台 CI 都要各配一次 classic PAT，
-令牌过期就集体拉不动，而失败信号是 `401` 而不是「包不存在」，很难查。
+走到这一步是被堵了两次：GitHub Packages 强制「公开包也要带令牌拉取」；换到 npmjs 后又卡在
+**发布强制 2FA**，而这个环境的验证器绑定做不了（没有 USB 密钥，扫码也失败）。三轮的实测
+记录与代价都在 DESIGN.md「分发：从 git 安装」里——**那是「为什么不是别的方案」的唯一落点**，
+不要再往 README 里写一遍。
 
-**不带 scope 还顺带免掉了一整类坑**：GitHub Packages 强制 scope 等于仓库 owner，
-所以那时包名、`.npmrc` 的 scope 分流、`publishConfig.registry` **三处必须完全一致**，
-不一致的表现是 `npm publish` 悄悄发到 registry.npmjs.org 去了而不报错。
-npmjs 上不需要任何 registry 分流，本仓库因此**没有 `.npmrc`**——不要为了「配 registry」再加回来。
+**两个钩子都别删，它们守的是同一件事的两半**：
 
-`pnpm publish` 即可，`prepublishOnly` 会先跑 `pnpm build && pnpm smoke`。
+- **`prepare`（`npm run build:only`）** —— 从 git 装时 pnpm / npm 会在 fetch 阶段跑它，
+  在宿主的临时克隆里把 `dist/` 构建出来。删了它，宿主装到的是空包，表现是「装上了，
+  import 全是 undefined」，而两家都不报错。它同时意味着**本仓库自己 `pnpm install` 时也会
+  构建一次**（`prepare` 不区分「装自己」和「被别人从 git 装」），这是可接受的副作用，
+  但别往它前面加 `typecheck` 之类会变慢又可能让安装失败的东西。
+  它写 `npm run build:only` 而不是 `pnpm build:only`，是因为 pnpm 处理 git 依赖时是借 npm
+  执行的，宿主那边不一定装了 pnpm。
+- **`prepublishOnly`（`pnpm build && pnpm smoke`）** —— 仍然留着，守的是「发出去的产物必须
+  是刚构建的」：`dist/` 被 `.gitignore` 排除、`files` 又只收 `dist`，没有这道钩子时
+  `pnpm publish` 会把陈旧产物甚至空目录发出去，而 npm 不会因此报错。
 
-**这道钩子是必需的，不要删**：`dist/` 被 `.gitignore` 排除，`files` 又只收 `dist`，
-所以没有钩子时 `pnpm publish` 会把上一次构建的陈旧产物（或空目录）发出去，
-而 npm 不会因此报错——表现是宿主装到旧版本，怎么改代码都不生效。
+**本仓库没有 `.npmrc`，不要加回来**——现在没有任何注册表要配。这条是硬性约束的一部分，
+不是「暂时删了」。
 
-`dist/style.css` 漏进包里同样是静默失败（宿主渲染出一片裸 DOM），
-发布前用 `npm pack --dry-run` 对一眼白名单。完整说明见 DESIGN.md「发布到 npmjs」。
+宿主侧还有一道闸：pnpm 10 默认不跑依赖的构建脚本，git 依赖会被
+`ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED` 拦下，要在项目的 `pnpm-workspace.yaml` 里
+`onlyBuiltDependencies: ["3deditor"]` 放行。好在报错信息本身就说了该填的包名。
+
+完整说明见 DESIGN.md「分发：从 git 安装」。

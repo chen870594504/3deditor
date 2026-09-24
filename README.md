@@ -10,11 +10,33 @@
 ## 安装
 
 ```bash
-pnpm add 3deditor three pinia @tresjs/core @tresjs/cientos
+pnpm add github:chen870594504/3deditor three pinia @tresjs/core @tresjs/cientos
 ```
 
-包发在**公共的 npmjs 源**上，匿名可装：不需要令牌、不需要配 `.npmrc` 的 registry，
-`pnpm add` 一行就完事。
+包**没有发到任何 npm 源上**，直接从上面这个仓库装。仓库是公开的，所以匿名可拉——不需要
+令牌、也不需要配 `.npmrc` 的 registry。
+
+**第一次装会失败一次，这是正常的，而且它会把该做的事直接告诉你。** `pnpm` 10 起默认不执行
+依赖的构建脚本，而 git 依赖必须构建一次（原因见下面那段），于是被拦下来：
+
+```
+ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED  The git-hosted package "3deditor@0.1.1"
+needs to execute build scripts but is not in the "onlyBuiltDependencies" allowlist.
+```
+
+照它说的，在项目根的 `pnpm-workspace.yaml` 里加一行放行，再装一次即可：
+
+```yaml
+onlyBuiltDependencies:
+  - "3deditor"
+```
+
+> **git 依赖为什么需要构建**：包里只发 `dist/`（`package.json` 的 `files` 字段），而
+> `dist/` 是 `vite build` 的产物、不进 git，所以只能在安装时现构建一次——`package.json`
+> 的 `prepare` 钩子就是干这个的。代价是**首次安装会慢几分钟**（要先在临时克隆里装一遍
+> 构建用的依赖），之后走 pnpm 的 store 缓存，实测约 9 秒。
+>
+> 想锁死版本，把 tag 或 commit 钉在地址后面：`github:chen870594504/3deditor#v0.1.1`。
 
 后面那 5 个**必须显式装**——它们声明在 `peerDependencies` 里，而 peer 的用意正是「宿主自己
 必须有一份」，不是可选项。**包本身一行 `dependencies` 都没有**，`dist/index.js` 里对它们是

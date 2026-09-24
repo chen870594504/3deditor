@@ -1768,55 +1768,127 @@ playground/              仅开发期使用，不会进入库产物。是插件�
 scripts/smoke.mjs        打包产物冒烟测试
 ```
 
-## 发布到 npmjs
+## 分发：从 git 安装
 
-包名是**不带 scope** 的 `3deditor`，发在 **npmjs.org** 这个公共源上。
-宿主那侧的安装写在 [README](README.md) 的「安装」一节里——发布者不需要额外配什么，
-`npm login` 一次即可。
-
-### 为什么从 GitHub Packages 换过来
-
-先前发在 GitHub Packages 上，包名是 `@chen870594504/3deditor`。**换走的唯一原因是拉取门槛**：
-GitHub Packages **即使包是公开的，读取也强制带令牌**，不支持匿名安装。这是它与 npmjs 最大
-的区别，实测过：
-
-```
-匿名 GET https://npm.pkg.github.com/@chen870594504%2F3deditor
-     → 401 {"error":"authentication token not provided"}
-匿名 GET https://registry.npmjs.org/vue
-     → 200
-```
-
-代价落在**每一个宿主**头上：不能只写一行 registry，每个项目、每台 CI 都要各配一次 classic PAT
-（拉包 `read:packages`），令牌一过期就集体拉不动。更麻烦的是失败信号——`401 Unauthorized`
-看起来像「包名写错了」而不像「缺令牌」，初次接入的人多半会先怀疑自己的配置。
-
-顺带解决掉第二类坑。GitHub Packages **强制 scope 等于仓库 owner**，于是包名、
-`.npmrc` 的 scope 分流、`publishConfig.registry` **三处必须完全一致**，不一致的表现是
-`npm publish` 悄悄发到 registry.npmjs.org 去了而不报错。不带 scope 之后这整类问题不存在：
-
-- `package.json` 的 `name` 就是 `3deditor`，没有 scope 要对齐
-- **本仓库没有 `.npmrc`**（原先那份只为了分流 scope，现已删除）。不要在将来为了
-  「配一下 registry」把它加回来——npmjs 是默认源，加了只会多一处需要维护的一致性约束
-- `publishConfig` 也一并删了：`access: "public"` 只对 scope 包有意义，不带 scope 的包
-  默认就是公开的
-
-### 发布
+包**没有发到任何 npm 源上**，宿主直接从这个仓库装：
 
 ```bash
-pnpm publish
+pnpm add github:chen870594504/3deditor three pinia @tresjs/core @tresjs/cientos
 ```
 
-`prepublishOnly` 会先跑 `pnpm build && pnpm smoke`（类型检查 + 构建 + 91 条冒烟断言），
-**这是必需的一道**：`dist/` 被 `.gitignore` 排除，`files` 又只收 `dist`，
-所以没这道钩子时，`pnpm publish` 会把**上一次构建的陈旧产物**、甚至空目录发出去，
-而 npm 不会因此报错——表现是宿主装到了旧版本，怎么改代码都不生效。
+仓库是公开的，所以**匿名可拉**——不需要令牌、不需要配 registry。宿主那侧的完整说法（含五个
+peer 与那道 `onlyBuiltDependencies` 放行）在 [README](README.md) 的「安装」一节里。
 
-发布前确认：
+**`package.json` 的 `name` 仍是 `3deditor`**（不带 scope）。它现在只是包的身份标识，不再对应
+任何注册表——GitHub Packages 强制 scope 等于仓库 owner，要走那条得改回
+`@chen870594504/3deditor`，既然不发源就没必要。
 
-- **版本号必须递增**。`0.1.0` 发过就得先改 `package.json` 的 `version`，npmjs 同样不接受覆盖同一个版本。
-- **白名单看一眼**：`npm pack --dry-run`，确认只有 `dist/` + `README` + `LICENSE`。
-- **`dist/style.css` 必须在里面**。组件样式是副作用导入，漏了它构建照样成功，宿主却渲染出一片裸 DOM，不报错。
+**本仓库没有 `.npmrc`**：原先那份只为了分流 scope，已删除。不要在将来为了「配一下 registry」
+把它加回来——现在没有任何注册表要配。**`publishConfig` 也删了**：`access: "public"`
+只对 scope 包有意义。
+
+### 怎么走到这一步的
+
+三段，每一段都堵在前一段的失败上。
+
+1. **GitHub Packages**（包名 `@chen870594504/3deditor`）。堵在**拉取门槛**：GitHub Packages
+   **即使包是公开的，读取也强制带令牌**，不支持匿名安装。这是它与 npmjs 最大的区别，实测过：
+
+   ```
+   匿名 GET https://npm.pkg.github.com/@chen870594504%2F3deditor
+        → 401 {"error":"authentication token not provided"}
+   匿名 GET https://registry.npmjs.org/vue
+        → 200
+   ```
+
+   代价落在**每一个宿主**头上：不能只写一行 registry，每个项目、每台 CI 都要各配一次
+   classic PAT（`read:packages`），令牌一过期就集体拉不动。更麻烦的是失败信号——
+   `401 Unauthorized` 看起来像「包名写错了」而不像「缺令牌」，初次接入的人多半会先怀疑
+   自己的配置。顺带还有第二类坑：GitHub Packages 强制 scope 等于仓库 owner，于是包名、
+   `.npmrc` 的 scope 分流、`publishConfig.registry` **三处必须完全一致**，不一致的表现是
+   `npm publish` 悄悄发到 registry.npmjs.org 去了而不报错。
+
+2. **npmjs**（包名 `3deditor`，不带 scope）。匿名可拉，上面两条坑一起消失。堵在**发布的
+   2FA**：npm 现在**强制**发布账户开 2FA（或用一个勾了 Bypass 2FA 的细粒度令牌），否则
+   `PUT` 直接吃
+
+   ```
+   403 Forbidden - PUT https://registry.npmjs.org/3deditor
+   Two-factor authentication or granular access token with bypass 2fa enabled
+   is required to publish packages.
+   ```
+
+   而 2FA 的绑定（验证器 App 扫码，或安全密钥）在这个环境里没能完成——没有 USB 密钥，
+   扫码也失败。于是这条路走不通，**不是「开关没打开」，是绑定做不了**。
+
+3. **从 git 装**（本节）。绕开注册表，也绕开 2FA。代价转移到宿主的安装体验上，见下。
+
+### `prepare` 是分发的必需钩子，不要删
+
+`dist/` 被 `.gitignore` 排除，`files` 又只收 `dist`，所以从 git 装时**必须现构建一次**。
+`package.json` 里的 `"prepare": "npm run build:only"` 就是干这个的：pnpm / npm 处理 git 依赖
+会在 **fetch 阶段**跑它，在宿主的临时克隆里把 `dist/` 构建出来。没有它，宿主装到的是一个空包，
+而两家都不会因此报错——表现是「装上了，import 全是 undefined」。
+
+三处细节都是刻意的：
+
+- **写 `npm run build:only` 而不是 `pnpm build:only`**：pnpm 处理 git 依赖时是借 npm 执行的
+  （`preparePackage()` 那一段），宿主那边不一定装了 pnpm，但 npm 随 node 一定有。
+- **用 `build:only` 而不是 `build`**：安装时不该因为一个类型错误就阻断宿主的安装。
+- **不重复写 `vite build --mode lib`**：构建方式只能有一处定义，否则改了一处漏一处。
+
+副作用要知道：**本仓库自己 `pnpm install` 时也会跑一次构建**（`prepare` 是本地安装的标准
+钩子，不区分「装自己」和「被别人从 git 装」）。这是可接受的，但不要往它前面加 `typecheck`
+之类会变慢、又可能让安装失败的东西。
+
+### 宿主侧的那道放行
+
+pnpm 10 起默认不执行依赖的构建脚本，git 依赖因此会被拦下：
+
+```
+ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED  The git-hosted package "3deditor@0.1.1"
+needs to execute build scripts but is not in the "onlyBuiltDependencies" allowlist.
+```
+
+它拦的是 pnpm 自己那道 `onlyBuiltDependencies` 闸（**不是** `ignore-scripts`——git 依赖走的是
+fetch 阶段的 `preparePackage()`，那条路只查 `ignore-scripts`，而 pnpm 会显式把它从配置里
+摘掉）。宿主照报错说的在 `pnpm-workspace.yaml` 里放行即可：
+
+```yaml
+onlyBuiltDependencies:
+  - "3deditor"
+```
+
+好在**报错信息本身就把该填的包名说了出来**，不需要去查文档；填的是**包名**，不是那一长串
+解析后的 specifier。
+
+实测过一轮完整的 `pnpm add git+file://…`（pnpm 10.28.2）：
+
+- 不放行 → 上面那个 `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED`
+- 放行后 → pnpm 在克隆里**自跑一遍 `pnpm install`**（130 个 devDeps，含 vite / vue-tsc /
+  three / tresjs），再执行 `prepare`
+- **冷缓存首次安装要几分钟**（还要多下 130 个包）；依赖进了 pnpm store 之后**实测 9.1 秒**
+- 装出来的包里 `dist/` 齐全（`index.js` / `index.cjs` / `index.d.ts` / `style.css` /
+  `types.d.ts` / 两份 map），`import('3deditor')` 能拿到 `createThreeDMaker` /
+  `SceneViewer` / `useSceneStore` / `migrateConfig`，`createThreeDMaker().install(app)` 无异常
+
+**peer 的解析要留意**：`auto-install-peers`（pnpm 默认开）会把 `vue` / `three` / `pinia` /
+`@tresjs/*` 装成 `.pnpm/3deditor@…/node_modules/` 里的**兄弟节点**，宿主顶层 `node_modules`
+里只有 `3deditor` 自己。所以 README 那条「五个 peer 必须显式装」**在 git 安装下同样成立，
+而且更要紧**——不显式装，宿主自己那份与插件那份就是两份，而两份的后果全是静默失败。
+
+### 真要发源的话
+
+`prepublishOnly`（`pnpm build && pnpm smoke`）留着，它守的是「发出去的产物必须是刚构建的」：
+
+`dist/` 被 `.gitignore` 排除，`files` 又只收 `dist`，所以没这道钩子时 `pnpm publish` 会把
+**上一次构建的陈旧产物**、甚至空目录发出去，而 npm 不会因此报错——表现是宿主装到了旧版本，
+怎么改代码都不生效。
+
+将来若真要发到某个源上：**版本号必须递增**（同一个版本任何源都不接受覆盖）；
+**白名单看一眼** `npm pack --dry-run`，确认只有 `dist/` + `README` + `LICENSE`；
+**`dist/style.css` 必须在里面**（组件样式是副作用导入，漏了它构建照样成功，宿主却渲染出一片
+裸 DOM，不报错）；发 npmjs 还要先解决上面那个 2FA。
 
 ## 后续可以做的事
 
