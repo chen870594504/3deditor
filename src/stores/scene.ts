@@ -7,6 +7,7 @@ import {
   cloneModelPatch,
   createModelConfig,
   deepAssign,
+  migrateConfig,
 } from '../utils/config'
 import { createModelId } from '../utils/modelId'
 import type { DeepPartial, HistoryEntry, ModelConfig, SceneConfig } from '../types'
@@ -336,6 +337,38 @@ export const useSceneStore = defineStore('tdm-scene', () => {
   }
 
   /**
+   * 用一份场景数据初始化场景，返回是否用上了。
+   *
+   * 与直接调 `applyConfig` 有两处不同，这两处正是它存在的理由：
+   *
+   * 1. **先走一遍 `migrateConfig`**，把旧版写 `model`（单对象）的配置折成 `models`
+   *    列表。少了这一道不会报错，只会「载入成功但模型没变」——详见那个函数的注释。
+   * 2. **载入后清空撤销栈**。这是「初始化」的语义：换了一个场景之后还能 ⌘Z 退回
+   *    上一个通常不是想要的，两段无关的历史混在一起也没法看。
+   *    （想要「可撤销的载入」，宿主自己调 `applyConfig(patch, '标签')` 即可。）
+   *
+   * 输入与 `applyConfig` 一样按 `DeepPartial` 收：只写要覆盖的分组，其余保持当前值。
+   * `undefined` 表示「本次不改这一项」，`null` 是合法的清空值。
+   *
+   * **它住在 store 而不是组件里**，因为它是纯算术（不碰 three、不碰 DOM），
+   * 而且有两条消费它的路：宿主拿组件实例调 `loadSceneData()`，以及
+   * `SceneViewer` 的 `initialScene` prop 在挂载时自动调一次。摆在组件里的话，
+   * 那两条路各写一遍、又悄悄不一致，正是本仓库最恨的那类不报错的 bug。
+   * 组件那一侧（连带四层转发的其余三层）因此只剩一行转发。
+   */
+  function loadSceneData(data: DeepPartial<SceneConfig>): boolean {
+    if (typeof data !== 'object' || data === null) return false
+
+    // 不带 label：紧接着 clearHistory 就把当前状态设成新起点了，
+    // 先 commit 一条再把它清掉是多此一举
+    applyConfig(migrateConfig(data))
+    // clearHistory 会顺带清掉 applyConfig 排下的那条 400ms 防抖提交，
+    // 所以这里不会留下一个稍后触发的悬挂写入
+    clearHistory()
+    return true
+  }
+
+  /**
    * 深合并一份补丁到**某一个**模型上。
    *
    * 它是 `applyConfig({ models: [...] })` 的替代品，存在的理由是后者只能整表替换，
@@ -514,6 +547,7 @@ export const useSceneStore = defineStore('tdm-scene', () => {
     patchModel,
     exportConfig,
     resetConfig,
+    loadSceneData,
     // 选中项（界面状态）
     selectedIndex,
     selectedModel,

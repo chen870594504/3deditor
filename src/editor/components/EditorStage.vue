@@ -1,19 +1,31 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, useTemplateRef, watch } from 'vue'
-import { SceneViewer, activeEventTypes, useSceneStore } from '../../src'
-import type { ModelBounds, ModelTransformPayload, SceneConfig, SceneStats, TransformMode } from '../../src'
-import PerfProbe from '../../src/editor/components/PerfProbe.vue'
-import ModelActions from '../../src/editor/components/ModelActions.vue'
-import FloorplanTools from '../../src/editor/components/FloorplanTools.vue'
-import PreviewBar from '../../src/editor/components/PreviewBar.vue'
-import SceneFloorplanDraft from '../../src/editor/components/SceneFloorplanDraft.vue'
+import { useSceneStore } from '../../stores/scene'
+import { activeEventTypes } from '../../utils/eventCode'
+import type {
+  CameraChangePayload,
+  ModelEventPayload,
+  ModelEventType,
+  ModelPickPayload,
+  ModelTransformPayload,
+  ObjectClickPayload,
+  SceneStats,
+  SceneViewerApi,
+  TransformMode,
+} from '../../types'
+import SceneCanvas from '../../components/SceneCanvas.vue'
+import ModelActions from './ModelActions.vue'
+import FloorplanTools from './FloorplanTools.vue'
+import PerfProbe from './PerfProbe.vue'
+import PreviewBar from './PreviewBar.vue'
+import SceneFloorplanDraft from './SceneFloorplanDraft.vue'
 import {
   canvasApi,
   gizmoMode,
   previewMode,
   pushEvent,
   stats,
-} from '../../src/editor/composables/useEditorState'
+} from '../composables/useEditorState'
 import {
   floorplanEnabled,
   floorplanHint,
@@ -23,22 +35,108 @@ import {
   onFloorplanPointerLeave,
   onFloorplanPointerMove,
   onFloorplanPointerUp,
-} from '../../src/editor/composables/useFloorplanTool'
-import { commitTransform, selectPickedModel } from '../../src/editor/composables/useModelActions'
-import { runModelEvent } from '../composables/useEventRunner'
-import { setViewMode, viewModeOf } from '../../src/editor/composables/useViewMode'
-import type { ViewMode } from '../../src/editor/composables/useViewMode'
+} from '../composables/useFloorplanTool'
+import { commitTransform, selectPickedModel } from '../composables/useModelActions'
+import { useEditorHooks } from '../hooks'
+import { setViewMode, viewModeOf } from '../composables/useViewMode'
+import type { ViewMode } from '../composables/useViewMode'
 
-defineOptions({ name: 'SceneStage' })
+defineOptions({ name: 'TdmEditorStage' })
+
+/*
+  12 个事件原样透出去，一个不删——它们是宿主已在用的公开面，
+  而编辑器只是这块画布的一层壳。
+
+  与 `SceneCanvas` 的声明逐条对应（同 `SceneViewer` 里那张 `forwarded` 表）。
+  有的在这里多一件本地的事（`loaded` 顺带推一条事件日志、`model-transform-end`
+  先提交变换再透出去），但**透出去这一步谁都不能省**：宿主在编辑模式下
+  收不到事件，与「这个模式不支持事件」是无法分辨的。
+*/
+const emit = defineEmits<{
+  (e: 'loaded'): void
+  (e: 'progress', percentage: number): void
+  (e: 'error', message: string): void
+  (e: 'cameraChange', payload: CameraChangePayload): void
+  (e: 'objectClick', payload: ObjectClickPayload): void
+  (e: 'objectDblclick', payload: ObjectClickPayload): void
+  (e: 'objectPointerEnter', payload: ObjectClickPayload): void
+  (e: 'objectPointerLeave', payload: ObjectClickPayload): void
+  (e: 'objectContextMenu', payload: ObjectClickPayload): void
+  (e: 'modelPick', payload: ModelPickPayload): void
+  (e: 'modelTransform', payload: ModelTransformPayload): void
+  (e: 'modelTransformEnd', payload: ModelTransformPayload): void
+}>()
 
 const scene = useSceneStore()
 
-const viewerRef = useTemplateRef<{
-  captureCamera: () => boolean
-  measureModel: (id: string) => ModelBounds | null
-  groundPointAt: (clientX: number, clientY: number) => [number, number] | null
-  getSceneData: () => SceneConfig
-}>('viewer')
+/**
+ * 执行某类模型事件绑定的代码——这件事**不由库来做**。
+ *
+ * 那段代码是字符串，跑起来只能靠 `new Function`，而库产物里不许出现它
+ * （见 `hooks.ts`）。所以执行器由宿主经 `createThreeDMaker({ hooks })` 交进来：
+ * 宿主没交时这里整段是空操作，事件照发、代码照存，只是没有人跑。
+ *
+ * 中间不做任何加工——`payload.id` 就是「谁发的」，宿主照它取那个模型的代码。
+ */
+const { runEventCode } = useEditorHooks()
+
+function onModelEvent(type: ModelEventType, payload: ModelEventPayload): void {
+  runEventCode?.(type, payload)
+}
+
+/*
+  画布那几条事件，编辑器各自有一件本地的事要做（推一条日志、把选中项切过去、
+  提交手柄变换），做完**必须继续透给宿主**。
+
+  这也是「编辑器是宿主的一个消费者」这句话的落点：宿主在编辑模式下也要能收到
+  `loaded` / `modelPick` / `modelTransformEnd`，否则同一个 `SceneViewer`
+  在两种形态下的事件能力就不一样了，而那是没法从文档上看出来的差别。
+*/
+function onLoaded(): void {
+  pushEvent('模型加载完成')
+  emit('loaded')
+}
+
+function onProgress(percentage: number): void {
+  pushEvent(`模型加载中 ${percentage}%`)
+  emit('progress', percentage)
+}
+
+function onError(message: string): void {
+  pushEvent(`模型加载失败：${message}`)
+  emit('error', message)
+}
+
+function onCameraChange(payload: CameraChangePayload): void {
+  pushEvent('视角已更新，相机参数已写回配置')
+  emit('cameraChange', payload)
+}
+
+function onPicked(payload: ModelPickPayload): void {
+  selectPickedModel(payload)
+  emit('modelPick', payload)
+}
+
+/**
+ * 画布对外那 5 个方法，逐条转给 `SceneCanvas`。
+ *
+ * 转手是本组件在「编辑态」这一支上的唯一职责——`SceneViewer` 只认一个入口，
+ * 它拿到的是 `SceneEditor` 的实例，所以中间两层都得把同一组方法再交一遍。
+ * 方法名与签名由 `SceneViewerApi` 定死，漏一条 `typecheck` 会红。
+ *
+ * 四条要隔着挂载好的画布问的，用 `?? ` 兜成「现在拿不到」（与原实现同值）；
+ * `getSceneData` 那一条**只在画布没挂上时才可能走兜底**，而它只读 store，
+ * 所以这里给出的是商店里那份配置，而不是 `null`。
+ */
+const viewerRef = useTemplateRef<SceneViewerApi>('viewer')
+
+defineExpose<SceneViewerApi>({
+  captureCamera: () => viewerRef.value?.captureCamera() ?? false,
+  measureModel: (id) => viewerRef.value?.measureModel(id) ?? null,
+  groundPointAt: (clientX, clientY) => viewerRef.value?.groundPointAt(clientX, clientY) ?? null,
+  getSceneData: () => viewerRef.value?.getSceneData() ?? scene.exportConfig(),
+  loadSceneData: (data) => viewerRef.value?.loadSceneData(data) ?? false,
+})
 
 /**
  * 视口元素本身。
@@ -53,7 +151,7 @@ const viewportRef = useTemplateRef<HTMLElement>('viewport')
  * 把画布能力登记到 canvasApi，供属性面板与模型操作胶囊调用。
  *
  * 用注册表而不是把状态提升到 App：调用方分别在右栏与中栏视口里，
- * 与 SceneViewer 之间隔着 SceneStage 与 TresCanvas，「抓取视角」这类动作
+ * 与 SceneCanvas 之间隔着 TresCanvas，「抓取视角」这类动作
  * 在中间两层都只是原样透传，白白多出几组 props 和几个 emit。
  */
 canvasApi.captureCamera = () => {
@@ -73,7 +171,7 @@ canvasApi.viewportAspect = () => {
  * 屏幕坐标 → 地面坐标。绘制工具（`useFloorplanTool`）唯一的入口。
  *
  * 与上面三条同一条路数：库只给「能力」，怎么用是编辑器的事。
- * 中间那两层（本组件、SceneViewer）都只是原样转发，不认「墙」这个概念。
+ * 中间那两层（本组件、SceneCanvas）都只是原样转发，不认「墙」这个概念。
  */
 canvasApi.groundPointAt = (clientX, clientY) =>
   viewerRef.value?.groundPointAt(clientX, clientY) ?? null
@@ -279,6 +377,7 @@ function setGizmoMode(mode: TransformMode): void {
  */
 function onTransformEnd(payload: ModelTransformPayload): void {
   commitTransform(payload, gizmoMode.value)
+  emit('modelTransformEnd', payload)
 }
 
 // ---------- 相机过渡 ----------
@@ -351,31 +450,39 @@ const viewMode = computed(() => viewModeOf(scene.config.camera))
       @contextmenu="onFloorplanContextMenu"
     >
       <!--
-        这里就是 `editable` 那个总闸的**唯一常驻消费者**：预览态一个开关关掉一整组
-        （点选 / 包围框 / 手柄），不必再摆三个 `!previewMode`——那种写法漏一个不报错，
-        画面上只是「预览里还能点中模型」。
+        编辑器直接挂在 `SceneCanvas`（**内部签名**）上，不经过公开面那个 `SceneViewer`
+        ——后者在编辑模式下渲染的就是本组件所在的那三栏，从那边绕一圈就成了环
+        （`SceneViewer` → `SceneEditor` → 本组件 → `SceneViewer`）。
 
-        `:toolbar="false"` 仍要单独写：分开关优先于总闸，编辑器自绘工具栏这件事
-        总闸表达不了（见 DESIGN.md 设计决定 46）。
+        于是下面这几条「编辑器要用、宿主不该管」的值，由这里直接给：
+
+        - `:editable="!previewMode"` —— 总闸的**唯一常驻消费者**：预览态一个开关关掉
+          一整组（点选 / 包围框 / 手柄），不必再摆三个 `!previewMode`——那种写法漏一个
+          不报错，画面上只是「预览里还能点中模型」。
+        - `:toolbar="false"` —— 编辑器自绘界面，内置那条浮动工具栏让位。走的正是
+          「分开关优先于总闸」那一支（见 DESIGN.md 设计决定 46）。
+        - `:gizmo-mode` 取编辑器自己的 ref（右栏与 W/E/R 快捷键都在改它），
+          `:camera-transition` 取下面那个常量。两条都不是宿主的 prop。
       -->
-      <SceneViewer
+      <SceneCanvas
         ref="viewer"
         height="100%"
         :editable="!previewMode"
         :toolbar="false"
         :gizmo-mode="gizmoMode"
         :camera-transition="CAMERA_TRANSITION"
-        @loaded="pushEvent('模型加载完成')"
-        @progress="pushEvent(`模型加载中 ${$event}%`)"
-        @error="pushEvent(`模型加载失败：${$event}`)"
-        @camera-change="pushEvent('视角已更新，相机参数已写回配置')"
-        @model-pick="selectPickedModel"
+        @loaded="onLoaded"
+        @progress="onProgress"
+        @error="onError"
+        @camera-change="onCameraChange"
+        @model-pick="onPicked"
+        @model-transform="emit('modelTransform', $event)"
         @model-transform-end="onTransformEnd"
-        @object-click="runModelEvent('click', $event)"
-        @object-dblclick="runModelEvent('dblclick', $event)"
-        @object-pointer-enter="runModelEvent('pointerenter', $event)"
-        @object-pointer-leave="runModelEvent('pointerleave', $event)"
-        @object-context-menu="runModelEvent('contextmenu', $event)"
+        @object-click="onModelEvent('click', $event)"
+        @object-dblclick="onModelEvent('dblclick', $event)"
+        @object-pointer-enter="onModelEvent('pointerenter', $event)"
+        @object-pointer-leave="onModelEvent('pointerleave', $event)"
+        @object-context-menu="onModelEvent('contextmenu', $event)"
       >
         <!--
           插槽内容位于 TresCanvas 内部，能拿到 useTres / useLoop。
@@ -391,8 +498,14 @@ const viewMode = computed(() => viewModeOf(scene.config.camera))
             插槽位置在 TresCanvas 内部，所以这里的每一样都是 3D 对象。
           -->
           <SceneFloorplanDraft />
+          <!--
+            宿主自己的 3D 内容排在**最后**：上面两件是编辑器的内部件
+            （性能探针、户型草稿），它们要在，而宿主注入的东西不该插在它们中间——
+            顺序会影响渲染次序，内部件的位置是编辑器说了算的。
+          -->
+          <slot name="scene" />
         </template>
-      </SceneViewer>
+      </SceneCanvas>
 
       <span class="tdm-corner tdm-corner--tl" :class="{ 'tdm-corner--lit': lit }" />
       <span class="tdm-corner tdm-corner--tr" :class="{ 'tdm-corner--lit': lit }" />

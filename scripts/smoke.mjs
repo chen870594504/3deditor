@@ -8,7 +8,7 @@
  *   3. 库构建扫进了 playground → 发布产物里混入开发期样式
  *   4. Pinia 未复用宿主实例 → 同一页面出现两份插件状态
  *   5. 配置是引用而非拷贝 → DEFAULT_SCENE_CONFIG 被第一个宿主实例改脏
- *   6. 分组 prop 的 watcher 注册顺序反了 → 兼容用的扁平 environment 被覆盖
+ *   6. 公开面收窄后两种形态分不出来了 → 宿主写 editable 得到一块空白
  *
  * 这里只验证到「组件树能渲染 + 配置能读写 + 样式产物正确」，
  * WebGL 实际出图、阴影是否真的落到地面上，依赖浏览器，
@@ -17,7 +17,7 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { createPinia, setActivePinia } from 'pinia'
-import { createSSRApp, defineComponent, h, toRaw } from 'vue'
+import { createSSRApp, defineComponent, h } from 'vue'
 import { renderToString } from '@vue/server-renderer'
 import {
   createThreeDMaker,
@@ -224,51 +224,98 @@ check('旧默认值没被动过', () => {
 })
 
 /**
- * 下面几条走真实渲染。`toolbar` 在 SSR 下看得见（SceneToolbar 渲染在 TresCanvas 之外），
- * 另外三个开关**刻意不写断言**——加了只会得到一条永远为真的假断言（见 CLAUDE.md），
- * 它们的防线是 DESIGN.md 目视清单第 144-146 条。
+ * 下面几条走真实渲染。公开面收窄之后，看得见的东西分成两半：
  *
- * 只守 `toolbar` 一个也够用：它同时管着两件事——props 有没有真的转发到底层，
+ * - **画布态**（`editable` 不传或 `false`）：`.tdm-root` 与内置工具栏都在
+ *   `TresCanvas` 之外，SSR 下渲染得出来，照旧是好判据。
+ * - **编辑态**（`editable: true`）：渲染的是三栏工作台，判据换成编辑器外壳
+ *   自己的类名（`.tdm-body` 与左右两栏）。这比原来那条 `.tdm-toolbar` 更强——
+ *   它同时钉住了「公开面收窄之后 `editable` 仍然说了算」与「三栏真的进了库产物」。
+ * - **宿主页**（`sideTabs` / `inspectorTabs`）：导轨那一格在 `TresCanvas` 之外，
+ *   SSR 下画得出来，所以「两个 prop 到没到得了面板」能断言；而**页里的正文**
+ *   要点开才渲染，测不到——最后那次渲染为什么仍然把插槽给上，写在下面。
+ *
+ * 三个交互开关（`pickable` / `selection` / `gizmo`）**刻意不写断言**——
+ * 它们住在 `TresCanvas` 内部，SSR 下 children 根本不渲染，加了只会得到一条
+ * 永远为真的假断言（见 CLAUDE.md）。它们的防线是 DESIGN.md 目视清单。
+ *
+ * 只守工具栏与三栏也够用：前者同时管着两件事——props 有没有真的转发到底层，
  * 以及 Vue 有没有把「没传的布尔」悄悄转成 `false`。后者一旦发生，`.tdm-toolbar`
  * 会从**所有**宿主页面上消失（`editable` 被转成 false 就是只读模式）。
  */
-async function renderViewer(props) {
+async function renderViewer(props, slots) {
   const pinia = createPinia()
-  const app = createSSRApp({ render: () => h(SceneViewer, props) })
+  const app = createSSRApp({ render: () => h(SceneViewer, props, slots) })
   app.use(pinia)
   app.use(createThreeDMaker({ pinia }))
   return { html: await renderToString(app), store: useSceneStore(pinia) }
 }
 
 /** 渲染失败时把结果放进同一个列表，不中断后面那些与总闸无关的断言 */
-async function tryRenderViewer(name, props) {
+async function tryRenderViewer(name, props, slots) {
   try {
-    return await renderViewer(props)
+    return await renderViewer(props, slots)
   } catch (error) {
     results.push({ ok: false, name, detail: error.message })
     return { html: '', store: null }
   }
 }
 
-const plainViewer = await tryRenderViewer('渲染不带任何开关的画布', { model: '/sw-probe.glb' })
+const plainViewer = await tryRenderViewer('渲染不带任何开关的画布', {})
 const readonlyViewer = await tryRenderViewer('渲染只读画布', { editable: false })
 const editingViewer = await tryRenderViewer('渲染编辑画布', { editable: true })
-const bareToolbarViewer = await tryRenderViewer('渲染编辑画布但关掉工具栏', {
-  editable: true,
-  toolbar: false,
-})
+const rotatingViewer = await tryRenderViewer('渲染自动旋转画布', { autoRotate: true })
 
-check('props 真的转发到了底层', () => {
-  assert(plainViewer.store, '画布没能渲染出来')
-  const models = plainViewer.store.config.models
-  assert(models.length === 1, `store 里模型数不是 1：${models.length}`)
-  assert(models[0].url === '/sw-probe.glb', `模型地址不对：${models[0].url}`)
-  return 'model 经 props → store 的 watcher 落进配置'
+/**
+ * 带宿主页的那一次渲染。
+ *
+ * 两份 `tabs` 各给一页，**插槽也一起给**——虽然这一页不是默认打开的那一页
+ * （点开才渲染，而 SSR 里点不了），但「插槽能不能穿过 `SceneViewer` 与
+ * `SceneEditor` 两层到达面板」这件事**只有真给一次才可能出问题**：
+ * 不给的话，转发的动态插槽那一段代码根本不会被走到。
+ * 它到不到得了面板由 DESIGN.md 目视清单守着（见下一条注释）。
+ */
+const hostTabViewer = await tryRenderViewer(
+  '渲染带宿主页的编辑画布',
+  {
+    editable: true,
+    sideTabs: [{ key: 'device', label: '设备' }],
+    inspectorTabs: [{ key: 'about', label: '关于' }],
+  },
+  {
+    'side-tab-device': () => h('p', '设备页'),
+    'inspector-tab-about': () => h('p', '关于页'),
+  },
+)
+
+check('props 真的转发到了底层（autoRotate）', () => {
+  /**
+   * 这一条是公开面上 prop → store 那几条写入之一的证据。
+   *
+   * 从前它验的是 `model`（一个 prop 进 store 变出一个模型），而 `model` 已经
+   * 从公开面删掉了——所以判据换成 `autoRotate`：它也是「宿主写一个 prop、
+   * store 立刻有反应」，而同一条路数正是其余 prop 走的。
+   * 换成「先往 store 里种一个值再断言它还在」是不行的：那种自证恒真，
+   * 什么都守不住。
+   *
+   * `draco` 那条桥在这里断言不了：它落在**当前选中项**上，
+   * 而空场景没有选中项，`patchModel` 会静静地什么都不做——这是库一贯的语义，
+   * 不是 bug，但也就没有可断言的落点。
+   *
+   * `initialScene` 那条有自己的落点（5f 那一节的最后一条）：它在 setup 里落笔，
+   * 所以拿渲染返回的 store 直接断言得了。
+   */
+  assert(rotatingViewer.store, '画布没能渲染出来')
+  assert(
+    rotatingViewer.store.config.camera.autoRotate === true,
+    `autoRotate 没写进配置：${rotatingViewer.store.config.camera.autoRotate}`,
+  )
+  return 'autoRotate 经 props → store 的 watcher 落进配置'
 })
 
 check('一个开关都不传时与加总闸之前一致（有内置工具栏）', () => {
-  // 五个开关的默认值在 withDefaults 里必须写成 `undefined`。漏了就会被 Vue 的布尔
-  // 特例转成 false，其中 `editable` 变 false 的后果是**所有宿主进入只读模式**
+  // `editable` 在 withDefaults 里必须写成 `undefined`。漏了就会被 Vue 的布尔
+  // 特例转成 false，后果是**所有宿主进入只读模式**
   assert(plainViewer.html.includes('tdm-root'), '缺少 .tdm-root')
   assert(plainViewer.html.includes('tdm-toolbar'), '不传任何开关时内置工具栏消失了')
   return '有 .tdm-toolbar，默认没被总闸翻掉'
@@ -276,23 +323,83 @@ check('一个开关都不传时与加总闸之前一致（有内置工具栏）'
 
 check(':editable="false" 是只读', () => {
   assert(readonlyViewer.html.includes('tdm-root'), '缺少 .tdm-root')
-  assert(!readonlyViewer.html.includes('tdm-toolbar'), '只读画布渲染出了内置工具栏')
+  assert(!readonlyViewer.html.includes('class="tdm-toolbar"'), '只读画布渲染出了内置工具栏')
   return '无 .tdm-toolbar'
 })
 
-check(':editable="true" 是编辑', () => {
-  assert(editingViewer.html.includes('tdm-toolbar'), '编辑画布没有渲染出内置工具栏')
-  return '有 .tdm-toolbar'
+check(':editable="true" 渲染三栏工作台', () => {
+  /**
+   * 判据从「有内置工具栏」换成编辑器外壳的类名，是被逼的也是更准的：
+   * `toolbar` 已经不是 prop 了，而 `h(SceneViewer, { editable: true, toolbar: false })`
+   * 那种写法会被 Vue **静默丢弃**（未知 prop 不报错也不警告），
+   * 于是断言会退化成一条恒真的假断言——比一条红的更危险。
+   *
+   * `.tdm-body` 与左右两栏同时出现，才是「三栏真的渲染出来了」；
+   * 内置工具栏**不在**，才是「编辑器自绘界面时它让了位」（`:toolbar="false"`
+   * 走的正是「分开关优先于总闸」那一支）。
+   */
+  assert(editingViewer.html.includes('tdm-body'), '编辑态没有渲染出三栏容器 .tdm-body')
+  assert(editingViewer.html.includes('tdm-col--left'), '编辑态缺少左栏')
+  assert(editingViewer.html.includes('tdm-col--right'), '编辑态缺少右栏')
+  assert(
+    !editingViewer.html.includes('class="tdm-toolbar"'),
+    '编辑态还渲染了内置工具栏——编辑器自绘界面时它该让位',
+  )
+  return '三栏齐全，内置工具栏让位'
 })
 
-check('分开关优先于总闸（它仍是个可传的真 prop）', () => {
-  assert(bareToolbarViewer.html.includes('tdm-root'), '缺少 .tdm-root')
+check('宿主追加的页进了两根导轨', () => {
+  /**
+   * `aria-label` 是那一格上**唯一**常显之外的落点：导轨没有文字，
+   * 页名只在 aria-label 与悬停提示里。所以它同时是「这一格画出来了」
+   * 与「名字接对了」两条证据。
+   *
+   * 两条都要查，因为左右两根导轨是两份独立的模板——
+   * 只查一边时，另一边把 prop 漏掉（`<SidePanel />` 少了 `:tabs`）
+   * 会一点都不报错。
+   */
   assert(
-    !bareToolbarViewer.html.includes('tdm-toolbar'),
-    'editable=true 配 toolbar=false 时工具栏还在——总闸盖过了分开关',
+    hostTabViewer.html.includes('aria-label="设备"'),
+    '左侧导轨没画上宿主页——`sideTabs` 没到得了 SidePanel',
   )
-  return 'editable=true + toolbar=false → 无 .tdm-toolbar'
+  assert(
+    hostTabViewer.html.includes('aria-label="关于"'),
+    '右侧导轨没画上宿主页——`inspectorTabs` 没到得了 InspectorPanel',
+  )
+  return '两个 prop 各自在自己的导轨上出了一格'
 })
+
+check('分隔线只画在有第二组的地方', () => {
+  /**
+   * 分组线（`--group-start`）是「宿主加的这组从这里开始」的唯一可见证据，
+   * 而它**不该**在没有宿主页时出现——多一条线不报错，只是导轨上凭空多一道痕。
+   *
+   * 两条对照着断言，是因为只断言「有」的那一条对「恒给每一格都加上这个类」
+   * 那种写法毫无反应。
+   */
+  assert(
+    hostTabViewer.html.includes('tdm-rail-item--group-start'),
+    '宿主页那一组没有分隔线，导轨上读不出「换了一组」',
+  )
+  assert(
+    !editingViewer.html.includes('tdm-rail-item--group-start'),
+    '没有宿主页时也画了分隔线——那两组本来就没有第二组',
+  )
+  return '有宿主页时有线、没有时没有'
+})
+
+/**
+ * 宿主页的**正文**（`#side-tab-<key>` / `#inspector-tab-<key>` 那一段内容）
+ * 在这里断言不了：它要点开那一页才渲染，而 SSR 里点不了。
+ *
+ * 更值得说清的是它**为什么测不到**，与 CLAUDE.md 里那份「测不到的清单」同源：
+ * `renderToString` 只产出 HTML 字符串，拿不到组件实例，也没有事件。
+ * 「插槽穿过两层转发到达面板」这条路唯一的防线是 DESIGN.md 目视清单里那一条
+ * （临时把 playground 的 `App.vue` 接上一对 `tabs`，点开看正文换没换）。
+ *
+ * 上面那次渲染里**仍然把插槽给了**：给了之后转发那段动态插槽的代码才会被走到，
+ * 少了它，一段写错的转发（比如前缀拼错）连一次都不会执行。
+ */
 
 // ---------- 4. 样式产物 ----------
 
@@ -926,15 +1033,24 @@ check('公开契约里有物体级 API', () => {
     // 画布级点选是第二条通道，同样漏了就没有任何提示
     'modelPick',
     'ModelPickPayload',
-    'pickable',
-    // 选中视觉与变换手柄：两个 emit 与三个 prop 走的是同一条「漏声明就静默失效」的路
+    // 变换手柄的两个 emit 与它们共用的载荷类型：漏声明就静默失效
     'modelTransform',
     'modelTransformEnd',
     'ModelTransformPayload',
     'TransformMode',
+    /*
+      三个交互开关的名字仍在公开面上，只是换了住处：从 `SceneViewerProps` 的三个 prop
+      搬进了 `SceneSwitchInput`（宿主自绘工具栏时读的就是它，见 sceneSwitches.ts）。
+      它们在这里的意义也跟着变了——从前守的是「prop 别漏声明」，现在守的是
+      「**那条三级规则的输入面**别被谁顺手删掉」。
+
+      `toolbar` 与 `gizmoMode` 都不在这份名单里：前者进了 `SceneSwitchInput`
+      但名字太普通（产物里随便哪段注释都可能带它，断言会变成恒真），
+      后者收进了内部签名——手柄模式是编辑器的手感偏好，公开面上没有它的位置。
+    */
+    'pickable',
     'selection',
     'gizmo',
-    'gizmoMode',
     // 户型图：配置分组 + 五个子类型（`export type * from './types'` 一并带出）
     'floorplan',
     'FloorplanConfig',
@@ -1055,13 +1171,29 @@ check('产物里不含 new Function', () => {
    * `events` 里那段 code 是配置的一部分、可以随文件导入，而库是宿主应用
    * 的一部分——库要是在运行时编译它，等于替宿主开了一个「配置即代码」的口子。
    * 执行权留在宿主/编辑器那一侧，所以产物里不该出现任何动态求值。
+   *
+   * **查的是调用形态，不是裸字面量。** 这一条原本是 `code.includes('new Function')`，
+   * 在编辑器外壳进库之后失效了——失效的方向还正好是反的：
+   *
+   * 库自己不压缩（`minify: false`），源码里的注释原样进了产物，而 `hooks.ts` 与
+   * `EditorStage.vue` **必须用文字解释「为什么不能有它」**，那几句注释里就写着
+   * 这四个字。裸字面量按下去，红的是那几句注释，而真正的动态求值反倒没人管了。
+   *
+   * 加个左括号之后两边天然分得开：注释里写它还留着（没有人给注释里的字加括号），
+   * 真调用它立刻红。`eval` 那条照同一个口径写成正则——它本来就带括号，
+   * 写成一样的样子只是为了让这一组读起来是一组。
    */
-  const banned = ['new Function', 'eval(', 'setTimeout("', 'setInterval("']
+  const banned = [
+    [/new\s+Function\s*\(/, 'new Function('],
+    [/\beval\s*\(/, 'eval('],
+    [/setTimeout\s*\(\s*["'`]/, 'setTimeout("…") 的字符串形态'],
+    [/setInterval\s*\(\s*["'`]/, 'setInterval("…") 的字符串形态'],
+  ]
   const hits = []
   for (const file of ['index.js', 'index.cjs']) {
     const code = readFileSync(fileURLToPath(new URL(`../dist/${file}`, import.meta.url)), 'utf8')
-    for (const pattern of banned) {
-      if (code.includes(pattern)) hits.push(`${file} 含 ${pattern}`)
+    for (const [pattern, label] of banned) {
+      if (pattern.test(code)) hits.push(`${file} 含 ${label}`)
     }
   }
   assert(hits.length === 0, hits.join('；'))
@@ -1424,235 +1556,138 @@ check('setModel 只影响选中项，不碰其他模型', () => {
   return '单模型时代的入口在多模型下语义收窄为「改当前选中的那个」'
 })
 
-// ---------- 6. 分组 prop → 配置的桥接 ----------
+// ---------- 5f. 装载整份场景数据 ----------
+
+/*
+  这是本节唯一**不靠组件**的一组：`loadSceneData` 的实现住在 store 里（纯算术，
+  不碰 three、不碰 DOM），所以装载规则能直接对着 store 验，不必隔着画布。
+
+  它守的是三条容易写错又都不报错的事：旧格式的 `model` 字段得被迁移成 `models`；
+  载入之后撤销栈要清空（「初始化」的语义）；以及**只改提及的分组**——
+  `applyConfig` 的深合并语义被搬走一层之后，最容易在这里悄悄退化成整体替换。
+*/
+
+check('loadSceneData 装载整份场景并清空撤销栈', () => {
+  const scene = useSceneStore()
+  scene.resetConfig()
+
+  // 先造一条真历史（带 label 才是立即提交，否则只是排下一条 400ms 防抖）
+  scene.applyConfig({ camera: { fov: 50 } }, '测试 · 造一条历史')
+  assert(scene.canUndo === true, '前置条件不成立：没能造出历史，这条断言会失去意义')
+
+  const used = scene.loadSceneData({
+    models: [{ url: '/loaded-a.glb' }, { url: '/loaded-b.glb' }],
+    camera: { fov: 60 },
+  })
+
+  assert(used === true, 'loadSceneData 没有报告「用上了」')
+  assert(scene.models.length === 2, `模型列表没被整表换掉：${scene.models.length}`)
+  assert(scene.models[0].url === '/loaded-a.glb', '第一个模型的地址不对')
+  assert(scene.models[1].url === '/loaded-b.glb', '第二个模型的地址不对')
+  // 补丁里的条目没带 id，得就地生成，否则列表里会出现 key 是 undefined 的行
+  assert(scene.models[0].id !== '', '载入进来的模型没有被补上 id')
+  assert(scene.config.camera.fov === 60, `相机没写进去：${scene.config.camera.fov}`)
+  assert(scene.canUndo === false, '载入之后还能撤销——两段无关的历史混在了一起')
+  assert(scene.history.length === 1, `历史栈没被清空：${scene.history.length} 条`)
+  return '整表换掉 models、深合并其余分组、撤销栈回到单一起点'
+})
+
+check('loadSceneData 迁移旧格式的 model 字段', () => {
+  const scene = useSceneStore()
+  scene.resetConfig()
+
+  // 旧版写的是单个 `model` 对象。少了 migrateConfig 这一道不会报错，
+  // 只会「载入成功但场景是空的」——所以这条断言是那个迁移唯一的防线
+  scene.loadSceneData({ model: { url: '/legacy.glb' } })
+
+  assert(scene.models.length === 1, `旧格式没被折成 models：${scene.models.length}`)
+  assert(scene.models[0].url === '/legacy.glb', '迁移出来的模型地址不对')
+  return '旧的 model 单对象折成了 models 列表'
+})
+
+check('loadSceneData 拒绝非对象并原样返回 false', () => {
+  const scene = useSceneStore()
+  scene.resetConfig()
+  scene.addModel('/keep.glb')
+  const beforeModels = scene.models.length
+  const beforeFov = scene.config.camera.fov
+
+  // null 也过 `typeof === 'object'`，所以判据里那半条必须单独写
+  assert(scene.loadSceneData(null) === false, 'null 没有被拒绝')
+  assert(scene.loadSceneData('nope') === false, '字符串没有被拒绝')
+
+  assert(scene.models.length === beforeModels, '被拒绝的载入改了模型列表')
+  assert(scene.config.camera.fov === beforeFov, '被拒绝的载入改了相机')
+  return '非对象一律无副作用地返回 false'
+})
+
+check('loadSceneData 只改提及的分组', () => {
+  const scene = useSceneStore()
+  scene.resetConfig()
+  const cellSize = scene.config.ground.cellSize
+  const elevation = scene.config.sun.elevation
+
+  scene.loadSceneData({ camera: { fov: 70 } })
+
+  assert(scene.config.camera.fov === 70, 'fov 未写入')
+  assert(scene.config.camera.near === 0.1, '同分组的其他字段被清掉了')
+  assert(scene.config.ground.cellSize === cellSize, '未提及的分组被改动了')
+  assert(scene.config.sun.elevation === elevation, '未提及的分组被改动了')
+  return '深合并语义与 applyConfig 一致，没有退化成整体替换'
+})
 
 /**
- * 分组 prop 的 watcher 是立即执行的，所以 SSR 一次就足以验证桥接。
+ * `initialScene` 这条走真实渲染：它是**声明式**的那一半，只有走一遍
+ * `h(SceneViewer, { initialScene })` 才算验到「prop 真的在 setup 里落了地」。
  *
- * 这里守的是一个很容易写错的顺序问题：分组的 sun watcher 必须先于
- * 兼容用的扁平 environment watcher 注册，否则外层整包传进来的 sun
- * 会把环境贴图又覆盖回空字符串。
+ * SSR 下 `TresCanvas` 的 children 不渲染，但**组件自己的 setup 会跑**——
+ * 而 `initialScene` 正是在 setup 里写 store 的，所以这一条测得到（与
+ * 「props 真的转发到了底层（autoRotate）」同源，都是「宿主写一个 prop、
+ * store 立刻有反应」这条路的证据）。
+ *
+ * 放在这一节的最后：`renderViewer` 会顺手把 active pinia 换成它自己那个，
+ * 后面的用例就都落不到本节这块 store 上了（本节之后没有别的 store 用例，
+ * 所以不必再激活一次——那个写法见 5c 那一段）。
  */
-let bridgeStore = null
-
-/**
- * 宿主传进来的那个数组，故意留在外面。
- * 桥接层必须拷一份再写进配置，否则宿主就地改一下就会静默改动场景，
- * changedGroups 的比对也跟着不可靠。
- */
-const hostPosition = [1, 2, 3]
-
-/**
- * 同理，事件绑定也是宿主可能直接传进来的一个嵌套对象。
- *
- * 它比数组更危险：`applyPatch` 遇到目标里没有的键时会**直接把宿主的对象装进去**
- * （别名而不是拷贝），而宿主那个对象不是 reactive——就地改它不会触发深度 watch，
- * changedGroups 也只能等到下一次别的改动顺带比对时才发现。表现就是
- * 「配置被悄悄改了，历史栈里查无此事」。
- */
-const hostEvents = { click: { enabled: true, code: 'console.log(1)' } }
-
-/**
- * 户型图的墙，同样是宿主自己的数组——而且**类型上更危险**。
- *
- * `applyPatch` 的 `isPlainObject` 显式排除数组，所以任何数组都是
- * `target[key] = value` 整体装入。而墙比位置三元组深两层：
- * 数组里是对象，对象里还有 `start` / `end` 两个数组。
- * **只拷顶层那一层是不够的**——宿主改一下某个端点坐标照样能静默改掉场景。
- *
- * 刻意用**普通数组**而不是 reactive：宿主真正会遇到的那种「就地改一下」
- * 往往连深度 watch 都不触发（见上面 hostEvents 那段），
- * 所以这条通道只能靠桥接层自己拷贝来断，不能指望响应式系统兜住。
- */
-const hostWalls = [
-  { id: 'w1', start: [0, 0], end: [4, 0], height: 2.8, thickness: 0.18 },
-  { id: 'w2', start: [4, 0], end: [4, 3], height: 2.8, thickness: 0.18 },
-]
-
-const BridgePage = defineComponent({
-  setup() {
-    bridgeStore = useSceneStore()
-    return () =>
-      h(SceneViewer, {
-        height: '200px',
-        // 物体级只走 model 分组这条路：再给一对扁平的 cast-shadow prop
-        // 无法判断说的是全局总闸还是物体级，会和 shadow.castShadow 打架
-        model: { name: '桥接模型', position: hostPosition, wireframe: true, events: hostEvents },
-        wireframe: false,
-        camera: { fov: 33 },
-        sun: { showSky: true, elevation: 12 },
-        shadow: { enabled: true, type: 'accumulative' },
-        ground: { visible: false, cellSize: 1.5 },
-        floorplan: { foundation: { x: 1, z: 2, width: 6, depth: 4 }, walls: hostWalls },
-        environment: 'city',
-      })
-  },
+const initialSceneViewer = await tryRenderViewer('渲染带 initialScene 的画布', {
+  initialScene: { camera: { fov: 33 } },
 })
 
-const bridgeApp = createSSRApp(BridgePage)
-bridgeApp.use(createPinia())
-bridgeApp.use(createThreeDMaker())
-
-try {
-  await renderToString(bridgeApp)
-} catch (error) {
-  results.push({ ok: false, name: '渲染分组 prop', detail: error.message })
-}
-
-check('分组 prop 写入对应配置分支', () => {
-  assert(bridgeStore, '组件未挂载')
-  const config = bridgeStore.config
-
-  assert(config.camera.fov === 33, `camera.fov 是 ${config.camera.fov}`)
-  assert(config.sun.showSky === true, 'sun.showSky 未写入')
-  assert(config.sun.elevation === 12, `sun.elevation 是 ${config.sun.elevation}`)
-  assert(config.ground.visible === false, 'ground.visible 未写入')
-  assert(config.ground.cellSize === 1.5, `ground.cellSize 是 ${config.ground.cellSize}`)
-  assert(config.shadow.enabled === true, 'shadow.enabled 未写入')
-  assert(config.shadow.type === 'accumulative', `shadow.type 是 ${config.shadow.type}`)
-  assert(config.floorplan.foundation.width === 6, `floorplan.foundation.width 是 ${config.floorplan.foundation.width}`)
-  assert(config.floorplan.foundation.z === 2, `floorplan.foundation.z 是 ${config.floorplan.foundation.z}`)
-  assert(config.floorplan.walls.length === 2, `floorplan.walls 有 ${config.floorplan.walls.length} 面`)
-  return '5 个分组各自的字段都落到位'
-})
-
-check('分组 prop 不会清掉同分组的其他字段', () => {
-  const config = bridgeStore.config
-  assert(config.camera.near === 0.1, `未提及的 camera.near 被改动：${config.camera.near}`)
-  assert(config.sun.turbidity === 3.4, `未提及的 sun.turbidity 被改动：${config.sun.turbidity}`)
-  return '深合并在 prop 桥接这一层同样生效'
-})
-
-check('扁平的 environment prop 与分组 sun 共存', () => {
-  // 分组的 sun watcher 先注册且没有 environment 字段，兼容 watcher 再补上，
-  // 顺序颠倒的话这里会拿到空字符串
+check('initialScene 在挂载时写进 store', () => {
+  assert(initialSceneViewer.store, '画布没能渲染出来')
   assert(
-    bridgeStore.config.sun.environment === 'city',
-    `sun.environment 是 "${bridgeStore.config.sun.environment}"`,
+    initialSceneViewer.store.config.camera.fov === 33,
+    `initialScene 没写进配置：${initialSceneViewer.store.config.camera.fov}`,
   )
-  return '兼容 prop 未被分组 prop 覆盖'
+  return 'prop → store 的一次性装载在 setup 里落了笔'
 })
 
-check('model 对象形态写入物体级字段', () => {
-  const config = bridgeStore.config
+// ---------- 6. prop → 配置的桥接（整节已删除） ----------
 
-  assert(config.models[0].name === '桥接模型', `model.name 是 "${config.models[0].name}"`)
-  assert(
-    JSON.stringify(config.models[0].position) === '[1,2,3]',
-    `model.position 是 ${JSON.stringify(config.models[0].position)}`,
-  )
-  // 同分组里没提到的字段一个都不能被清掉
-  assert(config.models[0].draco === false, `未提及的 model.draco 被改动：${config.models[0].draco}`)
-  assert(config.models[0].visible === true, `未提及的 model.visible 被改动：${config.models[0].visible}`)
-  assert(config.models[0].receiveShadow === true, '未提及的 model.receiveShadow 被改动')
-  return '对象形态落到 config.model，且深合并不清空同组字段'
-})
+/*
+  这里原本守着 `SceneViewer` 上一整组「分组 prop → store」的桥：`camera` / `sun` /
+  `shadow` / `ground` / `floorplan` 五组深合并、`model` 的两种形态（字符串与对象）、
+  以及桥接层那几条别名防护。公开面收窄之后那些 prop 整个删了（见 DESIGN.md
+  设计决定 47），所以这一节整块去掉。
 
-check('model 分组胜过渡平的 wireframe', () => {
-  /**
-   * 两个 watcher 都是 immediate，会按注册顺序同步跑完，
-   * 所以「分组更具体应当胜出」不能靠注册顺序实现，
-   * 得让扁平那个自己检查 model 里有没有写这个字段。
-   */
-  assert(
-    bridgeStore.config.models[0].wireframe === true,
-    `model.wireframe 是 ${bridgeStore.config.models[0].wireframe}，被扁平的 :wireframe="false" 覆盖了`,
-  )
-  return '分组写法优先，与 environment / sun.environment 同一规则'
-})
+  **它守的每一条都还有落点，一条都没丢**，只是换到了 store 那条路上：
 
-check('桥接层不把宿主的数组别名进配置', () => {
-  // 宿主就地改自己的数组，配置不该跟着动
-  hostPosition[0] = 99
-  assert(
-    bridgeStore.config.models[0].position[0] === 1,
-    `宿主数组被别名进了配置：${JSON.stringify(bridgeStore.config.models[0].position)}`,
-  )
-  return '写入前拷贝，宿主数组与 config 相互独立'
-})
+  - 深合并且不清空未提及的分支 → 「applyConfig 深合并且不清空未提及的分支」
+  - `models` 是整体替换 → 「applyConfig 里的 models 是整体替换而不是逐条合并」
+  - 不把宿主对象 / 数组别名进配置 → 「patchModel 断开宿主对象与配置的别名」
+  - 户型图那三层的深拷贝 → 「cloneFloorplanPatch」那两条（顶层 / 墙对象 / 端点数组）
 
-check('桥接层不把宿主的事件对象别名进配置', () => {
-  const config = bridgeStore.config
+  这四条比原来那五条更值得守：现在它们是**宿主自己**要走的路（`applyConfig` /
+  `patchModel` 都在公开面上），而从前它们只是 props 的一个实现细节。
+  唯一真正消失的是「分组写法胜过渡平写法」那条优先级——两种写法一起没有了，
+  这一对矛盾本身不复存在。
 
-  assert(config.models[0].events.click.enabled === true, 'events 没有写进配置')
-  assert(config.models[0].events.click.code === 'console.log(1)', 'events 的代码没有写进配置')
-  // 只给了 click 一项，其余 4 类必须是默认值——补丁是逐项写的，不是整体替换
-  assert(config.models[0].events.dblclick.enabled === false, '未提及的 dblclick 被改了')
+  顺带记一条迁移期的现象，将来有人拿着旧文档来试时会撞上：
+  `h(SceneViewer, { model: ... })` 这类写法现在会被 Vue 当成**未知 prop 静默透到
+  DOM 上**——不报错、不警告，页面上只是多出一个 `model="[object Object]"` 属性。
+  留着旧断言只会得到一串与被测代码无关的红，所以这一节是删而不是改。
+*/
 
-  // 宿主就地改自己的对象，配置不该跟着动（这一条才是本用例的重点）
-  hostEvents.click.code = 'console.log(2)'
-  hostEvents.click.enabled = false
-  assert(
-    config.models[0].events.click.code === 'console.log(1)',
-    `宿主对象被别名进了配置：code 变成了 "${config.models[0].events.click.code}"`,
-  )
-  assert(config.models[0].events.click.enabled === true, '宿主对象被别名进了配置：enabled 被改')
-  return '嵌套对象逐类型浅拷，宿主与 config 相互独立'
-})
-
-// 字符串形态是模型 prop 的老写法，必须继续可用
-let stringStore = null
-
-const StringModelPage = defineComponent({
-  setup() {
-    stringStore = useSceneStore()
-    return () => h(SceneViewer, { height: '200px', model: '/demo.glb' })
-  },
-})
-
-const stringApp = createSSRApp(StringModelPage)
-stringApp.use(createPinia())
-stringApp.use(createThreeDMaker())
-
-try {
-  await renderToString(stringApp)
-} catch (error) {
-  results.push({ ok: false, name: '渲染字符串 model prop', detail: error.message })
-}
-
-/**
- * 户型图的桥接与另外四组有一条实质区别，单独守着。
- *
- * 那四组的补丁全是标量，`applyPatch` 按值装进去就完了；户型图的
- * `walls` / `openings` / `rooms` 是数组，会被**按引用**装进配置。
- * 所以 `SceneViewer` 那个分组桥必须自己过一遍 `cloneFloorplanPatch`
- * ——而 `applyConfig` 自己不克隆（只有 `patchModel` 走 `cloneModelPatch`），
- * 漏了不会有任何报错，只会在宿主某天改了自己那个数组时诡异地生效。
- *
- * 三层都要比：顶层数组、数组里的墙对象、墙对象里的 `start` 端点数组。
- * 只拷顶层的实现能骗过前两条，第三条会露馅。
- */
-check('桥接层不把宿主的平面图数组别名进配置', () => {
-  const walls = bridgeStore.config.floorplan.walls
-
-  assert(walls !== hostWalls, '顶层 walls 数组被别名了')
-  assert(toRaw(walls[0]) !== hostWalls[0], '墙对象被别名了')
-  assert(toRaw(walls[0].start) !== hostWalls[0].start, '端点数组被别名了（只拷了一层？）')
-
-  /*
-   * 行为上的判据：就地改宿主那一份，配置必须一动不动。
-   * 上面三条比的是引用，这一条比的是最终效果——只改端点坐标、
-   * 或者只往数组里塞一面新墙，都是宿主真正会做的事。
-   */
-  const before = JSON.stringify(bridgeStore.config.floorplan)
-  hostWalls[0].start[0] = 99
-  hostWalls[0].height = 5
-  hostWalls.push({ id: 'w3', start: [4, 3], end: [0, 3], height: 2.8, thickness: 0.18 })
-
-  assert(
-    JSON.stringify(bridgeStore.config.floorplan) === before,
-    '宿主就地改自己的数组，配置跟着变了',
-  )
-
-  return '逐层拷贝：顶层数组 / 墙对象 / 端点数组都与宿主断开'
-})
-
-check('model 字符串形态仍走 setModel', () => {  assert(stringStore, '组件未挂载')
-  assert(stringStore.config.models[0].url === '/demo.glb', `url 是 "${stringStore.config.models[0].url}"`)
-  // setModel 的价值就是顺带复位加载状态，这条守的是它没被降级成直接写字段
-  assert(stringStore.loading === true, 'setModel 未进入加载态')
-  return '扁平字符串与对象形态共用同一个 prop，互不干扰'
-})
 
 // ---------- 平面图的几何引擎 ----------
 

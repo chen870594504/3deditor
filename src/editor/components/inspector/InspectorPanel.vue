@@ -1,9 +1,13 @@
 <script setup lang="ts">
-import { computed, useTemplateRef } from 'vue'
+import { computed, ref, useTemplateRef } from 'vue'
 import { useSceneStore } from '../../../stores/scene'
 import { activeTab } from '../../composables/useEditorState'
+import type { InspectorTab } from '../../composables/useEditorState'
 import { createInspectorTabs } from '../../composables/useInspectorSchema'
 import { useRailTip } from '../../composables/useRailTip'
+import { ICON_HOST_FALLBACK } from '../../utils/panelIcons'
+import { INSPECTOR_TAB_PREFIX } from '../../utils/panelSlots'
+import type { EditorPanelTab } from '../../../types'
 import HistoryPanel from './HistoryPanel.vue'
 import FloorplanRoomList from './FloorplanRoomList.vue'
 import FloorplanStructureList from './FloorplanStructureList.vue'
@@ -13,15 +17,102 @@ import PresetList from './PresetList.vue'
 
 defineOptions({ name: 'InspectorPanel' })
 
+const props = withDefaults(
+  defineProps<{
+    /**
+     * 宿主**追加**的页：接在那七个内置页之后（`#inspector-tab-<key>` 插槽）。
+     *
+     * 与左栏那个 `tabs` 是同一条路数、同一份类型，只是挂在另一根导轨上。
+     * 命名空间也各是各的：左右两边都叫 `device` 互不影响。
+     *
+     * 不传时导轨上只有那七个内置页，正文那个 `v-if` 链的第一支恒为假，
+     * 整块与没有这个 prop 之前逐字一致。
+     *
+     * 顺带一句左栏没有的：右栏只有 **306px** 宽，宿主页的正文要自己管好横向
+     * 溢出（内置那几页都是 `tdm-scroll` + 定宽控件这么做的）。
+     */
+    tabs?: EditorPanelTab[]
+  }>(),
+  { tabs: () => [] },
+)
+
 /**
  * schema 只在面板创建时构建一次。
  *
  * 字段本身是静态数据，只有里面的 read / apply 闭包持有 store；
  * 每次切 tab 重建既没必要，也会让 v-for 的 key 无谓地失效。
+ *
+ * **叫 `builtinTabs` 而不是 `tabs`**：后者现在是宿主追加的那一份（上面的 prop）。
+ * 内置七页与宿主页在下面各处是分开算的，合成一个数组只会让
+ * 「`current.sections` 在宿主页上不存在」这件事藏进类型里。
  */
-const tabs = createInspectorTabs()
+const builtinTabs = createInspectorTabs()
 
-const current = computed(() => tabs.find((tab) => tab.key === activeTab.value) ?? tabs[0]!)
+/**
+ * 当前停在哪个**宿主页**。`null` = 没停在宿主页上（导轨亮的是内置那一格）。
+ *
+ * 与左栏那个 `activePageKey` 同一条路数：**本组件本地状态，不进 `useEditorState`**
+ * ——整个仓库只有这一处读它。内置那一格仍然住在 `activeTab` 里（它是公开导出，
+ * 宿主自己画顶栏时按的就是它）。
+ *
+ * 两者是**互斥**的，`litKey` 管这件事：宿主页一旦选上，`activeTab` 就只是
+ * 「上次停在内置的哪一页」——点宿主页**不动它**，于是宿主把那一页撤掉时，
+ * 落回的是用户上一刻停的那一页，而不是第一页。
+ */
+const hostTabKey = ref<string | null>(null)
+
+/**
+ * 当前停在哪个**宿主页**。（`undefined` = 没停在宿主页上，或者宿主把这一页撤掉了。）
+ *
+ * 判据取「数组里还在不在」而不是直接比 key：宿主中途把一个 tab 从数组里拿掉时，
+ * `hostTabKey` 会留在那个已经不存在的 key 上，只看它就会停在一页空白上。
+ * 过一遍 `find` 之后，撤页的表现是**落回内置那一页**——与左栏那个兜底同一个走向。
+ * 重新加回来时它会自己再亮起来，那正是用户上一刻停的地方。
+ */
+const activeHostTab = computed(() => props.tabs.find((tab) => tab.key === hostTabKey.value))
+
+/**
+ * 当前该亮哪一格。宿主页优先——判定顺序与正文那支链一致（见模板里那段注释）。
+ */
+const litKey = computed(() => activeHostTab.value?.key ?? activeTab.value)
+
+/**
+ * 当前停在哪个**内置页**。
+ *
+ * 判据是 `litKey` 而不是 `activeTab`：宿主页亮着时 `activeTab` 还留在上一格上，
+ * 拿它算会让下面那几个 `isXxxTab` 与 `--split` 类**照旧生效**——宿主页的正文
+ * 会莫名其妙地吃到「模型属性」那一页的上下列分栏。宿主页的 key 落不进
+ * `builtinTabs`，于是这里会退回第一页（「历史」）：下面正文档那一支用
+ * `activeHostTab` 先短路，`current` 只在真正渲染内置页时才被读，
+ * 所以它退到哪里都不会画错东西。
+ */
+const current = computed(
+  () => builtinTabs.find((tab) => tab.key === litKey.value) ?? builtinTabs[0]!,
+)
+
+/**
+ * 宿主页那一格的插槽名。
+ *
+ * 拼法与转发用的前缀同在 `utils/panelSlots.ts`，只有那一处——拼错一个连字符
+ * **不报错**，宿主的面板会一个字都不显示（一个没被提供的插槽是合法的空插槽）。
+ */
+const activeHostSlot = computed(() => `${INSPECTOR_TAB_PREFIX}${activeHostTab.value?.key ?? ''}`)
+
+/**
+ * 点内置那一格：先把宿主页那一支清掉。
+ *
+ * 不写第一行的表现是**从宿主页点回内置页时，正文仍然是宿主的**——而导轨已经
+ * 亮了内置那一格，两边都不报错。
+ */
+function openBuiltinTab(key: InspectorTab): void {
+  hostTabKey.value = null
+  activeTab.value = key
+}
+
+/** 点宿主那一格：`activeTab` 不动，理由见 `hostTabKey` */
+function openHostTab(key: string): void {
+  hostTabKey.value = key
+}
 
 /** 「模型属性」是唯一有主从结构的一页，布局上要单独对待 */
 const isModelTab = computed(() => current.value.key === 'model')
@@ -77,14 +168,14 @@ const { tip, showTip, hideTip } = useRailTip(() => inspectorRef.value)
       -->
       <div class="tdm-rail" @mouseleave="hideTip">
         <button
-          v-for="tab in tabs"
+          v-for="tab in builtinTabs"
           :key="tab.key"
           type="button"
           class="tdm-rail-item"
-          :class="{ 'tdm-rail-item--active': tab.key === activeTab }"
+          :class="{ 'tdm-rail-item--active': tab.key === litKey }"
           :aria-label="tab.label"
-          :aria-current="tab.key === activeTab"
-          @click="activeTab = tab.key"
+          :aria-current="tab.key === litKey"
+          @click="openBuiltinTab(tab.key)"
           @mouseenter="showTip(tab.label, $event)"
           @focus="showTip(tab.label, $event)"
           @blur="hideTip"
@@ -99,6 +190,36 @@ const { tip, showTip, hideTip } = useRailTip(() => inspectorRef.value)
             />
           </svg>
         </button>
+
+        <!--
+          宿主追加的页接在内置七页之后。
+          名字与图标都来自那份声明，没有可分开画的东西，所以这里不做 `#rail` 那种
+          「宿主不想让我们代画」的口子——左栏那个口子是为**追加分类**开的
+          （分类的条目在宿主手里），页没有这个问题。
+        -->
+        <button
+          v-for="tab in tabs"
+          :key="tab.key"
+          type="button"
+          class="tdm-rail-item tdm-rail-item--group-start"
+          :class="{ 'tdm-rail-item--active': tab.key === litKey }"
+          :aria-label="tab.label"
+          :aria-current="tab.key === litKey"
+          @click="openHostTab(tab.key)"
+          @mouseenter="showTip(tab.label, $event)"
+          @focus="showTip(tab.label, $event)"
+          @blur="hideTip"
+        >
+          <svg class="tdm-rail-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <!-- 缺图标时退回占位字形：导轨上没有常显文字，留白等于少一格还点不到 -->
+            <path
+              v-for="(part, i) in tab.icon ?? ICON_HOST_FALLBACK"
+              :key="i"
+              :d="part.d"
+              :fill="part.fill ? 'currentColor' : 'none'"
+            />
+          </svg>
+        </button>
       </div>
 
       <!--
@@ -107,13 +228,26 @@ const { tip, showTip, hideTip } = useRailTip(() => inspectorRef.value)
       -->
       <span v-if="tip" class="tdm-rail-tip" :style="{ top: `${tip.top}px` }">{{ tip.label }}</span>
 
-      <!-- key 绑 tab：切 tab 时整块重建，让 tabpanel 的淡入动画每次都能重放 -->
+      <!--
+        key 绑当前那一页：切 tab 时整块重建，让 tabpanel 的淡入动画每次都能重放。
+        绑的是 `activeHostTab ?? current` 而不是 `current`——停在宿主页上时
+        `current` 恒是第一页（宿主页的 key 落不进 `builtinTabs`），
+        两个宿主页之间切换就会因为 key 没变而**不重放动画**。
+      -->
       <div
-        :key="current.key"
+        :key="activeHostTab?.key ?? current.key"
         class="tdm-inspector-body tdm-scroll tdm-tabpanel"
         :class="{ 'tdm-inspector-body--split': isModelTab && hasModels }"
       >
-        <HistoryPanel v-if="current.key === 'history'" />
+        <!--
+          宿主页：正文整个换成宿主的内容，名字见 `activeHostSlot`。
+
+          放在这支链的**最前**：宿主页的 key 落不进 `builtinTabs`，
+          排在后面的话 `current.key === 'history'` 会先把这一支吃掉，
+          宿主的面板永远轮不到——而那是**不报错**的（画面照常，只是没有内容）。
+        -->
+        <slot v-if="activeHostTab" :name="activeHostSlot" />
+        <HistoryPanel v-else-if="current.key === 'history'" />
         <template v-else-if="isModelTab">
           <!--
             「模型属性」这一页是主从结构：上面是场景里的模型列表，下面是选中那个的属性。

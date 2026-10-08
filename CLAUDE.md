@@ -10,9 +10,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   `app.use(createThreeDMaker())` + `import '3deditor/style.css'` 获得 3D 场景能力
 - **开发态**：`playground/` 是一个可独立运行的场景编辑器，同时是插件的**第一个消费者**
 
-分层是刻意的，也是本仓库最重要的一条铁律：**能力进 `src/`，界面留 `playground/`**。
-`src/` 里没有任何一处为编辑器开过后门——编辑器用到的相机、地面、日照、阴影全部走 `SceneViewer`
-的公开 prop 与 store 的公开状态。往 `src/` 里加东西之前先问一句「宿主是不是也该有」，**答案是否，就该留在 `playground/`**。
+分层依据是本仓库最重要的一条铁律，**它已经改写过一次**：
+
+> **早先**：「能力进 `src/`，界面留 `playground/`」——编辑器是仓库的第一个消费者，不算能力。
+> **现在**：**宿主通用的一切进 `src/`**。
+
+改写发生在编辑器整个搬进 `src/editor/` 的那一轮。理由是那个前提站不住了：编辑器本身也是宿主可能
+要的东西（谁都能装完库就拿到一个开箱即用的编辑器），那它就属于「宿主通用」。于是 `SceneViewer`
+在 `editable` 为真时直接渲染三栏工作台，**顶栏仍然留给宿主**——顶栏里全是策略（场景名、保存、
+预览），而那不通用。
+
+现在**留在 `playground/` 的只有两样**：`App.vue` 那个宿主外壳（顶栏 + 一个 `SceneViewer`），
+以及**库绝不碰的两件东西**——`composables/useConfigIO.ts`（保存到哪是策略）与
+`composables/useEventRunner.ts`（那段 `new Function` 执行器，一旦进 `src/` 就会被打进 `dist/`，
+而「库里绝不含 `new Function`」是硬性约束，有冒烟断言守着）。往 `src/` 里加东西之前先问一句
+「宿主是不是也该有」，**答案是否，就该留在 `playground/`**。
 
 ## 常用命令
 
@@ -69,13 +81,34 @@ pnpm preview      # 预览构建产物
 
 「选中哪个模型」放进配置的代价是：在列表里点一下就算一次场景改动，历史里多出一串噪声。
 
-组件分层：`SceneViewer`（对外主组件）→ `SceneContent`（`TresCanvas` 内部，组装各 `Scene*` + 相机 + 控制器 + 物体级变换与拾取）→ 其余 `Scene*.vue`。
+组件分层（**三层都在 `src/` 内部，公开面仍然只有一份**）：
 
-`SceneViewer` **只有一个组件，不拆壳**：「预览还是编辑」由它的 `editable` 一个 prop 决定，
-规则是 `生效值 = 分开关 ?? editable ?? 旧默认`（`src/utils/sceneSwitches.ts` 是这条规则的唯一实现，
-并从 `index.ts` 导出）。`editable` / `toolbar` / `pickable` / `selection` / `gizmo` 五个 prop 一律
-`withDefaults` 成 `undefined`——**缺失的布尔 prop 会被 Vue 转成 `false`**，不给 `undefined` 就等于
-把宿主全部推进只读模式，且不报错。见 DESIGN.md 设计决定 46，动这几个 prop 之前先读它。
+```
+SceneCanvas.vue  由合并后的 SceneViewer.vue 改名而来，收窄成**内部签名**：8 个 prop /
+                 12 个 emits / 5 个方法。编辑器与纯画布共用，宿主永远碰不到——公开面上
+                 那几组「场景长什么样」的 prop 桥（`background` / `wireframe` / 分组配置…）
+                 全删了，它们本来就住在 `store.config` 里；这里只留能决定画布本身的那些
+                 与编辑器自己的手感偏好（`toolbar` / `gizmoMode` / `cameraTransition`）
+     ↑
+SceneEditor.vue  三栏工作台 = SidePanel | EditorStage | InspectorPanel + 事件绑定弹窗
+     ↑
+SceneViewer.vue  公开面：七个 prop（editable / height / autoRotate / draco / initialScene / sideTabs / inspectorTabs）
+```
+
+`SceneCanvas` 里面才是 `SceneContent`（`TresCanvas` 内部，组装各 `Scene*` + 相机 + 控制器 +
+物体级变换与拾取）与其余 `Scene*.vue`。
+
+`SceneViewer` **只有一个公开组件，不拆壳**：「预览还是编辑」由它的 `editable` 一个 prop 决定，
+`editable` 为真时渲染整个编辑器（三栏），**顶栏留给宿主**。三级规则
+`生效值 = 分开关 ?? editable ?? 旧默认`（`src/utils/sceneSwitches.ts` 是这条规则的唯一实现，
+并从 `index.ts` 导出）**没有变**，只是它的输入面从公开 prop 挪进了内部签名——编辑器给
+`SceneCanvas` 喂的就是 `:toolbar="false"` 配一档 `editable`（自绘界面，所以内置工具栏让位）。
+
+**五个布尔 prop（`editable` / `toolbar` / `pickable` / `selection` / `gizmo`）一律 `withDefaults`
+成 `undefined`**——**缺失的布尔 prop 会被 Vue 转成 `false`**，不给 `undefined` 就等于把那一档钉死
+在关闭上，且不报错。这五处现在全在 `src/components/SceneCanvas.vue` 的 props 里（公开面上只剩
+`editable` 一个布尔）。见 DESIGN.md 设计决定 46 与 47，动这几处之前先读它们。
+`gizmoMode` 同样收进了内部签名：手柄模式是编辑器的手感偏好，公开面上没有它的位置。
 
 `SceneViewer` 的对外面有两层：**props / emits**（声明式，「场景长什么样」）与
 **`defineExpose` 出来的 5 个方法**（命令式，「此刻画布上是什么情况」：`captureCamera` / `measureModel` /
@@ -84,17 +117,38 @@ pnpm preview      # 预览构建产物
 「取一份数据交给宿主」走 `defineExpose`（库只产出，不做策略）。
 两层的名字都不带策略含义：叫 `getSceneData` 而不是 `saveScene`，因为**组件本身并不保存**。
 
-编辑器（`playground/`）**自己不落盘**：`⌘S` 与顶栏「保存」走的就是 `getSceneData()` 这条公开面，
-取完只打一条日志；页面初始化也不再读任何草稿，场景从哪来由宿主决定。
+**宿主还能往左右栏各加一页自己的东西**：两个 prop `sideTabs` / `inspectorTabs`（类型
+`EditorPanelTab`）声明页的名字 / 图标 / 顺序，正文走具名插槽 `#side-tab-<key>` /
+`#inspector-tab-<key>`。**声明与内容分开是刻意的**（名字是数据、正文是模板），插槽要透传两层，
+前缀常量与 `panelSlotNames` 的唯一实现在 `src/editor/utils/panelSlots.ts`。见设计决定 48。
 
-### `playground/`（开发面）
+**组件自己不落盘**：编辑器的 `⌘S` 与顶栏「保存」走的就是 `getSceneData()` 这条公开面，
+取完只打一条日志；页面初始化也不读任何草稿，场景从哪来由宿主决定。
+那条「保存」留在 `playground/`（`useConfigIO.ts`），它读的就是公开的 `getSceneData()`。
 
-`App.vue` 是外壳（顶栏 + 三栏工作台）。`composables/` 放编辑器状态，`components/side/` 是左栏（图标导轨 + 模型库宫格），
-`components/inspector/` 是右栏属性面板，`styles/editor.scss` 是编辑器唯一的样式面。
+### `src/editor/`（编辑器）
+
+`components/side/` 是左栏（图标导轨 + 模型库宫格），`components/inspector/` 是右栏属性面板，
+`components/EditorStage.vue` 是中栏（它渲染 `SceneCanvas` 并喂给它编辑器自己的值），
+`composables/` 放编辑器状态，`styles/_editor.scss` 是编辑器唯一的样式面（在 `src/styles/index.scss`
+里被 `@use`，产物流进 `dist/style.css`）。
 
 **属性面板是 schema 驱动的**：7 个 tab 的字段全部声明在 `composables/useInspectorSchema.ts` 里，
 控件层不认识 store、schema 层不写 DOM。新增一个配置项 = 加一行声明。条件显隐分三层：
 字段级 `when`（不渲染）、字段级 `dim`（渲染但灰显）、分区级 `when`（整节连标题一起不渲染）。
+宿主追加的页不走 schema（它们是整页正文），见上面「宿主还能往左右栏各加一页」那一段。
+
+### `playground/`（宿主示例）
+
+**现在只剩两件事**：`App.vue`（宿主外壳：`AppHeader` + 一个 `<SceneViewer editable height="100%">`
++ 两页自己的面板）与那两件库碰不得的东西（`useConfigIO.ts` 保存、`useEventRunner.ts` 执行代码）。
+`main.ts` 挂载应用并引样式，`styles/base.scss` 是**宿主页面**的底座（`html` / `body` / `#app`
+与 `.pg-panel` —— 宿主自己那两页的样式），`utils/` 是宿主自己的图标与模型清单。
+
+**它同时是库诚实的一份用法示例**：公开面在这里被完整地用了一遍（一个 `editable` 决定形态、
+两个 prop 声明面板页、`getSceneData()` 取数据落盘），没有一处走后门 import 内部模块。
+**往 `src/` 里加东西之前，先想一遍 `App.vue` 会不会变复杂**——它变复杂通常说明那件东西该留在
+host 这一层。
 
 ## 硬性约束（违反后多半不报错）
 
@@ -108,19 +162,23 @@ pnpm preview      # 预览构建产物
 5. `dist/style.css` 是单文件（`cssCodeSplit: false` + `assetFileNames: 'style.css'`），
    `package.json` 的 `sideEffects` 只列 `**/*.css`。
 6. **`.env` 的键名是 `VITE_ASSE_IMAGE_URL`（`ASSE` 少一个 R，历史遗留）**，改它要同时改四处：
-   `.env`、`env.d.ts`、`vite.config.ts`、`playground/composables/useModelLibrary.ts`。
+   `.env`、`env.d.ts`、`vite.config.ts`、`src/editor/composables/useModelLibrary.ts`。
    另外 `vite.config.ts` 里的 `ASSET_PROXY_PREFIX`（`/3d-assets`）必须与 `useModelLibrary.ts` 的
    `DEV_ASSET_PREFIX` 一致——只改一边的表现是列表里的地址代理不到，清一色加载失败。
    那台服务器不发 CORS 头而 `GLTFLoader` 走 `fetch`，所以必须靠这个同源代理。
 7. `.gitignore` 只排除 `.env.local` / `.env.*.local`，**不排除 `.env` 本身**。
-8. **`playground/styles/editor.scss` 里有一处靠源码顺序决胜负的地方**：`.tdm-view-btn` 与 `.tdm-draw-btn`
+8. **`src/styles/_editor.scss` 里有一处靠源码顺序决胜负的地方**：`.tdm-view-btn` 与 `.tdm-draw-btn`
    先并入三选择器组（`min-width: 40px`），之后各自再单独收窄（34px / 30px）。特异性同为 (0,1,0)，
    所以是**后面的赢**。重排或拆分这几条会静默改变按钮宽度。
    要拆成 partial，先把这类顺序依赖改成靠特异性表达（`.tdm-stage--preview` 那处就是范例：
    它写成两个类 `.tdm-stage.tdm-stage--preview`，DESIGN.md 里记着为什么）。
+   （这份样式原先叫 `playground/styles/editor.scss`，编辑器搬进 `src/` 时整个搬了过来；
+   搬的时候组内相对次序一个字没动。）
 9. **不要嵌套 `@media`**。它们全部排在文件末尾、靠「排在后面」取胜，而 SCSS 会把嵌套的 `@media`
    提升到父规则的位置、也就是大幅前移；另外 `prefers-reduced-motion` 那条跨 10 个父选择器、
    `1100px` 那条跨 3 个，结构上根本嵌不进单一父规则。
+   **`@use` 的先后就是产物里规则的先后**（`src/styles/index.scss`），所以 `_editor.scss` 必须排在
+   `_canvas.scss` 之后——插到前面会让那一堆靠顺序取胜的规则整片失效。
 
 ## 验证到哪一步（不要补的测试）
 
@@ -137,6 +195,9 @@ pnpm preview      # 预览构建产物
   `renderToString` 只产出 HTML 字符串，**拿不到组件实例**，`ref` 上没有 `.value`，
   所以返回值语义（什么时候给 `null`、`loadSceneData` 会不会清空撤销栈）**一行断言都写不出来**。
   往里加方法时必须同时补一条目视清单条目。
+- **宿主面板页的正文**：那一页点开才渲染，而 SSR 里点不了。能断言的只有「那一格进了导轨」
+  （`aria-label` 在不在、分隔线在不在）；正文到不到得了、点回内置页会不会留下空白，
+  全归目视清单 147-151。
 
 这些的唯一防线是 DESIGN.md 末尾「验证覆盖到哪一步」里的**目视清单**，配合 `pnpm dev`。
 推翻了某条断言时，要同时更新 DESIGN.md 里对应的说明。
@@ -145,8 +206,8 @@ pnpm preview      # 预览构建产物
 
 | 文件 | 读者 | 内容 |
 |---|---|---|
-| `README.md` | 用这个库的宿主 | 安装、注册插件、`SceneViewer` 的 props / emits、配置分组、`useSceneStore`、**对外方法**、导出清单 |
-| `DESIGN.md` | 改这个仓库的人 | 编辑器的设计、**46 条编号设计决定**、146 条**目视清单**、目录结构、发布流程、待办 |
+| `README.md` | 用这个库的宿主 | 安装、注册插件、`editable` 两种形态、`SceneViewer` 的 props / emits、扩展左右栏 tab、配置分组、`useSceneStore`、**对外方法**、导出清单 |
+| `DESIGN.md` | 改这个仓库的人 | 编辑器的设计、**49 条编号设计决定**、152 条**目视清单**、目录结构、发布流程、待办 |
 
 `README.md` 是一份**面向宿主的用法手册**，只有四类内容：怎么装进来、怎么用组件、
 API 是什么（签名 / 默认值 / 字段含义 / 用法规则）、以及宿主不照做就会出错的那几条警告。

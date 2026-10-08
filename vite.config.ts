@@ -7,7 +7,7 @@ import dts from 'vite-plugin-dts'
 /**
  * 开发期给远程模型资源起的同源前缀。
  *
- * **必须与 playground/composables/useModelLibrary.ts 里的 DEV_ASSET_PREFIX 一致**：
+ * **必须与 src/editor/composables/useModelLibrary.ts 里的 DEV_ASSET_PREFIX 一致**：
  * 只改一边的话，列表里的地址代理不到，表现是清一色的加载失败。
  */
 const ASSET_PROXY_PREFIX = '/3d-assets'

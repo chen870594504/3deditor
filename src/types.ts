@@ -1,6 +1,8 @@
 import type { Pinia } from 'pinia'
 import type { Object3D } from 'three'
 import type { EditorAssets } from './editor/assets'
+import type { EditorHooks } from './editor/hooks'
+import type { IconPath } from './editor/composables/useInspectorSchema'
 
 /**
  * 天空盒的六个面。
@@ -640,179 +642,208 @@ export interface ThreeDMakerOptions {
    * 素材从哪来是宿主的事，见 `EditorAssets`。
    */
   assets?: EditorAssets
+
+  /**
+   * 编辑器需要回调宿主的那几件事，走 `provide` 发给整棵树。
+   *
+   * 今天只有一项：`runEventCode`——执行模型事件绑定里的那段代码。库**自己不执行**
+   * 任何配置里的 `code`（那需要 `new Function`，而 `dist/index.js` 里不许出现它，
+   * 冒烟测试钉着这一条），所以「跑不跑」由宿主决定。不传就是不跑。
+   *
+   * 与 `assets` 写在同一条理由上：宿主只写一次，页面上挂几个 `SceneViewer` 共用。
+   * 完整说明见 `EditorHooks`。
+   */
+  hooks?: EditorHooks
 }
 
-/** SceneViewer 组件属性 */
-export interface SceneViewerProps {
+/**
+ * 宿主往左右栏里追加的一个面板页。
+ *
+ * **只有「有哪些页」这部分是数据**，页里画什么由具名插槽给，不在这个类型里：
+ *
+ *     const SIDE_TABS = [{ key: 'device', label: '设备' }]
+ *
+ *     <SceneViewer editable :side-tabs="SIDE_TABS">
+ *       <template #side-tab-device>…我自己的面板…</template>
+ *     </SceneViewer>
+ *
+ * ## 为什么声明与内容分成两处
+ *
+ * 页名 / 图标 / 顺序**库要拿去画导轨**，所以必须是能读的数据；而内容是宿主自己的
+ * 模板。塞进同一个 prop 就得传组件对象或渲染函数——那在 `<script setup>` 里别扭，
+ * 还会让「有哪些页」散在 setup 里、摆不到模板上。
+ *
+ * 这与仓库已有的扩展模式同源：左栏的追加分类（`SidePanel` 的 `extraSections`）
+ * 也是「一份声明 + 按 key 的插槽」这么分的。
+ *
+ * ## 插槽名就是 `key` 拼出来的
+ *
+ * 左栏 `#side-tab-<key>`、右栏 `#inspector-tab-<key>`。没有任何一个 key 会被特殊对待，
+ * 也不存在「库保留的 key」——宿主自己取的名字自己用。
+ *
+ * `key` 是**两个面板各自**的唯一标识，两边的命名空间不互通（左栏叫 `device` 与
+ * 右栏叫 `device` 互不影响）。它与内置分类的 key（`floor` / `wall` / `door` /
+ * `window` / `skybox`）撞名时**宿主这一支优先**，那个分类会点不到——
+ * 撞名在开发模式下会由 Vue 报一条重复 key 的警告，不必等用户来发现。
+ */
+export interface EditorPanelTab {
   /**
-   * glTF / GLB 模型地址；不传时场景里没有任何模型（默认就是空场景）。
+   * 唯一键。插槽名按它拼：左栏 `#side-tab-<key>`、右栏 `#inspector-tab-<key>`。
    *
-   * 也可以直接传一整个模型分组，用来一次配置模型本身与它的摆放状态：
-   *
-   * ```vue
-   * <SceneViewer :model="{ url: '/chair.glb', position: [0, 1, 0], scale: [2, 2, 2] }" />
-   * ```
-   *
-   * 传内联对象字面量时每次父组件渲染都会重新同步一次，从而覆盖用户在编辑器里的改动；
-   * 建议传 setup 里的常量或 computed。
-   *
-   * 这个 prop 是**单模型**时代的入口，语义是「当前那一个模型」：它写入的是
-   * store 里被选中的那个条目，选中项不存在（空场景）时追加一个新的。
-   * 场景里要同时摆多个模型请直接用 store 的 `addModel` / `patchModel`——
-   * 用一个 prop 描述一张列表，就得再定义「谁被选中」，那是界面的事，不该进 props。
+   * 它同时是「当前停在哪一页」的标识，所以**改了 key 就等于换了一页**：
+   * 宿主中途把某个 key 撤掉，左栏/右栏会自己落回内置的第一页，不会停在空白上。
    */
-  model?: string | DeepPartial<ModelConfig>
+  key: string
 
-  /** 画布背景色，传 'transparent' 可透出宿主页面背景 */
-  background?: string
+  /** 导轨上的名字。**同时是 `aria-label` 与悬停提示**，导轨上没有常显文字 */
+  label: string
 
-  /** 环境贴图预设；不设置时仅使用内置灯光 */
-  environment?: EnvironmentPreset
+  /**
+   * 导轨图标。
+   *
+   * 形状与内置那套同约定：画在 24 格里、只用描边、只吃 `currentColor` ——
+   * 于是深色 / 浅色主题下都跟着文字色走，宿主不必关心配色。
+   * 描边粗细与端点由 CSS 给（`.tdm-rail-icon`），这里只写路径。
+   *
+   * **不写退回一个立方体占位字形**（看得见、知道该点哪里），
+   * 而不是留一格空白。
+   */
+  icon?: IconPath[]
+}
 
+/**
+ * SceneViewer 组件属性。
+ *
+ * **只有七个，全部与「能力」有关**。画布长什么样（背景色、环境贴图、线框、
+ * 地面网格、相机与户型图那几组配置）一概不在这里：那些值本来就住在
+ * `useSceneStore().config` 里，让它们再从 prop 绕一遍等于同一个事实有两个来源，
+ * 还得再定义「谁优先」——而 `watch` 桥那套写法连「谁最后落笔」都要靠注册顺序。
+ * 想改场景外观就写 store（`applyConfig` / `patchModel`），那本来也是编辑器自己走的路。
+ *
+ * 同理，「编辑模式里默认就该开着的东西」不再逐个摆开关：`editable` 一处管一整组
+ * （内置工具栏让位给编辑器自绘的界面、点选 / 包围框 / 手柄全开），规则与每条排法的
+ * 理由在 `utils/sceneSwitches.ts`，那里是唯一实现。
+ *
+ * 也不再收 `model`：单模型入口是「一行 GLB」时代的形状，而多模型只是同一个
+ * prop 的第一层裂缝。加模型请走 `useSceneStore().addModel(url, patch)`——
+ * 它有 `draco` 之类的选项，也顺带回答了「加进去的那个算不算选中」。
+ * 「拿一份存好的场景 JSON 把场景渲染出来」这件事由 {@link SceneViewerProps.initialScene} 承接，
+ * 那是**整份配置**的入口，与「一个 GLB」是两件事。
+ */
+export interface SceneViewerProps {
   /** 画布高度，数字按 px 处理，默认 '480px' */
   height?: string | number
 
   /**
-   * 编辑模式总闸：一处开关管一整组，不传时与加它之前的行为逐字一致。
+   * 编辑模式总闸：**`true` 时渲染整个三栏工作台**（左栏 ｜ 画布 ｜ 右栏），
+   * 其余两种取值都只渲染画布。顶栏不在这里——场景名、保存、预览是策略，属于宿主。
    *
-   * 它**不新增任何能力**，只改下面那四个开关（`toolbar` / `pickable` /
-   * `selection` / `gizmo`）的默认值。生效规则是三级：
+   * - `true` —— **编辑**：左栏挑料、中栏画布（点选 / 包围框 / 手柄全开）、右栏改属性，
+   *   附带事件绑定弹窗与户型图绘制工具。内置工具栏让位给编辑器自绘的界面。
+   * - `false` —— **预览**：只有画布，四个开关一律关掉。只想让人转着看时写它，
+   *   就不必再记着关哪几个（漏关一个不报错，画面上只是多出一截本不该有的东西）。
+   * - **不传** —— 只有画布，走旧默认（内置工具栏开、其余三个关）。这一支存在的
+   *   唯一理由是**兼容**：`editable` 出现之前 `<SceneViewer />` 就是这个样子。
    *
-   *     生效值 = 分开关 ?? editable ?? 旧默认
+   * 两个扩展 prop（`sideTabs` / `inspectorTabs`）只在编辑形态下有落点：
+   * 画布形态没有面板，传了也不会渲染（不报错）。
    *
-   * - `false` —— **预览**：四个一律关掉。只想让人转着看时写它，就不必再记着关哪几个
-   *   （漏关一个不报错，画面上只是多出一截本不该有的东西）。
-   * - `true` —— **编辑**：四个一律打开。宿主想自己画工具栏，再补一个
-   *   `:toolbar="false"` 即可——分开关优先于总闸。
-   * - **不传** —— 完全按四个分开关各自的值来，也就是旧行为。
+   * 其余 prop（`height` / `autoRotate` / `draco`）在哪种形态下都照常生效。
    *
-   * 三级规则与每条排法的理由在 `utils/sceneSwitches.ts` 里，那里也是唯一的实现。
+   * 三栏工作台要求宿主给一个有高度的容器：组件根默认高 `480px`，铺满外层就写
+   * `height="100%"`。
    */
   editable?: boolean
-
-  /**
-   * 是否显示内置工具栏，默认 true。
-   *
-   * 未显式传时先看 `editable`（`false` 会把它一并关掉），两个都没给才是上面那个默认值。
-   */
-  toolbar?: boolean
 
   /** 是否自动旋转视角，默认 false */
   autoRotate?: boolean
 
-  /** 是否以线框模式渲染，默认 false */
-  wireframe?: boolean
-
-  /** 是否显示地面网格，默认 true */
-  showGrid?: boolean
-
-  /** 模型是否为 Draco 压缩格式，默认 false */
+  /**
+   * 模型是否为 Draco 压缩格式，默认 false。
+   *
+   * **只在「加模型」那一下有意义**：它写进的是**当前选中项**的 `draco` 标记，
+   * 而读它的是加载那一步（`GLTFLoader` 挂不挂 DRACOLoader）。场景空着时
+   * 没有选中项，这个 prop 会静静地什么都不做——要精确控制请用
+   * `addModel(url, { draco: true })`。
+   */
   draco?: boolean
 
   /**
-   * 是否允许在画布上点选模型，默认 **false**。
+   * 挂载时装载的一份场景数据，**只装一次**。
    *
-   * 打开后，在画布上单击会命中指针底下那个模型并派发 `modelPick`，
-   * 宿主据此把选中项切过去。判定「单击」的规则与物体事件完全一样
-   * （按下与抬起之间位移不超过几个像素、且间隔很短），所以拖动旋转视角不会误选中。
+   *     <SceneViewer :initial-scene="savedConfig" />
    *
-   * 与 `events` 是**两条互不相干**的通道，代价也不叠加：
+   * 入参与 `loadSceneData()` 同一口径（`DeepPartial`）：只写要覆盖的分组，其余
+   * 保持当前值。内部走同一条实现——先 `migrateConfig`（旧版写单个 `model` 对象的
+   * 配置也能直接喂进来），再深合并，最后**清空撤销栈**（装载是「初始化」，
+   * 换了一个场景之后还能 ⌘Z 退回上一个通常不是想要的）。
    *
-   * - `events` 是**物体级**的：挂上监听器之后，那个模型的整棵子树在指针移动时
-   *   每帧都要被 raycast（这也正是它默认全关的原因）；
-   * - `pickable` 是**画布级**的：只多两个 DOM 监听器（pointerdown / pointerup），
-   *   射线只在真的抬起指针那一刻走一次，静止时一切开销为零。
+   * ## 「一次」到底是什么意思
    *
-   * 所以它不会让任何模型每帧被 raycast，也不需要模型自己开任何事件。
-   * 点空白处（地面、背景）不会有任何事件——`modelPick` 只在真的点中模型时发出。
+   * 只在**第一次拿到非空值**时应用。之后宿主再怎么改这个 prop 都不生效——场景归
+   * store 管了：用户在画布上拖一个模型，改的是 store，**不会**影响宿主手里那份对象
+   * （载入是深拷贝）。所以数据可以晚到（先渲染 `:initial-scene="null"`、拉到再赋值）。
    *
-   * 未显式传时先看 `editable`（`true` 会把它一并打开），两个都没给才是上面的默认值。
+   * 这**不是**受控绑定，理由不是风格问题：编辑态下组件每帧把新值写回 store，
+   * 而受控绑定要求父组件拿着真值回传——拖拽逐帧 emit 一整份 `SceneConfig` 不可行，
+   * 不做回传则父组件随便一次重渲染就把场景打回原形。要「持续同步」请自己在数据
+   * 到位后调 `applyConfig()`，那条路有明确的历史语义。
+   *
+   * ⚠️ **与 `autoRotate` / `draco` 同时传时，以本 prop 为准。** 它排在两条
+   * prop → store 桥之后落笔，而那两个值（`camera.autoRotate`、逐模型的 `draco`）
+   * **整份场景里本来就带着**——那两个 prop 是给「从空场景起步」的宿主准备的。
    */
-  pickable?: boolean
+  initialScene?: DeepPartial<SceneConfig>
 
   /**
-   * 选中的模型是否在画布上画一圈包围框，默认 **false**。
+   * 往**左栏**导轨末尾追加的页，内容走 `#side-tab-<key>` 插槽。
    *
-   * 与 `pickable` 是**输入与输出**两条独立通道：`pickable` 管「点谁能选中」，
-   * 这一个管「选中了看得见吗」。两者互不依赖，各自都能单独打开。
+   * 排在模型库那几个分类**之后**，与它们之间有一条分隔线（宿主追加的分类也一样，
+   * 于是三组「内置分类 ｜ 追加分类 ｜ 宿主页」在导轨上读得出来）。
+   * 顺序就是数组顺序。不传则左栏与没有这个 prop 时一模一样。
    *
-   * 选中的是 store 里的 `selectedIndex`（那是界面状态，不进配置、不进历史）。
-   * 模型被隐藏（`visible` 为 false）时不画——否则会出现「拖着一个看不见的东西」
-   * 这种既没反馈又难解释的状态。
-   *
-   * 代价：只对**选中的那一个**模型每帧做一次世界包围盒计算
-   * （遍历它的网格，不做逐顶点迭代），与 `events` 那种「整棵子树每帧被 raycast」
-   * 不是一回事。
-   *
-   * 未显式传时先看 `editable`（`true` 会把它一并打开），两个都没给才是上面的默认值。
+   * 点开后**整个左栏正文换成宿主的内容**——这一页与「模型库」是并列的两页，
+   * 不是插在宫格里的一个区块。要往宫格里加东西请走追加分类那条路
+   * （`createThreeDMaker({ assets })` 的 `sections`），两条路管的是两件事。
    */
-  selection?: boolean
+  sideTabs?: EditorPanelTab[]
 
   /**
-   * 是否显示 X/Y/Z 变换手柄，默认 **false**。拖手柄直接改选中模型的变换。
+   * 往**右栏**导轨末尾追加的页，内容走 `#inspector-tab-<key>` 插槽。
    *
-   * 拖拽过程中每帧写回 store（面板数字实时跟着跳，整段拖拽由 store 的防抖
-   * 合并成**一条**历史记录），并派发 `modelTransform`；松手且确实变了再派发
-   * `modelTransformEnd`。**宿主一行代码都不写也能用**。
-   *
-   * 不需要模型开任何 `events`，也不会让模型每帧被 raycast：手柄自己的射线检测
-   * 只打在它那几个轴网格上。
-   *
-   * 拖动期间会临时把轨道控制禁用（相机的 `enable` 由 cientos 的 TransformControls
-   * 处理），所以转视角与拖手柄不会互相打架。
-   *
-   * 未显式传时先看 `editable`（`true` 会把它一并打开），两个都没给才是上面的默认值。
+   * 与 `sideTabs` 同一条路数，只是排在那七个内置页之后。右栏比左栏窄（306px），
+   * 宿主页的正文要自己管好横向溢出。
    */
-  gizmo?: boolean
+  inspectorTabs?: EditorPanelTab[]
+}
 
-  /** 手柄模式：平移 / 旋转 / 缩放，默认 `'translate'`。模式是界面状态，不进配置 */
-  gizmoMode?: TransformMode
-
-  /**
-   * 机位过渡时长（毫秒），默认 **0 = 瞬移**（要滑过去就写 450 之类）。
-   *
-   * 打开之后，`camera.position` / `camera.target` 的任何改动都是**滑**过去的：
-   * 球坐标插值（半径 / 极角 / 方位角），两端缓入缓出，中途被用户操作打断时
-   * 直接落到终点。宿主写配置、撤销、套预设、面板里改数值走的是同一条路。
-   *
-   * 整条路径都夹在 `min` / `maxDistance` 与 `min` / `maxPolarAngle` 之内（两端先夹进
-   * 区间，插值出来就都在区间里），所以飞行途中约束不会把路径拧变形。
-   *
-   * **它只是动画，不改变「谁说了算」**：配置在写入的那一刻就是终点，相机在后面追。
-   * 于是面板读数、按钮高亮、历史记录立刻是终点的样子，不必等画面追上。
-   *
-   * 两条不做动画的情况：起点与终点在 1mm 以内（所以用户拖动视角松手后的自动回写
-   * 不会莫名其妙滑一下），以及用户自己开了「减少动效」。
-   */
-  cameraTransition?: number
-
-  /** 相机配置，只需写出要覆盖的字段 */
-  camera?: DeepPartial<CameraConfig>
-
-  /**
-   * 户型图配置：地基 / 墙 / 门窗 / 房间。
-   *
-   * 与其余分组配置同一条约定——只写要覆盖的字段，走深合并。
-   * 但比它们多一条**必须注意**的事：`walls` / `openings` / `rooms` 是数组，
-   * 而深合并对数组是**整体替换**（见 {@link DeepPartial}），
-   * 补丁里的数组会被**按引用**装进配置。传内联数组字面量没问题，
-   * 传你自己那个 reactive / 复用的数组则会留下一条隐式通道：
-   * 之后就地改它一下就是静默改场景，历史栈里查无此事。
-   *
-   * 库**在这一条通道上自己会克隆**（`SceneViewer` 里那个分组桥过了一遍
-   * `cloneFloorplanPatch`），所以经这个 prop 进来是安全的；需要自己克隆的是
-   * **直接调 store 的 `applyConfig`** 那条路，那里没有这层保护。
-   */
-  floorplan?: DeepPartial<FloorplanConfig>
-
-  /** 地面配置，只需写出要覆盖的字段 */
-  ground?: DeepPartial<GroundConfig>
-
-  /** 日照环境配置，只需写出要覆盖的字段 */
-  sun?: DeepPartial<SunConfig>
-
-  /** 阴影配置，只需写出要覆盖的字段 */
-  shadow?: DeepPartial<ShadowConfig>
+/**
+ * `SceneViewer` 用 `defineExpose` 交出去的那 5 个方法。
+ *
+ * 单独写成一个类型，是因为**同一条签名要走四层**：宿主持模板引用调它、`SceneViewer`
+ * 转给 `SceneEditor`（编辑态）或 `SceneCanvas`（画布态），而 `SceneEditor` 下面还隔着
+ * `EditorStage` 一层。四份逐字抄一遍的话，改一处返回值（比如「什么时候给 `null`」）
+ * 另外三处不会报错，只会在某个形态下悄悄给出不同的结果。
+ *
+ * 「方法」与「props / emits」是两条不同的路：props / emits 是声明式的「场景长什么样」，
+ * 这一个层是命令式的「此刻画布上是什么情况」。库只产出数据，不做策略——
+ * 叫 `getSceneData` 而不是 `saveScene`，因为组件本身并不保存。
+ *
+ * 几条返回值语义要背下来（它们没有自动化防线，见 DESIGN.md 目视清单）：
+ * 前四条要隔着挂载好的画布问，画布没就绪时一律退化成「现在拿不到」（`false` / `null`）；
+ * `getSceneData` 是例外，它只读 store，**承诺不返回 `null`**。
+ */
+export interface SceneViewerApi {
+  /** 抓取当前机位并写回配置，返回是否抓到了（自动旋转开着时相机一直在动，只能主动取） */
+  captureCamera: () => boolean
+  /** 量一个模型的世界包围盒，量不了时返回 `null` */
+  measureModel: (id: string) => ModelBounds | null
+  /** 屏幕坐标 → 地面 `[x, z]`，落不到地面上（相机没就绪、画布没尺寸、视线与地面平行）时返回 `null` */
+  groundPointAt: (clientX: number, clientY: number) => [number, number] | null
+  /** 取当前场景配置的深拷贝，可直接 JSON 序列化 */
+  getSceneData: () => SceneConfig
+  /** 用一份场景数据初始化场景（内部走 `migrateConfig` 并清空撤销栈），返回是否用上了 */
+  loadSceneData: (data: DeepPartial<SceneConfig>) => boolean
 }
 
 /** 相机位置变更载荷，由用户拖动视图后回传 */

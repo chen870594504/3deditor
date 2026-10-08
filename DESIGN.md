@@ -1,6 +1,6 @@
 # 设计决定与验证清单
 
-这个文件是 `3deditor` 仓库的**内部文档**：编辑器的设计、46 条编号设计决定、验收用的目视清单，
+这个文件是 `3deditor` 仓库的**内部文档**：编辑器的设计、49 条编号设计决定、验收用的目视清单，
 以及仓库目录结构与发布流程。给宿主看的用法在 [README.md](README.md) 里，两者刻意分开——
 README 回答「怎么用这个库」，这里回答「为什么这么写、改了要重新验什么」。
 
@@ -17,10 +17,12 @@ README 回答「怎么用这个库」，这里回答「为什么这么写、改�
 
 ## 编辑器
 
-`playground/` 不只是一个调试页，它是插件的第一个消费者——整个编辑器只通过 [README](README.md) 里那套公开接口工作，
-`src/` 里没有任何一处为它开过后门。
+编辑器分两半住：**能力在 `src/editor/`**（`editable` 为真时 `SceneViewer` 渲染的就是它），
+**外壳在 `playground/`**（顶栏 `AppHeader.vue` —— 场景名、保存、预览全是策略）。
+这仍然是那条铁律的作用：编辑器本身通用，所以它进了库；顶栏不通用，所以它留下了。
+宿主外壳只通过 [README](README.md) 里那套公开接口工作，`src/` 里没有任何一处为它开过后门。
 
-界面分三部分：
+界面分三部分（下图里的**顶栏那一行是宿主的**，三栏是库的）：
 
 ```
 ┌ ◆ 3DMAKER ── 场景名 · 保存状态点 ─────── 导入 导出 │ 撤销 重做 │ 预览 保存 ┐
@@ -1162,21 +1164,101 @@ skybox/bak38/{back,down,front,left,right,top}.jpg
 
 三级各排在这儿都有具体理由，不是随手定的：
 
-- **分开关优先于总闸**：「编辑模式，但不要那条内置工具栏」是真需求——`playground/components/SceneStage.vue` 就是这么用的（它自绘工具栏，所以 `:toolbar="false"` 配 `:editable="!previewMode"`）。总闸盖过分开关，这种组合就没法表达了。
+- **分开关优先于总闸**：「编辑模式，但不要那条内置工具栏」是真需求——编辑器正是这么用的（它自绘三栏界面，所以给 `SceneCanvas` 喂 `:toolbar="false"`，同时 `pickable` / `selection` / `gizmo` 三个分开关跟着 `editable` 走）。总闸盖过分开关，这种组合就没法表达了。
 - **旧默认垫底**：`DEFAULT_SCENE_SWITCHES`（工具栏开、三个交互开关关）是**所有已发布宿主**的默认表现。垫在最底下，`<SceneViewer />` 一个开关都不传时的行为与加总闸之前**逐字一致**——这是「加一个 prop 不会悄悄改掉别人的页面」的唯一保证，所以那个常量被冻结、并且冒烟测试逐字段比它。
 
 几处**错了不报错**的地方记在这里：
 
 - **五个开关的 `withDefaults` 必须显式写 `undefined`。** Vue 对声明为布尔的 prop 有一条特例：**缺失且没有 default 时把值转成 `false`**（不是 `undefined`）。漏掉 `undefined` 的后果分两种，都不报错：
-  - `toolbar` / `pickable` / `selection` / `gizmo` 漏了：分开关恒有值，总闸永远轮不到，`:editable="true"` 成一句空话；
-  - `editable` 漏了：它默认变 `false`，**所有宿主一夜之间进入只读模式**——工具栏消失、点不中、手柄不出来。
-  写 `default: undefined` 是关掉那条特例的办法（`hasDefault` 为真即跳过转换），产物里能查到 `editable: { type: Boolean, default: void 0 }`。冒烟里「一个开关都不传仍然有内置工具栏」那一条守的就是它。
-- **为什么是「默认值提供者」而不是「模式开关」**：若 `editable: true` 一律**强制**打开四个开关，`SceneStage.vue` 那种「编辑 + 自绘工具栏」就表达不出来；若把默认值定成 `false`，就是上面那条灾难；定成 `true` 则会给所有不传它的宿主凭空加出手柄来。三态（不传 / `true` / `false`）是唯一既能表达全部组合、又不动已发布宿主行为的形状。
+  - `toolbar` / `pickable` / `selection` / `gizmo` 漏了：分开关恒有值，总闸永远轮不到，`editable` 成一句空话；
+  - `editable` 漏了：它默认变 `false`，**那四个开关全关**——工具栏消失、点不中、手柄不出来。
+  写 `default: undefined` 是关掉那条特例的办法（`hasDefault` 为真即跳过转换），产物里能查到 `editable: { type: Boolean, default: void 0 }`。
+  **这五处现在都在内部签名里**（`SceneCanvas` 的 props），公开的 `SceneViewer` 只剩 `editable` 一个布尔。机制一字未变，只是位置从公开面挪进了 `src/components/SceneCanvas.vue`；冒烟里「一个开关都不传仍然有内置工具栏」那一条守的仍然是它。
+- **为什么是「默认值提供者」而不是「模式开关」**：若 `editable: true` 一律**强制**打开四个开关，编辑器那种「编辑 + 自绘界面」就表达不出来；若把默认值定成 `false`，就是上面那条灾难；定成 `true` 则会给所有不传它的宿主凭空加出手柄来。三态（不传 / `true` / `false`）是唯一既能表达全部组合、又不动已发布宿主行为的形状。
 - **为什么不拆成两个组件**：拆过一次（`ScenePreview` / `SceneEditor` 两个薄壳，各自把一组旗标钉死），代价立刻显出来——两套公开面要各自声明全部 prop、各自转发 12 个事件与 5 个方法，**漏一处都是静默失效**；而「钉死」本身还得靠「被固定的旗标仍然必须出现在 `defineProps` 里」这种反直觉的规矩撑着（不声明就会被 `$attrs` 透传下去、顶掉模板里的硬编码值，实测过）。一个 prop 把这些账全免了：公开面只有一份。
+  > 后来真拆出的那两个组件（`SceneCanvas` / `SceneEditor`）守的恰好是另一条线：它们**都在 `src/` 内部**，`SceneViewer` 是唯一入口，公开面仍然只有一份。见设计决定 47。
 - **规则只能有一份实现**：`resolveSceneSwitches` 从 `index.ts` 导出，组件与宿主用的是同一份。宿主自绘工具栏时若自己写一份判断，两处迟早不一致，症状是「按钮亮着可点、画布上却点不中」。
 - **模板里一律读 `switches`，不要直接读 prop。** 直接读 `props.pickable` 不报错，只是总闸整个失效——画面上表现为「传了 `editable` 没反应」。
 
-**它在仓库里有一个常驻消费者**：`playground/components/SceneStage.vue` 的预览态从一个 `!previewMode` 的三连绑定收成了一个 `:editable="!previewMode"`（行为逐字不变，省掉的是「漏写一个 `!previewMode` 就静默失效」那类账），目视清单第 144 条因此有地方能真跑一次。
+**它在仓库里有一个常驻消费者**：`src/editor/components/EditorStage.vue` 给 `SceneCanvas` 喂的就是这一组内部值（`toolbar: false` 配上三档随 `editable` 的 `pickable` / `selection` / `gizmo`），目视清单第 144 条因此有地方能真跑一次。
+
+**47. 公开面收窄成六个 prop，编辑器整个搬进 `src/`，`editable` 为真时渲染三栏**
+
+`SceneViewer` 的公开面从 20 个 prop 砍到六个：`editable` / `height` / `autoRotate` / `draco` / `sideTabs` / `inspectorTabs`（后来补了第七个 `initialScene`，见设计决定 49——那是「整份场景」的入口，与这里砍掉的 `model` 不是一回事）。与此同时，仓库那条「能力进 `src/`，界面留 `playground/`」的铁律被改写成了**「宿主通用的一切进 `src/`」**——编辑器本身也是宿主可能要的东西（谁都能 `app.use(createThreeDMaker())` 之后拿到一个开箱即用的编辑器），所以它整个搬进了库。
+
+**三层结构，但公开面仍然只有一份**（与设计决定 46 里「不拆两个壳」那条不冲突——那一条反对的是拆出两个**公开**组件）：
+
+```
+SceneCanvas.vue   由合并后的 SceneViewer.vue 改名而来，收窄成**内部签名**：
+                  8 个 prop / 12 个 emits / 5 个方法。编辑器与纯画布共用，宿主永远碰不到
+     ↑
+SceneEditor.vue   三栏工作台 = SidePanel | EditorStage | InspectorPanel ＋ 事件绑定弹窗
+                  中栏 EditorStage 内渲染 SceneCanvas，喂给它编辑器自己的值
+     ↑
+SceneViewer.vue   公开面。七个 prop，按 editable 选一种形态渲染
+```
+
+**为什么砍这些 prop**：
+
+- `toolbar` / `pickable` / `selection` / `gizmo` / `gizmoMode` —— 它们是 `editable` 的**子集**。宿主已经用 `editable` 说了「我要编辑」，再让它逐个开四五个开关就是重复表达；漏关一个**不报错**，画面上只是多出一截不该有的东西。
+- `model` / `background` / `environment` / `wireframe` / `showGrid` / `cameraTransition` / 6 个分组 prop —— 它们是「场景长什么样」，不是「能力开关」。这些值本来就住在 `store.config`，prop 只是二道贩子（`watch` 转手写进 store），两层同时给还得定义「谁优先」。
+
+**这里有一条能力回退，是刻意接受的**：`pickable` 一旦绑到 `editable` 上，「**裸画布 + 点选**」这个组合就表达不出来了——想让人在画布上点选，就得进编辑形态（三栏会一起出来）。这是「总闸」的必然代价，也是这次收窄里唯一少掉的东西。要在纯画布页面里接住点选，走 `objectClick`（给模型开 `events.click.enabled`）。
+
+**被删掉的 prop 不会报错，是这次升级最危险的一处**：Vue 对不认识的 prop **静默放行**，值原样落到组件根的 DOM 属性上。`<SceneViewer model="/chair.glb" />` 今天不报错、不警告，渲染出的 HTML 上多一个 `model="/chair.glb"` 属性，而椅子根本不会出现。所以 README 的 props 一节末尾专门留了一张「原来写的 → 现在怎么写」的对照表。
+
+**三栏归属**（本轮定的）：`editable` 为真时 `SceneViewer` 渲染**三栏工作台**（左栏 ｜ 画布 ｜ 右栏），**顶栏留给宿主自绘**。理由是那条铁律的延续——顶栏里全是策略（场景名、保存、预览、导出），三栏里全是能力。`playground/App.vue` 因此瘦成「`AppHeader` + 一个 `height="100%"` 的 `SceneViewer editable`」；`⌘S` 保存也留在宿主（它调的是公开的 `getSceneData()`）。
+
+**样式面一起搬**：`playground/styles/editor.scss`（2438 行）搬成 `src/styles/_editor.scss` 并接进 `index.scss` 的 `@use` 链。搬的时候守硬性约束 8 / 9——靠源码顺序决胜负的那几档 `min-width`、以及末尾那些不可嵌套的 `@media`，组内相对次序一个字不动。产物自检的唯一自动化证据是 `dist/style.css` 里出现三栏类名（`.tdm-rail` / `.tdm-col` 等）。
+
+**48. 宿主的面板用「数据声明 tab ＋ 按 key 的具名插槽」扩展，不用渲染函数**
+
+宿主往左右栏各加一页自己的东西，是库此前缺的能力。给的两个 prop 是 `sideTabs` / `inspectorTabs`，类型 `EditorPanelTab`（`key` / `label` / `icon?`）；内容走具名插槽，名字按 key 拼：`#side-tab-<key>` / `#inspector-tab-<key>`。
+
+**为什么声明与内容分成两处**：tab 名 / 图标 / 顺序是**数据**，库要靠它画导轨；内容才是宿主自己的模板。塞进同一个 prop 就得传组件对象或渲染函数，在 `<script setup>` 里别扭，也让「有哪些页」散在 setup 里而不是摆在模板上。这与仓库已有的扩展模式同源（左栏的 `extraSections` + `#rail` / `#list` 插槽也是这么分的）。
+
+**插槽要透传两层**（`SceneViewer` → `SceneEditor` → 面板）。转发用按前缀挑选而不是「除了 `#scene` 全转发」：
+
+```vue
+<template v-for="name in panelSlotNames($slots, SIDE_TAB_PREFIX)" #[name]="scope">
+  <slot :name="name" v-bind="scope" />
+</template>
+```
+
+前缀常量与 `panelSlotNames` 的唯一实现在 `utils/panelSlots.ts`——**拼错一个连字符不报错**，宿主的面板会一个字都不显示（一个没被提供的插槽是合法的空插槽）。读 `$slots` **必须在渲染期**，放进 `computed` 里读不会建立依赖。
+
+几处刻意的地方：
+
+- **左栏要请回一个刚删掉的联合。** 左栏导轨原先只有一种项（模型库分类），`kind: 'page' | 'section'` 那个判别字段因为「只有一支的联合比一个接口更贵」被收成了接口；宿主页正是**页面级**的，所以它长回来了。选中宿主页时左栏正文整个换成插槽内容（与「模型库」并列，不是插在宫格里），`resolveLibrarySection` 的兜底要绕开它（只认分类），否则「宿主撤掉一页而左栏正停在它上面」会落到不存在的分类。
+- **右栏没有 `#rail` 那种「宿主自己画」的口子。** 左栏那个口子是为**追加分类**开的（分类的条目在宿主手里）；宿主页的名字与图标全在声明里，代画不会更差。
+- **右栏的内置页高亮不能用 `activeTab` 算。** 宿主页亮着时 `activeTab` 还留在上一格上，拿它算会让 `isModelTab` 与 `--split` 类**照旧生效**——宿主页的正文会吃到「模型属性」那一页的上下分栏。所以面板本地另有一个 `hostTabKey`，合成出 `litKey` 之后各处一律读它（与左栏那个 `activePageKey` 完全对称）。
+- **key 与内置分类撞名时以宿主为准**，Vue 开发模式打一条重复 key 警告兜底。左栏那条**编译期的撞名守卫长不回来**（key 是运行时字符串），所以这里只剩那条警告。
+- **库不替宿主保存任何东西**：宿主页里的状态归宿主管，`getSceneData()` 吐出的配置里没有它。
+
+**49. 「拿一份存好的 JSON 把场景填上」走 `initialScene` prop，且只装一次；装载规则下沉到 store**
+
+宿主把后端存的一份 `getSceneData()` 产物渲染出来，从前只有一条路：拿组件 `ref`、在 `onMounted` 里调 `loadSceneData()`。要等挂载、首帧还是空场景，而且是**声明式组件里唯一的命令式缺口**。补上的是第七个 prop：
+
+```vue
+<SceneViewer :initial-scene="savedConfig" />
+```
+
+**为什么不能是受控绑定**（`:scene-data="config"`，或 `v-model`）：
+
+- **编辑态下它根本没法工作。** 组件每帧把新值写回 store（拖模型就是逐帧写），受控绑定要求父组件拿真值回传；不做回传则**父组件随便一次重渲染就把场景打回原形**，做回传则**每帧 emit 一整份 `SceneConfig`**。两条都不可行。
+- 这与砍掉那 16 个 prop 是同一条理由（设计决定 47）：同一个事实两个来源，就得再定义「谁优先」，而 `watch` 桥那套写法连「谁最后落笔」都要靠注册顺序。
+
+所以语义定成**只装一次**，名字里的 `initial` 就是这件事：**第一次拿到非空值**时应用（用 watcher 而不是在 setup 里直接调，是为了让「数据后到」——先 `null`、拉到再赋值——也能用），之后场景归 store。它**不新增任何能力**，只是把 `loadSceneData()` 换了一种声明式的调用方式。
+
+**落点在 `SceneViewer` 的 setup，不往下透传**：它写的是 store，而 store 是全局的，所以不必把这个 prop 穿过 `SceneEditor` / `EditorStage` / `SceneCanvas` 三层。这是「逻辑下沉到 store」白拿的好处——**四处都只写一遍**。
+
+**顺序要紧：`initialScene` 排在两条 prop → store 桥（`autoRotate` / `draco`）之后落笔，两者同时传时以它为准。** 不能反过来——`draco` 那条带着默认值 `false` 立即跑一次 `patchModel({ draco: false })`，若 `initialScene` 先落笔，此刻 `models[0]` 已经存在，那一下会把整份场景里那个模型的 `draco: true` **静静抹掉**。排在这儿则是反过来（整份场景最后落笔），规则也说得通：`autoRotate` 就是 `camera.autoRotate`、`draco` 是逐模型的字段，**整份场景里本来就带着这两个值**，那两个 prop 是给「从空场景起步」的宿主准备的。
+
+> 没顺手把 `autoRotate` / `draco` 的默认值改成 `undefined`（那样「同时传时 prop 赢」也能实现）：收益只是「prop 与整份场景同时给」这种**矛盾输入**下的输赢，代价是动两个已发布 prop 的声明、连带改冒烟里那条「prop → store 桥」的注释。documented 即可。
+
+**装载规则因此从组件搬到了 `stores/scene.ts`**（`loadSceneData`）。它是纯算术（不碰 three、不碰 DOM），而且现在有**两条消费它的路**：宿主拿组件实例调方法、`initialScene` 在挂载时自动调一次。摆在组件里的话那两条路要各写一遍、又悄悄不一致——正是本仓库最恨的那类不报错的 bug。搬过去之后 `SceneCanvas` 那一层（连带四层转发的其余三层）只剩一行转发，而它**不再是组件的私有能力**：宿主不走组件也能 `useSceneStore().loadSceneData(json)`。
+
+顺带一条副产物：`SceneViewer` 暴露的 `loadSceneData` 补了一条 store 兜底（`activeApi()?.loadSceneData(data) ?? scene.loadSceneData(data)`），于是它**挂载前调也成立**——与 `getSceneData` 早就有的那条兜底对称。画布在着时返回的是真布尔值，`??` 不会触发，不存在重复应用。
 
 ---
 
@@ -1185,12 +1267,12 @@ skybox/bak38/{back,down,front,left,right,top}.jpg
 `pnpm verify` 会跑 `scripts/smoke.mjs`，直接加载 `dist/index.js` 在真实 Vue 应用里安装插件并渲染，覆盖 98 项：
 
 - **导出面与安装**：具名导出、install、全局组件注册（3 个）、Pinia 复用/补建
-- **真实渲染**：组件树能渲染、store id 带前缀、根节点与工具栏文案齐全
-- **编辑模式总闸**：`resolveSceneSwitches` 的 6 组组合逐一比对（不传 = 旧默认、`false` = 全关、`true` = 全开，以及两条「分开关压过总闸」），`DEFAULT_SCENE_SWITCHES` 的四个字段与「已冻结」；真实渲染里拿 SSR 看得见的那一个开关（内置工具栏）把四种写法各断一次，其中**一个开关都不传时仍然有工具栏**那一条同时守着「五个布尔必须显式 `undefined`」这个机制（漏了就是全体宿主进只读）。**点选 / 包围框 / 手柄一律不写断言**：它们在 `TresCanvas` 里，SSR 下不渲染，写了只会得到永远为真的假断言（见 CLAUDE.md），那三条只归目视清单 144-146
+- **真实渲染**：组件树能渲染、store id 带前缀、根节点文案齐全。`editable: true` 那一档改判**编辑器外壳自己的类名**（`.tdm-body` 三栏容器 + `.tdm-col--left` / `.tdm-col--right` 两根栏），并且要求**内置工具栏不在**——编辑器自绘界面时它让了位，走的正是「分开关优先于总闸」那一支。另有一档**带宿主页**的渲染：两份 `tabs` 各给一页、插槽也一起给，验「宿主追加的页进了两根导轨」（`aria-label` 两边都在）与「分隔线只画在有第二组的地方」（有宿主页时有、没有时没有）
+- **编辑模式总闸**：`resolveSceneSwitches` 的 6 组组合逐一比对（不传 = 旧默认、`false` = 全关、`true` = 全开，以及两条「分开关压过总闸」），`DEFAULT_SCENE_SWITCHES` 的四个字段与「已冻结」；真实渲染里拿 SSR 看得见的那个差别（`editable: false` 没有内置工具栏、`true` 有三栏外壳）把三种写法各断一次，其中**不传时不带任何总闸的旧行为**那一条同时守着「五个布尔必须显式 `undefined`」这个机制（漏了就是全体宿主进只读）。**点选 / 包围框 / 手柄一律不写断言**：它们在 `TresCanvas` 里，SSR 下不渲染，写了只会得到永远为真的假断言（见 CLAUDE.md），那三条只归目视清单 144-146。**宿主页的正文也测不到**（点开才渲染、SSR 里点不了）——能测的只有「那一格进了导轨」，正文到不到得了靠目视清单 147-151
 - **样式产物**：组件样式类齐全、作用域样式存在、无全局 reset 泄漏、无 playground 样式混入
 - **配置模型**：`models` 是数组且默认为空、新造出来的条目字段齐全、5 类事件各自是独立对象（防别名）、store 是深拷贝（不会污染 `DEFAULT_SCENE_CONFIG`）、深合并不清空未提及的分支、`undefined` 被跳过、导出往返幂等
 - **历史栈**：undo/redo 能还原与前进、resetConfig 复位
-- **物体级**：`deriveModelId` 表驱动（7 组输入）、三元组是整体替换而非逐项合并、**`repeat` 深拷进配置 / 整体替换 / 且默认值里不存在**（渲染层拿「这个键在不在」当「要不要去动模型自带的贴图」的开关，默认值里多一个 `[1, 1]` 会抹掉资产自带的 `KHR_texture_transform`）、`resetConfig` 会复位变换、`dist/*.d.ts` 里有 `objectClick` / `objectDblclick` / `objectPointerEnter` / `objectPointerLeave` / `objectContextMenu` / `ObjectClickPayload` / `ModelEventHandler` / `deriveModelId` / `receiveShadow` / `events` / `modelTransform` / `modelTransformEnd` / `ModelTransformPayload` / `TransformMode` / `selection` / `gizmo` / `gizmoMode`
+- **物体级**：`deriveModelId` 表驱动（7 组输入）、三元组是整体替换而非逐项合并、**`repeat` 深拷进配置 / 整体替换 / 且默认值里不存在**（渲染层拿「这个键在不在」当「要不要去动模型自带的贴图」的开关，默认值里多一个 `[1, 1]` 会抹掉资产自带的 `KHR_texture_transform`）、`resetConfig` 会复位变换、`dist/*.d.ts` 里有 `objectClick` / `objectDblclick` / `objectPointerEnter` / `objectPointerLeave` / `objectContextMenu` / `ObjectClickPayload` / `ModelEventHandler` / `deriveModelId` / `receiveShadow` / `events` / `modelTransform` / `modelTransformEnd` / `ModelTransformPayload` / `TransformMode` / `pickable` / `selection` / `gizmo`（后三个守的是「那条三级规则的输入面 `SceneSwitchInput` 别被谁顺手删掉」，而不是「prop 别漏声明」——它们已经不是 prop 了；`gizmoMode` 收进了内部签名，不在名单里）
 - **事件绑定**：默认 5 类齐全且全关、部分补丁不会顺手清掉同一项的另一半、代码能原样导出并写回、默认值没有被任何一个用例改脏
 - **多模型**：`addModel` 是追加不是替换、新条目带全套默认字段且引用独立、`selectModel` 只在合法下标上生效、`patchModel` 按条目寻址且不改动别的模型、`patchModel` 断开宿主对象与配置的别名、`applyConfig` 里的 `models` 是整体替换而不是逐条合并、`removeModel` 删除后选中项收回界内（含删空后仍可追加）、`setModel` 只影响选中项
 - **产物契约**：`dist/index.js` 与 `dist/index.cjs` 里不含 `new Function` / `eval` / 字符串形式的 `setTimeout` ——把「库绝不执行用户代码」从文档承诺钉成会失败的测试
@@ -1198,7 +1280,7 @@ skybox/bak38/{back,down,front,left,right,top}.jpg
 - **洞口落点**：这是设计决定 38 那条链里**唯一能不靠浏览器验**的部分（拖动本身只能目视），所以那几条算术特意放进库里、单独一组——磁吸算得出「间隔 0」那个半米位置（1.0 + 1.25 + 1.25 = 3.5）而在**够不着时老实给 `null`**：离它 0.5 米的整米格点必须是 `null`，这一条正是「磁吸的输入必须是**未吸格**的那个落点」的守门人（拿 `hit.offset` 当输入时它会红，而那等于把磁吸关掉）；两边都有候选时取更近的、**并列取较小的那个**（确定性规则，否则断言没法写）；空档只由邻居夹取、**两端不缩边距**（`from` 恰好等于磁吸目标——缩 0.1 米的话每一次磁吸都会被夹走一点，症状是「贴不上去、手感发黏」）、没有邻居时就是整面墙、比洞口还窄时给 `null`；拖动落点依次是整米步进 → 磁吸 → 夹进空档，且**吸的是移动量**（`origin 1.0` 时 `wanted 2.4 → 2.0`、`2.6 → 3.0`；改写绝对吸附会让贴着放好的那扇窗一动就跳）、磁吸赢过格点（邻居在 5.0、`wanted 2.7 → 2.5`）、右侧邻居挡着时**过不去**；以及「贴着放」放行**靠的是那一颗 1e-9 而不是运气**（1.9 放行、1.9 − 0.001 判重叠）。**这组里还有两条**是设计决定 43 那条「替换」链路唯一的自动化防线（那两个原因码本身）：洞口放不下时给出的原因码——0.9 米的门加两端各 0.1 米边距 = **1.1 米整放行、1.099 米拒**（边界取整是故意的：边距与门宽改一位这里就该红）、两条同时成立时**先报墙太短**（顺序换了文案会跟着实现漂且不报错）、墙够长才轮到判重叠；以及替换那条路**与放置同源**——贴齐位置（由 `openingMagnetOffset` 给）在这一层也放行、往邻居里挪 1 毫米判 `overlap`、**把自己传进 `others` 时必然重叠**（这正是替换时要 `filter` 掉自己那一条的守门人：不滤的话判据恒真，一个洞口都换不了）。`replaceSelectedOpening` / `replaceSelectedWall` 本身在 `playground/` 里，**冒烟够不着**——左栏怎么切、点击怎么分流、提示行说什么，唯一的防线是目视清单第 130-141 条
 - **模板 ref**：`src/` 下凡把 `ref` 挂在 `Tres*` / `OrbitControls` 标签上的 `.vue` 都不得调用 `useTemplateRef` ——这个坑在 dev 下只是一条警告，在生产里是静默失效（见设计决定 20）
 - **模型 id**：建 store 时补上 uuid 形态的 id、换地址换 id 而重复设同一地址不换、卸载换 id、撤销到换模型之前连 id 一起还原、`applyConfig` 携带的 id 原样保留（导出导入往返不丢）
-- **prop 桥接**：分组 prop 写入对应分支、不清掉同分组其他字段、与兼容用的扁平 `environment` 共存、`model` 对象形态写入物体级字段、`model` 分组胜过扁平 `wireframe`、不把宿主的数组别名进配置、不把宿主的事件对象别名进配置、`model` 字符串形态仍走 `setModel`
+- **装载整份场景**：这是唯一一组**不靠组件**的（`loadSceneData` 的实现住在 store 里，纯算术、不碰 three 也不碰 DOM，所以装载规则能直接对着 store 验，不必隔着画布）——整表换掉 `models`、给补丁里没带 id 的新条目就地补一个、深合并其余分组，并且**撤销栈被清空**（「初始化」的语义：换了一个场景之后还能 ⌘Z 退回上一个通常不是想要的，`canUndo` 归 `false`、`history.length` 回到 1）；旧格式的 `model` 单对象折成 `models` 列表（少了 `migrateConfig` 那一道**不报错**、只是「载入成功但场景是空的」，所以这条断言是那个迁移在 store 这条路上唯一的防线——`applyConfig` 走的是另一条路，够不着它）；非对象（`null` 与字符串各一次，`null` 也过 `typeof === 'object'` 所以判据里那半条必须单独写）一律**无副作用地**返回 `false`，配置一个字不动；只传一个分组时同分组的其他字段与未提及的分组**原样不动**——`applyConfig` 的深合并语义被搬走一层之后，最容易在这里悄悄退化成整体替换。`initialScene` 则是这节里**走真实渲染**的那半条：SSR 下 `TresCanvas` 的 children 不渲染，但组件 setup 会跑，而它正是在 setup 里写 store 的，所以「prop → store 的一次性装载在 setup 里落了笔」测得到（与「props 真的转发到了底层（`autoRotate`）」同源，都是「宿主写一个 prop、store 立刻有反应」这条路的证据；这一条那个 `renderViewer` 调用刻意排在本节最后，因为它会顺手换掉 active pinia）
 - **视角档位**：`viewModeOf` 是「2D / 3D」这条约定的唯一实现（编辑器的档位按钮与 `SceneContent` 的 `planView` 都吃它的结果，错了会同时错两处、且往两个方向错），所以它单独有一组断言——默认那份斜机位必须是 3D；原点正上方必须是 2D；**容差两侧各测一点**（按角度造机位，偏 4.9° 仍在 2D、偏 5.1° 掉出去），不是照抄那个常数复述实现；机位与注视点重合、机位在注视点下方这两条退化情形都算 3D（除以 0 得到的 `NaN` 恰好也落回 3D，断言的是「有意」而不是「碰巧」）；正俯视但**平移过**的机位仍然算 2D（那一档本来就允许右键平移）
 - **墙面铺装**：墙的 `url` 跟着深拷贝与 JSON 往返一起走、且没写外观的墙上不出现这个键；沿墙平铺时铺满 / 不重叠 / 不留缝（逐块比边界，不是只比块数）、高厚各自拉伸到位；**资产的原点不在包围盒中心时也摆得准**（漏掉那一步整段砖会平移出去）；段长不是整数米时匀着摊、比半块还短的段不会被取整成 0 块、长得离谱的段被块数上限截住之后仍铺满；空包围盒 / 含 `NaN` / 太薄 / 太窄 / 太矮各给一句人话，且退化输入上绝不算出非有限数（`NaN` 灌进 `scale` 会让整个物体从画面上消失且不报错）；**建模时的背景板会被认成「片」筛掉、墙的尺寸不被它带跑**——用的是 `wall/wall1` 那次事故的真实数字（80 × 80 的背景板 + 4 × 2.8 × 0.2 的墙体），断言里同时钉住「脏盒子会被守卫放行」（这正是必须先筛的理由）与「脏盒子只铺出 0.4 米宽的一片」（历史上的那个现象），以及两个退化输入落在正确的一侧：一个顶点都没有的空网格判成片丢掉，含 `NaN` 的网格反过来要留下（丢掉的话它会绕过 NaN 守卫，整面墙变成「干净的半个几何」）
 - **天空盒**：`sun.skybox` 默认是 `null`；六个面通过 `applyConfig` 写进去之后能从 `exportConfig()` 原样导出；`skybox: null` 确实能把它写回「关掉」这个状态；撤销一步能把那六个面退回来。这组断言只覆盖**数据层的往返**——它守的是「关得掉」这条（`applyPatch` 只跳过 `undefined`、不跳过 `null`，改错了的表现是天空盒一旦开就再也关不上），而**画面**那一半属于下面的目视清单：六张图得真的发出去、真的拼成一张 `CubeTexture`，SSR 下连发请求的机会都没有；缺面兜底那一段（`utils/skyboxFill.ts`）还要一张能读像素的画布，Node 里没有。
@@ -1757,21 +1839,58 @@ skybox/bak38/{back,down,front,left,right,top}.jpg
        `canUndo` 变 `false`、等过 400ms 防抖窗口后也没有悬挂提交留下。
        所以要目视的只是**这条线接通了没有**，不是那两步本身
   144. **总闸一关，三个交互一起停**（这一条与下面两条都靠「临时改两行、验完还原」那一族
-       做法；`SceneStage.vue:361-364` 是 `editable` 在本仓库里唯一的常驻消费者，改的就是它
-       那个绑定）：把 `:editable="!previewMode"` 临时改成 `:editable="false"` →
+       做法；`playground/App.vue` 是本仓库里 `editable` 的常驻消费者，改的就是它
+       那个绑定）：把 `<SceneViewer editable …>` 临时改成 `:editable="false"` →
+       画布**只剩一块只读画布**（三栏整个消失、内置工具栏不在），
        在模型上点一下**不会被选中**、**没有包围框也没有手柄**，而**地面网格还在**。
        最后这一项单列出来，是因为它守的是一条边界：总闸只该管那四个交互开关，
        `showGrid` 不在其中——总闸若被写成「一关全关」把网格一并带走，症状是
        「预览态的地面凭空消失」，而网格藏在 `TresCanvas` 里，冒烟测试一个字都看不见
-  145. **编辑态开箱就能改，且分开关压得住总闸**：改回 `:editable="true"` → 点模型会**选中**、
-       选中项画出包围框、拖手柄能真的移动它；此时紧邻那个 `:toolbar="false"` **仍然生效**
-       （工具栏不在）。这一条正是「分开关优先于总闸」在界面上的唯一落点，
-       编辑器自绘工具栏靠的就是它（见设计决定 46）
-  146. **四个开关各自独立，总闸只是「没写时的默认值」**：把 `:editable` 改回 `false`、
-       再补上 `:pickable="true" :selection="true"` → 点模型**又能选中了**、包围框回来，
-       但**手柄仍不在**（`gizmo` 没被显式打开，仍随总闸）。若三个一起回来了，
-       说明被写成了「任一开关为真就全开」；若一个都没回来，说明被写成了「总闸关着就一律锁死」
-       ——两种都**在类型层面完全看不出来**，只有这一眼
+  145. **编辑态开箱就能改，且分开关压得住总闸**：改回 `:editable="true"` → 三栏回来、
+       点模型会**选中**、选中项画出包围框、拖手柄能真的移动它；而**内置工具栏不在**。
+       后一项正是「分开关优先于总闸」在界面上的唯一落点：编辑器自绘三栏界面，
+       给 `SceneCanvas` 喂的就是 `:toolbar="false"` 配一档 `editable`（见设计决定 46）
+  146. **四个开关各自独立，总闸只是「没写时的默认值」**（这一条现在只能从**库内部**验——
+       公开面上 `pickable` / `selection` / `gizmo` 已经不是 prop，「单独开一个」的写法
+       不再存在）：在 `src/editor/components/EditorStage.vue` 里把喂给 `SceneCanvas` 的
+       `:pickable` 临时改成 `false`（其余三档不动）→ 点模型**不会被选中**、包围框与手柄
+       跟着没有，但**内置工具栏仍然不在**（那一档是独立写死的 `false`）。
+       若改一档把三档一起带走了，说明被写成了「任一开关为真就全开」；若工具栏因为改动
+       而冒出来，说明那几档没有各走各的。两种都**在类型层面完全看不出来**，只有这一眼
+  147. **三栏形态与顶栏归属**：`<SceneViewer editable height="100%" />` 下页面是
+       「宿主自己的顶栏 + 左栏 ｜ 画布 ｜ 右栏」——**顶栏是 `AppHeader.vue` 画的，
+       不是库画的**（把 `App.vue` 里那行 `<AppHeader />` 注释掉，顶栏应当整个消失，
+       而三栏纹丝不动）。组件根节点高度撑满外层容器、画布把剩下的高度全吃掉，
+       底下一片空白都没有
+  148. **宿主页落在两根导轨的末尾，且与内置那一组之间有一条分隔线**：
+       `playground/App.vue` 声明了左栏一页「设备」（带插头图标）、右栏一页「说明」
+       （**不带图标**）→ 左栏导轨最后多一格、右栏导轨最后多一格，两格**上方都有一条线**；
+       「说明」那一格显示的是**库给的占位立方体**（宿主没给 `icon` 时退回到它，
+       留白等于少一格还点不到）；悬停提示与 `aria-label` 都是页名。
+       与冒烟那两条断言不重复的是**位置与线**——那两条只查 `aria-label` 在不在
+  149. **点开宿主页，正文整个换掉**：点左栏「设备」→ 左栏正文**换成宿主那段文字**，
+       模型库宫格整个不在（这一页与「模型库」是并列的两页，不是插在宫格里的区块）；
+       点右栏「说明」→ 右栏正文换成另一段文字，库那七个内置页的字段一个都不在。
+       右栏这一页**不能带上「模型属性」那一页的上下分栏**——若半分屏、上半是空的，
+       说明高亮是按 `activeTab` 而不是 `litKey` 算的（见设计决定 48 第三条）
+  150. **点回内置页、撤掉宿主页都不落空白**：从「设备」切回「地板」→ 宫格回来、
+       高亮回到内置那一格；在 `App.vue` 里把 `HOST_SIDE_TABS` 改成空数组 →
+       左栏停在宿主页时**落回上次停的那个模型库分类**（不是空白，也不是掉到
+       一个不存在的分类上）；把 `HOST_INSPECTOR_TABS` 清空 → 右栏同理落回
+       用户上一刻停的那一页（不是恒回第一页）。改回来时它自己再亮起来
+  151. **插槽真的穿过了两层**（`SceneViewer` → `SceneEditor` → 面板，见设计决定 48）：
+       这条没法自动化——SSR 里点不了、点开才渲染——所以只能眼看上一条的正文真的出来了。
+       若正文是空的，而导轨上那一格正常，**几乎一定是插槽名拼错了**
+       （前缀 + key，拼错一个连字符不报错）；若连那一格都没有，问题在 prop 没转发下去
+  152. **`initialScene` 进去就是那份场景，且之后归 store**（见设计决定 49）：
+       临时给 `playground/App.vue` 的 `<SceneViewer>` 挂一个含 2-3 个模型 + 一段户型的
+       `:initial-scene`（自己按 `getSceneData()` 的形状手写一份即可，不必先存盘）→
+       页面一打开就是那份场景、**没有先空一下再跳变**；接着在画布上拖一个模型、
+       改一处相机 → 点「保存」，台前那个 `getSceneData()` 取到的必须是**改过之后**的版本
+       （宿主手里那份对象没变，这是「只装一次」的另一半）。
+       再验一次「数据后到」：把 `:initial-scene` 从 `null` 起、在 `onMounted` 里延迟赋值 →
+       场景照样装得进去。**若装不进去而完全不报错**，多半是那个一次性 watcher 的
+       `applied` 判位写反了（在值为空时就把自己置了位）
 - 编辑器的交互（拖放导入、快捷键、导入导出文件、**空档里点选门窗并沿墙拖动**、
   **左栏点一格替换选中的洞口或墙**、**「保存」取数据交给宿主**）
   没有自动化测试，只有类型检查和构建覆盖——上面那组「洞口落点」断言验的是它
@@ -1780,7 +1899,7 @@ skybox/bak38/{back,down,front,left,right,top}.jpg
 已用真实宿主项目验证过的接入路径：`pnpm pack` 出 tarball → 宿主 `pnpm add <tarball>` → `vue-tsc` 通过 → `vite build` 通过。
 （`getSceneData` / `loadSceneData` 这一对是后来加的：宿主持 `ref` 拿组件实例 →
 `getSceneData()` 取数据 → 交给自己的接口，**尚未在真实宿主项目里跑过**，
-目前的防线只有目视清单第 142、143 条。）
+目前的防线只有目视清单第 142、143 条；`initialScene` 更晚，它那条路的防线是第 152 条。）
 
 ---
 
@@ -1791,18 +1910,21 @@ skybox/bak38/{back,down,front,left,right,top}.jpg
 
 本仓库有两个身份：
 
-- **开发态**：一个可独立运行的场景编辑器（`playground/`），同时是插件的第一个消费者
-- **发布态**：一个 npm 库包，其他项目 `app.use()` 即可获得 3D 场景能力
+- **开发态**：`playground/` 是一个宿主示例，同时是插件的第一个消费者
+- **发布态**：一个 npm 库包，其他项目 `app.use()` 即可获得 3D 场景能力（包含一个开箱即用的编辑器）
 
-两边的分层是刻意的：**能力进 `src/`，界面留 `playground/`**。编辑器用到的相机、地面、日照、阴影
-全部是 `SceneViewer` 的公开 prop 与 store 的公开状态，`src/` 里没有任何一处为编辑器开过后门。
+分层依据从「**能力进 `src/`，界面留 `playground/`**」改写成了「**宿主通用的一切进 `src/`**」
+（理由见设计决定 47）：编辑器本身也是宿主可能要的东西，所以它整个在 `src/editor/` 里，
+`SceneViewer` 在 `editable` 为真时直接渲染三栏。**留在 `playground/` 的只有两样**——
+宿主外壳（`App.vue` 与它自己的顶栏、那两页面板），以及库碰不得的两件东西：保存到哪是策略
+（`useConfigIO.ts`）、`new Function` 执行器进不了产物（`useEventRunner.ts`）。
 
 ## 目录结构
 
 ```
 src/                     库源码，会被打包发布
 ├── index.ts             库入口：插件 install + 具名导出 + GlobalComponents 类型增强
-├── types.ts             对外类型定义（SceneConfig 及 5 个分组配置）
+├── types.ts             对外类型定义（SceneConfig 及 5 个分组配置、SceneViewerProps、EditorPanelTab）
 ├── utils/config.ts      默认配置、深合并、变更分组比对
 ├── utils/modelId.ts     模型 id 派生（纯函数，编辑器与宿主共用同一份规则）
 ├── utils/pointerClick.ts      「算不算一次单击」的唯一判据（物体事件与画布点选同源）
@@ -1811,26 +1933,34 @@ src/                     库源码，会被打包发布
 ├── styles/              库样式（手写 SCSS，`index.scss` 用 `@use` 组织 partial）
 │   ├── index.scss       入口：只做 `@use`，顺序即产物里规则的顺序
 │   ├── _tokens.scss     编辑器视觉令牌（--tdm-* 全在这里定义）
-│   └── _canvas.scss     画布作用域约束、内置工具栏、加载与错误态
-└── components/
-    ├── SceneViewer.vue    对外主组件：画布 + 工具栏 + 加载态
-    ├── SceneContent.vue   TresCanvas 内部：组装下面四个 + 相机 + 控制器 + 物体级变换与拾取
-    ├── ScenePicker.vue    TresCanvas 内部：画布级点选（pickable 打开时才存在）
-    ├── SceneSun.vue       环境贴图与三盏灯
-    ├── SceneSkybox.vue    天空盒（六张 jpg 拼的立方体贴图，缺哪面补哪面；不渲染任何东西）
-    ├── SceneGround.vue    地面网格
-    ├── SceneShadows.vue   接触阴影 / 累积阴影
-    ├── SceneModel.vue     glTF 加载、线框与阴影标记
-    └── SceneToolbar.vue   工具栏（手写 SCSS）
+│   ├── _canvas.scss     画布作用域约束、内置工具栏、加载与错误态
+│   └── _editor.scss     编辑器那一整层（三栏外壳、两根导轨、属性面板、绘制工具）
+├── components/          画布与公开组件
+│   ├── SceneViewer.vue     **公开面**：七个 prop，按 editable 选形态（画布 / 三栏编辑器）
+│   ├── SceneCanvas.vue     内部签名：8 个 prop / 12 个 emits / 5 个方法，编辑器与纯画布共用
+│   ├── SceneContent.vue    TresCanvas 内部：组装下面四个 + 相机 + 控制器 + 物体级变换与拾取
+│   ├── ScenePicker.vue     TresCanvas 内部：画布级点选（pickable 打开时才存在）
+│   ├── SceneSun.vue        环境贴图与三盏灯
+│   ├── SceneSkybox.vue     天空盒（六张 jpg 拼的立方体贴图，缺哪面补哪面；不渲染任何东西）
+│   ├── SceneGround.vue     地面网格
+│   ├── SceneShadows.vue    接触阴影 / 累积阴影
+│   ├── SceneModel.vue      glTF 加载、线框与阴影标记
+│   └── SceneToolbar.vue    工具栏（手写 SCSS）
+└── editor/              编辑器（`editable` 为真时 `SceneViewer` 渲染的就是它）
+    ├── assets.ts        资产源：宿主经 `createThreeDMaker({ assets })` 注入，库不含任何素材地址
+    ├── hooks.ts         回调宿主的唯一一道缝：模型事件的代码由宿主执行，库只发事件（不含 `new Function`）
+    ├── components/      SceneEditor.vue（三栏外壳）/ EditorStage.vue（中栏，渲染 SceneCanvas）
+    │   ├── side/        左栏：图标导轨 + 模型库宫格（地板 / 墙壁 / 门 / 窗 / 天空盒）
+    │   └── inspector/   右栏属性面板：图标 tab 导轨 + schema 字段控件
+    ├── composables/     编辑器状态、场景预设、属性面板 schema、资产目录
+    └── utils/           面板图标与插槽名前缀（`panelSlots.ts`）、标签、数值格式化
 
-playground/              仅开发期使用，不会进入库产物。是插件的第一个消费者
-├── App.vue              编辑器外壳：顶栏 + 三栏工作台
-├── styles/editor.scss   编辑器视觉系统（精密仪器 / 蓝图方向）；令牌已搬去 `src/styles/_tokens.scss`，这里只引用
-├── composables/         编辑器状态、场景预设、配置导入导出、属性面板 schema
-├── components/          顶栏、视口
-│   ├── side/            左栏：图标导轨 + 模型库宫格（地板 / 墙壁 / 门 / 窗 / 天空盒）
-│   └── inspector/       属性面板：图标 tab 导轨 + schema 字段控件（模型 / 墙·门窗·房间 / 场景预设四份自绘清单）
-└── utils/               路径读写、数值格式化
+playground/              宿主示例，不会进入库产物。只放库碰不得的两件东西
+├── App.vue              宿主外壳：自己的顶栏 + 一个 `<SceneViewer editable height="100%">` + 两页自己的面板
+├── components/AppHeader.vue  宿主自己的顶栏（场景名 / 保存 / 预览——全是策略）
+├── composables/         useConfigIO.ts（保存到哪是策略）、useEventRunner.ts（那段 `new Function`，库不含）
+├── styles/base.scss     宿主页面的底座（html / body / #app 与 .pg-panel）
+└── utils/               宿主自己的图标与模型清单
 
 scripts/smoke.mjs        打包产物冒烟测试
 ```

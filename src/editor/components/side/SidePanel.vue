@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, useTemplateRef } from 'vue'
+import { computed, ref, useTemplateRef } from 'vue'
 import { librarySection, openLibrarySection } from '../../composables/useEditorState'
 import { resolveLibrarySection, useLibrarySections } from '../../composables/useModelLibrary'
 import type {
@@ -10,6 +10,9 @@ import type {
 } from '../../composables/useModelLibrary'
 import { useRailTip } from '../../composables/useRailTip'
 import type { IconPath } from '../../composables/useInspectorSchema'
+import { ICON_HOST_FALLBACK } from '../../utils/panelIcons'
+import { SIDE_TAB_PREFIX } from '../../utils/panelSlots'
+import type { EditorPanelTab } from '../../../types'
 import ModelLibrary from './ModelLibrary.vue'
 
 defineOptions({ name: 'SidePanel' })
@@ -27,8 +30,20 @@ const props = withDefaults(
      * 看得见，不会是一格空白。
      */
     extraSections?: ExtraLibrarySection[]
+
+    /**
+     * 宿主**追加**的页：点了整个左栏正文换成宿主的内容（`#side-tab-<key>` 插槽）。
+     *
+     * 与 `extraSections` 是两件事，别串了：那一个是**往模型库的宫格里加一类东西**，
+     * 正文仍是宫格；这一个换的是**正文本身**。所以两者在导轨上排成两组
+     * （见 `railButtons`）。
+     *
+     * 不传则左栏只有「模型库」一页——宿主页为 0 时，正文那个 `v-if` 恒走
+     * `ModelLibrary` 那一支，整块与没有这个 prop 之前逐字一致。
+     */
+    tabs?: EditorPanelTab[]
   }>(),
-  { extraSections: () => [] },
+  { extraSections: () => [], tabs: () => [] },
 )
 
 /**
@@ -183,6 +198,10 @@ const ICON_SKYBOX: IconPath[] = [
  * 左栏那个页面级的「场景预设」页搬去右栏之后，导轨上只剩分类这一种项，
  * 页面 key 不复存在，这条守卫没有了对象——分类之间撞名本来就被对象字面量
  * 自己拦着（同一个 key 写两遍是编译错误）。
+ *
+ * 宿主页（`tabs`）把**页面级**这一支带了回来，但这条守卫**长不回来**：
+ * 它的 key 是宿主给的运行时字符串，类型层面看不出撞没撞。那件事改由运行时的
+ * 重复 key 警告兜着（`RailItem` 那段注释里写了），代价是它只在开发模式下响。
  */
 type SafeIcons = Record<LibrarySectionKey, IconPath[]>
 
@@ -228,38 +247,27 @@ const SECTION_UNITS = {
 const SECTION_ICON_BY_KEY = new Map<string, IconPath[]>(Object.entries(SECTION_ICONS))
 
 /**
- * 宿主没给图标时的占位图形。
- *
- * 与宫格里「没有预览图」、右栏「场景模型」用的是同一个立方体（`ModelLibrary.vue`
- * 的 `ICON_NO_PREVIEW`）：三处说的是同一件事「这是一个模型，只是没有图给你看」。
- *
- * 与自己那条「同屏的每个字形只能指一件事」相冲时，这里选**撞形状**：
- * 追加分类不写图标本来就是宿主的疏漏，退回立方体至少看得见、也知道该点哪里；
- * 真正的修法是宿主补一个 `icon`。换成留白则是让导轨少一格、还点不到。
- */
-const ICON_SECTION_FALLBACK: IconPath[] = [
-  { d: 'M12 3 20.5 7.8v8.4L12 21 3.5 16.2V7.8z' },
-  { d: 'M3.5 7.8 12 12.6l8.5-4.8' },
-  { d: 'M12 12.6V21' },
-]
-
-/**
- * 导轨上的一项 = 模型库的一个分类。
+ * 导轨上的一项 = 模型库的一个分类，**或者**宿主追加的一页。
  *
  * **它原先是一个可辨识联合**（`kind: 'page' | 'section'`），因为导轨上混着两种东西：
  * 页面级的「场景预设」页（点了整个面板换掉）与分类（只换宫格内容）。预设页搬到
  * 右栏「日照环境」之后只剩分类一种，`kind` 那支判别式每个使用点都退化成一堆
  * 收窄判断，于是整个联合收成接口——**一个只有一支的联合比一个接口更贵**。
  *
- * `groupStart` 保留：内置五类与宿主追加的那几类之间要有一条分隔线，
- * 它落在追加的第一项上（见 `extraRailItems`）。
+ * 现在它长回来了，而且回来的还是原来那一支：宿主追加的页正是**页面级**的
+ * （`tabs` prop，正文换成插槽）。所以判别字段与当初同名同义，`activate` 那处
+ * 分流的形状也一样。区别只在来源——当初那一支是内置的预设页，今天全是宿主的。
+ *
+ * `groupStart` 保留：导轨上现在最多有三组（内置分类 ｜ 追加分类 ｜ 宿主页），
+ * 每条分隔线落在各组的第一项上（见 `extraRailItems` / `pageRailItems`）。
  *
  * `key` 是 `string` 而不是 `LibrarySectionKey`：导轨上还可能有
- * **宿主追加**的分类，它们的 key 是运行时的。收窄成 `string` 只影响这一处，
+ * **宿主追加**的分类与页，它们的 key 是运行时的。收窄成 `string` 只影响这一处，
  * `SECTION_ICONS satisfies SafeIcons` 与 `TOOL_ASSET_RULES` 两处守卫
  * 仍然只认那个字面量联合——**内置那几类才是承重的**，追加分类不是。
  */
 interface RailItem {
+  kind: 'page' | 'section'
   key: string
   tip: string
   icon: IconPath[]
@@ -291,16 +299,37 @@ function railIcon(section: MergedLibrarySection): IconPath[] {
   return (
     SECTION_ICON_BY_KEY.get(section.key) ??
     ('icon' in section ? section.icon : undefined) ??
-    ICON_SECTION_FALLBACK
+    ICON_HOST_FALLBACK
   )
 }
 
 /** 拼一项导轨。内置与追加走同一个函数，于是两组的图标取法、提示文案不会各长一份 */
 function sectionRailItem(section: MergedLibrarySection, groupStart: boolean): RailItem {
   return {
+    kind: 'section',
     key: section.key,
     tip: tipOf(section),
     icon: railIcon(section),
+    groupStart,
+  }
+}
+
+/**
+ * 拼一项**宿主追加的页**。
+ *
+ * 提示就是那个页名，不像分类那样接一个数量——页里有什么是宿主的模板，
+ * 库数不出来，而数与不对的数都只会误导（`tipOf` 那边讲的「量词要说清点一下
+ * 干什么」在这里没有对象）。页名本来就是宿主的 `label`，原样用。
+ *
+ * 图标缺了就退回 `ICON_HOST_FALLBACK`：这一格同样没有常显文字，
+ * 留白等于让宿主少一格、还点不到。
+ */
+function pageRailItem(tab: EditorPanelTab, groupStart: boolean): RailItem {
+  return {
+    kind: 'page',
+    key: tab.key,
+    tip: tab.label,
+    icon: tab.icon ?? ICON_HOST_FALLBACK,
     groupStart,
   }
 }
@@ -315,8 +344,8 @@ function sectionRailItem(section: MergedLibrarySection, groupStart: boolean): Ra
  * 每一项的 `groupStart` 都是 false：那条第几项上的分隔线原先分的是「页面级的
  * 预设页」与「模型库的分类」，现在整条导轨都是分类，没有可分的两组。
  *
- * 这里**只有内置那五类**。宿主追加的分类在下面的 `extraRailItems` 里，
- * 两者由 `railButtons` 决定怎么合并。
+ * 这里**只有内置那五类**。宿主追加的分类在下面的 `extraRailItems` 里、
+ * 宿主追加的页在 `pageRailItems` 里，三者由 `railButtons` 决定怎么合并。
  *
  * 写成 computed 而不是常量：内置那五类现在是算出来的（条目来自宿主注入的素材），
  * 不再是模块常量。
@@ -331,10 +360,27 @@ const extraRailItems = computed<RailItem[]>(() =>
 )
 
 /**
+ * 宿主追加的页。
+ *
+ * **恒由组件代画，与 `#rail` 无关**——那是它跟 `extraRailItems` 唯一的差别。
+ * 理由在两类东西的来处：追加分类的图标要宿主自己带（`'icon' in section` 那道分流
+ * 就是为它写的），于是「自己画」与「让组件代画」各有人选；而宿主页的名字与图标
+ * 本来就在 `EditorPanelTab` 这份声明里给全了，库画出来不会比宿主差，
+ * 再让宿主用 `#rail` 画一遍只是多一份可以写错的代码。
+ *
+ * 分隔线落在第一项上：它前面恒有东西（内置五类，或追加分类那一组的最后一项）。
+ * 追加分类为空时不会有重复的分隔线——那两个 `computed` 各自独立，
+ * 前一组没东西就没人去画它那一条。
+ */
+const pageRailItems = computed<RailItem[]>(() =>
+  props.tabs.map((tab, index) => pageRailItem(tab, index === 0)),
+)
+
+/**
  * 待画进导轨的那一串。
  *
- * `hostDrawsExtras` 为真（宿主写了 `#rail`）时只剩内置那五项：追加的几项改由插槽
- * 给出，这里再画一遍就是每项两个按钮（同一格重复、同时亮）。
+ * `hostDrawsExtras` 为真（宿主写了 `#rail`）时只剩内置那五项 + 宿主页：
+ * 追加分类改由插槽给出，这里再画一遍就是每项两个按钮（同一格重复、同时亮）。
  *
  * ## 为什么这是个函数、判据还得从模板里传进来
  *
@@ -343,13 +389,14 @@ const extraRailItems = computed<RailItem[]>(() =>
  * 那个 computed 不会重算，导轨上就会照着旧结果画。写成函数、在模板里读
  * `$slots.rail` 传进来，两次读都发生在渲染期，没有这个时间差。
  *
- * 合并的次序是**内置在前、追加在后**——与 `sections` 那张表一致，
- * 于是导轨的顺序与「翻到底才见到追加的分类」是同一件事。
+ * 合并的次序是**内置在前、追加分类其次、宿主页最末**——与 `sections` 那张表、
+ * 与「翻到底才见到宿主加的东西」是同一件事。
  */
 function railButtons(hostDrawsExtras: boolean): RailItem[] {
-  return hostDrawsExtras
+  const categories = hostDrawsExtras
     ? RAIL_ITEMS.value
     : [...RAIL_ITEMS.value, ...extraRailItems.value]
+  return [...categories, ...pageRailItems.value]
 }
 
 const navRef = useTemplateRef<HTMLElement>('nav')
@@ -358,22 +405,69 @@ const navRef = useTemplateRef<HTMLElement>('nav')
 const { tip, showTip, hideTip } = useRailTip(() => navRef.value)
 
 /**
+ * 当前停在**哪一个宿主页**。`null` = 没停在宿主页上，正文是模型库。
+ *
+ * 它是本组件**本地**状态，不进 `useEditorState`：整个仓库只有这一处读它
+ * （正文与导轨都在本文件里），提升成模块级单例只会让它看起来像「别处也会读」。
+ * 当初那个 `leftTab` 是因为「场景预设」页另有出口才住在 store 里，
+ * 而宿主页的出口就是这根导轨。
+ */
+const activePageKey = ref<string | null>(null)
+
+/**
+ * 当前这一页。（`undefined` = 停在模型库上，或者宿主把这一页撤掉了。）
+ *
+ * 判据取「数组里还在不在」而不是直接比 key：宿主中途把一个 tab 从数组里拿掉时，
+ * `activePageKey` 会留在那个已经不存在的 key 上，只看它就会停在一页空白上。
+ * 过一遍 `find` 之后，撤页的表现是**落回模型库**——与内置那条兜底同一个走向。
+ * 重新加回来时它会自己再亮起来，那正是用户上一刻停的地方。
+ */
+const activePage = computed(() => props.tabs.find((tab) => tab.key === activePageKey.value))
+
+/**
+ * 宿主页那一格的插槽名。
+ *
+ * 名字由 `SIDE_TAB_PREFIX` 拼出来、不在模板里现拼：拼错一个连字符**不报错**，
+ * 宿主的整块面板会一个字都不显示（一个没有被提供的插槽是合法的空插槽）。
+ * 命名规则与转发用的前缀同在 `utils/panelSlots.ts`，只有那一处拼法。
+ *
+ * `?? ''` 只在 `activePage` 为空时取到，而那个值只可能出现在
+ * 模板里那一支不渲染的时候——留着是为了让这个表达式自己站得住，
+ * 不靠「调用点恰好在 v-else 里」。
+ */
+const activePageSlot = computed(() => `${SIDE_TAB_PREFIX}${activePage.value?.key ?? ''}`)
+
+/**
  * 当前该亮哪一项。
  *
- * 只有一页（模型库），所以这个值就是**当前分类**：左栏不存在「亮了这一类但面板里
- * 是另一类」以外的状态——而那一类对不上正是 `resolveLibrarySection` 兜的底。
- * 它与宫格内容是同一个函数、**传的也是同一个 `sections`**（合并表）：各写各的时，
- * 一个对不上的 key 会让导轨亮着一格而宫格是另一格，两边都不报错。
+ * 两级：停在宿主页上就是它；否则是**当前分类**（「亮了这一类但面板里是另一类」
+ * 正是 `resolveLibrarySection` 兜的底）。
+ *
+ * 分类那一支传的是合并表 `sections`（内置 + 追加分类），**与宫格内容是同一个函数、
+ * 同一个数组**：各写各的时，一个对不上的 key 会让导轨亮着一格而宫格是另一格，
+ * 两边都不报错。
+ *
+ * 宿主页**不进** `resolveLibrarySection`——它只认分类（它返回的是带 `entries`
+ * 的那张表，宿主页根本没有 `entries`）。所以这里是 `??` 而不是把它并进那张表：
+ * 并进去会让「宿主撤掉一页」变成「兜底到那一页上」，正好是反的。
  */
-const activeRailKey = computed(() => resolveLibrarySection(librarySection.value, sections.value).key)
+const activeRailKey = computed(
+  () => activePage.value?.key ?? resolveLibrarySection(librarySection.value, sections.value).key,
+)
 
 /**
  * 点导轨。
  *
- * 这里原先还有一层 `kind` 分流（页面级换 `leftTab`、分类走 `openLibrarySection`），
- * 随那个联合一起去掉了——现在每一项都只可能是分类。
+ * 分流形状与那个判别字段同名同义：页面级换页、分类换宫格。两个 `kind` 的
+ * `key` 落在同一根导轨上，所以**分类那一支必须把页清掉**——不写那一行的话，
+ * 从宿主页点回某个分类，正文会继续是宿主页，而导轨已经亮了那个分类。
  */
 function activate(item: RailItem) {
+  if (item.kind === 'page') {
+    activePageKey.value = item.key
+    return
+  }
+  activePageKey.value = null
   openLibrarySection(item.key)
 }
 </script>
@@ -405,14 +499,14 @@ function activate(item: RailItem) {
       -->
       <div class="tdm-side-body tdm-tabpanel">
         <!--
-          合并表（内置五类 + 宿主追加的）从这里进去：宫格与导轨读的是**同一个
-          `sections`**，所以两边不可能对不上。
+          模型库：合并表（内置五类 + 宿主追加的）从这里进去，宫格与导轨读的是
+          **同一个 `sections`**，所以两边不可能对不上。
 
           宫格那边只拿它当「有哪些分类、每一类里有什么」，`resolveLibrarySection`
           的兜底因此也落在内置第一条上——宿主把一个追加分类撤掉、而左栏正停在
           它上面时，落回的是内置分类，不是空白。
         -->
-        <ModelLibrary :sections="sections">
+        <ModelLibrary v-if="!activePage" :sections="sections">
           <!--
             `#list` 的**透传**：导轨在 SidePanel、宫格在 ModelLibrary，
             宿主给 SidePanel 写的插槽要跨一层才到得了真正渲染它的地方。
@@ -426,6 +520,15 @@ function activate(item: RailItem) {
             <slot name="list" v-bind="scope" />
           </template>
         </ModelLibrary>
+
+        <!--
+          宿主页：正文整个换掉，内容由 `#side-tab-<key>` 给出（名字见 `activePageSlot`）。
+
+          作用域**刻意是空的**：这一页是宿主的模板，库没有「这一页里有什么」可言。
+          要读编辑器状态（当前选中哪个模型、配置是什么）请用公开导出的
+          `useSceneStore` / `useEditorState`，它们本来就是这个页面里画东西的依据。
+        -->
+        <slot v-else :name="activePageSlot" />
       </div>
 
       <!--
@@ -496,6 +599,10 @@ function activate(item: RailItem) {
 
           `tipOf` 不是可选的体面：那句话**同时是那一格的 `aria-label`**，
           导轨上没有常显文字，读屏只读得到它。宿主各写各的，格式错了就少一句。
+
+          `activate` 只认**分类**（宿主页由库自己画、自己接，见 `pageRailItems`），
+          而 `activeKey` 两种都可能给到——宿主页亮着时它是那个页的 key，
+          此时宿主画的分类项应当全不亮，那就是它的用处。
         -->
         <slot
           name="rail"

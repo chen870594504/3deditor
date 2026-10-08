@@ -1,79 +1,67 @@
 <script setup lang="ts">
-import { computed, useTemplateRef, watch } from 'vue'
-import { TresCanvas } from '@tresjs/core'
-import type { Object3D } from 'three'
-import SceneContent from './SceneContent.vue'
-import ScenePicker from './ScenePicker.vue'
-import SceneSelection from './SceneSelection.vue'
-import SceneToolbar from './SceneToolbar.vue'
+import { useTemplateRef, watch } from 'vue'
+import SceneCanvas from './SceneCanvas.vue'
+import SceneEditor from '../editor/components/SceneEditor.vue'
 import { useSceneStore } from '../stores/scene'
-import { resolveSceneSwitches } from '../utils/sceneSwitches'
-import { cloneFloorplanPatch, cloneModelPatch, migrateConfig } from '../utils/config'
+import {
+  INSPECTOR_TAB_PREFIX,
+  SIDE_TAB_PREFIX,
+  panelSlotNames,
+} from '../editor/utils/panelSlots'
 import type {
   CameraChangePayload,
   DeepPartial,
-  ModelBounds,
-  ModelConfig,
   ModelPickPayload,
   ModelTransformPayload,
   ObjectClickPayload,
   SceneConfig,
+  SceneViewerApi,
   SceneViewerProps,
 } from '../types'
 
+/*
+  公开面。宿主只看得到这一个组件，`TdmSceneViewer` 这个全局名也归它。
+
+  它按 `editable` 选一种形态渲染：
+
+  - `true` → `SceneEditor`（三栏工作台，含左右栏与事件弹窗）
+  - 其余 → `SceneCanvas`（纯画布；`false` 是四个开关全关的只读态，
+    **不传**则走旧默认——内置工具栏还开着，那是 `editable` 出现之前的形状）
+
+  两种形态共用同一块画布（`SceneCanvas`），所以 `defineExpose` 那 5 个方法
+  与 12 个事件在哪种形态下都成立。区别只在「谁来喂画布那几个内部值」：
+  画布态下面没有别人，走 `SceneCanvas` 自己的默认；编辑态由 `EditorStage` 喂
+  （内置工具栏让位、手柄模式、相机过渡时长）。见 DESIGN.md 设计决定 47。
+*/
 defineOptions({ name: 'TdmSceneViewer' })
 
 const props = withDefaults(defineProps<SceneViewerProps>(), {
-  model: '',
-  background: '#0b1020',
-  environment: undefined,
   height: '480px',
   /*
-    这五个必须显式写成 `undefined`，**不是**可有可无的写法，也不是「顺手对齐格式」。
+    这两个必须是 `undefined`，不是可有可无的写法。
 
-    它们的类型都是 `boolean`，而 Vue 对声明为布尔的 prop 有一条特例：**缺失且没有
-    default 时把值转成 `false`**，而不是留成 `undefined`。于是 `props.toolbar` 就分不出
-    「宿主说了 false」与「宿主什么都没说」——而下面那条三级规则
-    （`分开关 ?? 总闸 ?? 旧默认`，实现见 utils/sceneSwitches.ts）全靠这个区分：
+    `editable` 的类型是 `boolean`，而 Vue 对布尔 prop 有一条特例：**缺失且没有
+    default 时转成 `false`**。于是「不传」会被当成「宿主说了 false」，旧默认那一支
+    （内置工具栏还开着）就永远走不到——所有已发布宿主的内置工具栏会一起消失，
+    而且不报错，只有肉眼看得出来。`default: undefined` 让 `hasDefault` 为真，
+    跳过那次转换。
 
-    - `toolbar` / `pickable` / `selection` / `gizmo` 漏了 `undefined`：分开关恒有值，
-      总闸永远轮不到，`:editable="true"` 变成一句空话；
-    - `editable` 漏了它：**默认变成 `false`**，也就是所有宿主一夜之间进入预览模式——
-      内置工具栏消失、点不中模型、手柄也不出来。不报错，只有肉眼看得出来。
-
-    写 `default: undefined` 是关掉那条布尔特例的办法（`hasDefault` 为真即跳过转换），
-    冒烟测试里「一个 prop 都不传仍然有内置工具栏」那一条守的就是它。
-    早在这里的 `environment: undefined` 是同一个写法，只是它不为布尔、撞不上这条特例。
+    详细后果与冒烟测试的落点写在 `SceneCanvas` 里那段注释上，两处守的是同一件事。
   */
   editable: undefined,
-  toolbar: undefined,
   autoRotate: false,
-  wireframe: false,
-  showGrid: true,
   draco: false,
-  pickable: undefined,
-  selection: undefined,
-  gizmo: undefined,
-  gizmoMode: 'translate',
-  cameraTransition: 0,
-  camera: undefined,
-  ground: undefined,
-  floorplan: undefined,
-  sun: undefined,
-  shadow: undefined,
+  /*
+    `initialScene` 也显式写 `undefined`：它没有合理的默认值，而「宿主到底传没传」
+    本身就是要紧的——下面那个一次性 watcher 只在**第一次拿到非空值**时落笔。
+  */
+  initialScene: undefined,
 })
 
-/**
- * 四个开关的**生效值**——模板与所有判断一律读它，不要直接读上面的 prop。
- *
- * 直接读 prop 的后果是总闸整个失效（`editable` 只管默认值，不改 prop 本身），
- * 而这件事在画面上只表现为「传了 editable 没反应」。
- *
- * `computed` 是必要的：`props` 是响应式的，规则本身是条纯算术，
- * 写成普通常量会把开关冻结在首次渲染那一刻。
- */
-const switches = computed(() => resolveSceneSwitches(props))
-
+/*
+  事件与 `SceneCanvas` 完全一致，**一个不删**。它们是宿主已经在用的公开面，
+  与方法那 5 条不同——方法可以按形态转发，事件是两条路都要接上的。
+*/
 const emit = defineEmits<{
   (e: 'loaded'): void
   (e: 'progress', percentage: number): void
@@ -91,476 +79,160 @@ const emit = defineEmits<{
 
 const scene = useSceneStore()
 
-/**
- * 右键只在自己真的会响应时才拦下原生菜单。
- *
- * 无条件的 `@contextmenu.prevent` 更省事，但那是**对外行为的变化**：
- * 宿主把画布嵌在自己的页面里，用户右键时该看到自己页面的菜单，
- * 除非宿主明确打开了右击事件。所以这个判断不能省。
- *
- * 多模型下判据是「有没有**任意一个**模型开了右击」：菜单是画布级的，
- * 只要有一个模型想响应右键，整块画布就得让开；至于最后是谁被点到，
- * 由各自的包裹组决定。
- */
-function onContextMenu(event: MouseEvent) {
-  const armed = scene.config.models.some(
-    (model) => model.events?.contextmenu?.enabled === true,
-  )
-  if (!armed) return
-  event.preventDefault()
-}
+/*
+  `autoRotate` 与 `draco` 是两条 prop → store 桥。它们与删掉的那些
+  （`background` / `wireframe` / 分组配置…）的分别在于：
 
-/**
- * props 是对外的受控入口，先同步进 store，
- * 之后工具栏等内部组件直接读写 store，实现状态共享。
- * 同步只在 prop 真正变化时触发，因此用户用工具栏改过开关后不会被覆盖。
- *
- * `model` 有两种写法：只给地址的字符串，以及直接给整个模型分组。
- * 分组比扁平的 `wireframe` 更具体，两者同时给出时应当由分组胜出
- * （与 `sun.environment` / 扁平 `environment` 是同一个规则）。
- *
- * 但这件事**不能靠注册顺序**：两个 watcher 都是 immediate，会在 setup 里
- * 同步按注册顺序各跑一次，后注册的那个反而最后落笔、赢的是它。
- * 所以让位的责任落在扁平那一侧——见下面 `wireframe` 的 watcher。
- */
-function applyModelProp(value: string | DeepPartial<ModelConfig> | undefined) {
-  if (typeof value === 'string') {
-    value ? scene.setModel(value) : scene.clearModel()
-    return
-  }
-  if (!value) return
+  - 它们不是「场景长什么样」的一部分，而是两个**开关**，宿主写一行就想要结果；
+  - 更实际的一条：`draco` 只在「加模型」那一下有意义，宿主在 `addModel` 之前
+    没有别的地方能表达它。
 
-  const { url, ...rest } = value
-
-  /**
-   * url 单独走 setModel 而不是一起深合并：只有它会顺带复位
-   * loading / progress / error，并换一个新的模型 id，这正是它存在的理由。
-   *
-   * 先落 url 再落其余字段，顺序是有讲究的：宿主若显式传了 `id`
-   * （想要「换模型也保持同一个 id」的场景），按这个顺序它最后落笔、说了算；
-   * 反过来就会被 setModel 新生成的 id 冲掉。
-   *
-   * 其余字段走 `patchModel` 写进「刚被 setModel 选中」的那个模型。
-   * 早先这里是一句 `applyConfig({ model: rest })`，多模型之后那个顶层键
-   * 已经不存在了；而写成 `applyConfig({ models: [rest] })` 又会把整张列表
-   * 换成只有一个模型——宿主传一个 prop 不该顺手删掉场景里的其他模型。
-   */
-  if (url !== undefined) {
-    url ? scene.setModel(url) : scene.clearModel()
-  } else if (Object.keys(rest).length > 0 && !scene.selectedModel) {
-    /*
-     * 宿主只给了物体级字段、没给 url，而场景又是空的：先补一个条目出来。
-     *
-     * `patchModel` 落在**选中项**上，空场景里没有选中项，它会静静地什么都不做——
-     * 一个 prop 被无声忽略，比报错更难查。补出来的就是内置示例几何体，
-     * 紧接着由下面那句把宿主给的字段写上去。
-     *
-     * 这与字符串形态的承诺是同一条：选中项不存在（空场景）时追加一个新的。
-     */
-    scene.addModel()
-  }
-
-  if (Object.keys(rest).length > 0) scene.patchModel(cloneModelPatch(rest))
-}
-
-/** model 分组里是否显式写了这个字段 */
-function modelDeclares(key: keyof ModelConfig): boolean {
-  const value = props.model
-  return typeof value === 'object' && value !== null && value[key] !== undefined
-}
-
-watch(() => props.model, applyModelProp, { immediate: true, deep: true })
-watch(() => props.background, (value) => { scene.background = value }, { immediate: true })
+  `draco` 落在**当前选中项**上（库一贯的语义，与旧版逐字一致）：场景空着、
+  没有选中项时它会什么都不做。要精确控制请用 `addModel(url, { draco: true })`。
+*/
 watch(() => props.autoRotate, (value) => { scene.autoRotate = value }, { immediate: true })
-/**
- * 扁平的 wireframe / draco 是分组配置出现之前的写法，保留以免破坏已发布的 API。
- *
- * 让位条件放进依赖列表而不是在回调里只读一次：宿主事后把 `wireframe`
- * 从 model 对象里摘掉、只留扁平 prop 时，这条路径要能重新接管。
- */
-watch(
-  [() => props.wireframe, () => modelDeclares('wireframe')],
-  ([value, declared]) => {
-    if (!declared) scene.wireframe = value
-  },
-  { immediate: true },
-)
-watch(
-  [() => props.draco, () => modelDeclares('draco')],
-  ([value, declared]) => {
-    if (!declared) scene.patchModel({ draco: value })
-  },
-  { immediate: true },
-)
-watch(() => props.showGrid, (value) => { scene.showGrid = value }, { immediate: true })
+watch(() => props.draco, (value) => { scene.patchModel({ draco: value }) }, { immediate: true })
 
 /**
- * 分组配置走深合并，宿主只写要覆盖的那几项即可。
+ * `initialScene`：挂载时装载一份场景数据，**只装一次**。
  *
- * 刻意不做「卸载时还原」：这些 prop 表达的是宿主的期望值，
- * 而不是一次性的初始值，反复挂载同一个组件不该产生不同的结果。
+ * 用 watcher 而不是在 setup 里直接调一次，是为了覆盖「数据后到」：
+ * 先渲染 `<SceneViewer :initial-scene="null" />`、拉到数据再赋值的写法必须能用。
+ * 第一次拿到非空值之后 `applied` 置位，之后再赋值一律不再生效——这就是名字里
+ * 那个 `initial` 的全部含义，也是它**不是**受控绑定的原因：父组件手里那份对象
+ * 与 store 之间没有回流，用户在画布上改的东西不会被覆盖（编辑态下组件每帧写回
+ * store，受控绑定根本没法工作）。
+ *
+ * **顺序要紧，不能挪到上面那两条 watch 之前。** `draco` 那条带着默认值 `false`
+ * 立即跑一次 `patchModel({ draco: false })`；若 `initialScene` 先落笔，此刻
+ * `models[0]` 已经存在，那一下会把整份场景里那个模型的 `draco: true` **静静抹掉**。
+ * 排在这儿则是反过来：整份场景最后落笔，它自带的 `autoRotate` 与逐模型的 `draco`
+ * 说了算——与 README 里那条「两者同时传时以 `initialScene` 为准」是同一件事。
+ *
+ * 它写的是 store，而 store 是全局的，所以**不必**把这个 prop 往
+ * `SceneEditor` / `EditorStage` / `SceneCanvas` 三层透传。
  */
-watch(() => props.sun, (value) => { if (value) scene.applyConfig({ sun: value }) }, {
-  immediate: true,
-  deep: true,
-})
-watch(() => props.camera, (value) => { if (value) scene.applyConfig({ camera: value }) }, {
-  immediate: true,
-  deep: true,
-})
-watch(() => props.ground, (value) => { if (value) scene.applyConfig({ ground: value }) }, {
-  immediate: true,
-  deep: true,
-})
-watch(() => props.shadow, (value) => { if (value) scene.applyConfig({ shadow: value }) }, {
-  immediate: true,
-  deep: true,
-})
-/**
- * 户型图是唯一一个**必须自己先克隆一遍**的分组桥。
- *
- * 上面前四条直接把 `value` 交给 `applyConfig` 就够了——它们的补丁全是标量，
- * 没有数组也没有嵌套对象，`applyPatch` 按值装进去即可。
- * 户型图不一样：`walls` / `openings` / `rooms` 都是数组，而 `applyPatch` 的
- * `isPlainObject` **显式排除了数组**，于是走 `target[key] = value`——
- * 宿主那个 reactive 数组会**本体**成为配置里的一份。它之后就地 push 一下
- * 就是静默改场景，历史栈里还查无此事（正是 `cloneFloorplanPatch` 存在的理由，
- * 也是 `types.ts:457` 那句「宿主调 applyConfig 传数组时请先过一遍」的落点）。
- *
- * **这一条特别要紧**：`applyConfig` 自己不克隆（只有 `patchModel` 走
- * `cloneModelPatch`），所以漏了这一句不会有任何报错，
- * 只会在宿主某天改了自己那个数组时诡异地生效。
- */
+let initialSceneApplied = false
 watch(
-  () => props.floorplan,
+  () => props.initialScene,
   (value) => {
-    if (value) scene.applyConfig({ floorplan: cloneFloorplanPatch(value) })
-  },
-  { immediate: true, deep: true },
-)
-
-/**
- * 扁平的 environment 是分组配置出现之前的写法，保留以免破坏已发布的 API。
- * 分组写法更具体，两者同时给出时以 sun.environment 为准。
- */
-watch(
-  () => props.environment,
-  (value) => {
-    if (value === undefined || props.sun?.environment !== undefined) return
-    scene.applyConfig({ sun: { environment: value } })
+    if (initialSceneApplied || !value) return
+    initialSceneApplied = true
+    scene.loadSceneData(value)
   },
   { immediate: true },
 )
 
-const canvasHeight = computed(() =>
-  typeof props.height === 'number' ? `${props.height}px` : props.height,
-)
-
-/** 'transparent' 时让 canvas 透明透出宿主页面，否则用 store 里的背景色 */
-const isTransparent = computed(() => scene.background === 'transparent')
-const clearColor = computed(() => (isTransparent.value ? '#000000' : scene.background))
-
 /**
- * 任何一类阴影都要打开 renderer.shadowMap。
+ * 12 个事件逐条转发。
  *
- * 接触阴影与累积阴影虽然是自己渲染到独立 target 的，
- * 但累积阴影内部那盏聚光灯仍然依赖 shadowMap 才能出图，
- * 所以这里不按 type 收窄；重复投影的问题在 SceneContent 里靠
- * 主光的 cast-shadow 收窄解决。
+ * 写成一张表而不是模板里排 12 条 `@x="emit('x', $event)"`：键名与 `defineEmits`
+ * 的声明一一对应，漏一个就是少一行、在模板上看得见；排成 12 条模板属性时
+ * 漏掉的那条只会表现为「宿主收不到某个事件」，而事件是**没有编译期检查**的。
+ *
+ * `v-on` 的对象形态会把键名转成 `onXxx`（Vue 的 `toHandlers`），正好与
+ * `SceneCanvas` 声明的事件名对上。
  */
-const shadowsEnabled = computed(() => scene.config.shadow.enabled)
-
-function onLoaded() {
-  scene.markLoaded()
-  emit('loaded')
+const forwarded = {
+  loaded: () => emit('loaded'),
+  progress: (percentage: number) => emit('progress', percentage),
+  error: (message: string) => emit('error', message),
+  cameraChange: (payload: CameraChangePayload) => emit('cameraChange', payload),
+  objectClick: (payload: ObjectClickPayload) => emit('objectClick', payload),
+  objectDblclick: (payload: ObjectClickPayload) => emit('objectDblclick', payload),
+  objectPointerEnter: (payload: ObjectClickPayload) => emit('objectPointerEnter', payload),
+  objectPointerLeave: (payload: ObjectClickPayload) => emit('objectPointerLeave', payload),
+  objectContextMenu: (payload: ObjectClickPayload) => emit('objectContextMenu', payload),
+  modelPick: (payload: ModelPickPayload) => emit('modelPick', payload),
+  modelTransform: (payload: ModelTransformPayload) => emit('modelTransform', payload),
+  modelTransformEnd: (payload: ModelTransformPayload) => emit('modelTransformEnd', payload),
 }
 
-function onProgress(percentage: number) {
-  scene.setProgress(percentage)
-  emit('progress', percentage)
+/*
+  两种形态各有一个模板引用，另外两个转发入口就完全同形。
+
+  `api` 那个 computed 而不是在 `defineExpose` 里写 `editable ? … : …`：
+  `defineExpose` 的对象在组件实例上是**静态**的一份（它的成员被逐条读，不重新求值），
+  把条件写在字段里会让「切换形态后方法还指向旧那个」这类问题无从察觉；
+  收成一个 computed 之后，5 个方法只有一处分支。
+*/
+const canvasRef = useTemplateRef<SceneViewerApi>('canvasRef')
+const editorRef = useTemplateRef<SceneViewerApi>('editorRef')
+
+function activeApi(): SceneViewerApi | null {
+  return (props.editable === true ? editorRef.value : canvasRef.value) ?? null
 }
 
-function onError(message: string) {
-  scene.markFailed(message)
-  emit('error', message)
-}
-
-/**
- * TresCanvas 的 error 事件给的是 Error 实例，与组件对外的
- * error 事件（字符串）不是同一个形状，这里做一次转换，
- * 顺带把 WebGL 上下文创建失败也纳入同一套错误状态。
- */
-function onCanvasError(error: unknown) {
-  onError(error instanceof Error ? error.message : String(error))
-}
-
-/**
- * 拖动结束后把相机写回 store，编辑器面板才能显示当前视角。
- * 这次写入同时会进历史栈，因此一次拖动正好是一条可撤销记录。
- */
-function onCameraChange(payload: CameraChangePayload) {
-  scene.applyConfig({ camera: { position: payload.position, target: payload.target } })
-  emit('cameraChange', payload)
-}
-
-/**
- * 画布内部的内容组件，用来取它的 `captureCamera` / `measureModel` / `modelObjectOf`。
- *
- * 隔着 TresCanvas 拿模板引用是可行的——TresJS 换的是渲染器，
- * 组件仍然由 Vue 创建和挂载。
- *
- * 这几条是**内部通道**，与下面 `defineExpose` 里那些不是一回事：
- * 后者是组件对宿主的公开面，而 `modelObjectOf` 只在库内部被选中视觉（`selectedObject`）
- * 用一次，交出去的是一只活的 three 对象，不该成为宿主的 API。
- *
- * `useTemplateRef` 返回的是 `readonly(代理)`，但这里可以照用：readonly 的代理
- * 没有 apply trap，调用方法时仍然落到原函数上，返回值也不经过包装
- * （见 SceneContent 里那段「为什么不给 three 对象用 useTemplateRef」——
- * 那条讲的是**读 `.value` 拿裸对象**，与这里「调用一个方法」是两回事）。
- */
-const contentRef = useTemplateRef<{
-  captureCamera: () => CameraChangePayload | null
-  measureModel: (id: string) => ModelBounds | null
-  modelObjectOf: (id: string) => Object3D | null
-  groundPointAt: (clientX: number, clientY: number) => [number, number] | null
-}>('contentRef')
-
-/**
- * 抓取当前机位并写回配置，返回是否抓到了。
- *
- * 拖动结束会自动回写，所以平时用不上；但自动旋转开着时相机一直在动、
- * 永远不会触发拖动结束，只能靠这个方法主动取一次。
- */
-function captureCamera(): boolean {
-  const pose = contentRef.value?.captureCamera()
-  if (!pose) return false
-
-  // 带标签写入：历史里记成一步明确的操作，而不是自动拼出的「相机」
-  scene.applyConfig(
-    { camera: { position: pose.position, target: pose.target } },
-    '抓取当前视角',
-  )
-  emit('cameraChange', pose)
-  return true
-}
-
-/**
- * 量一个模型的世界包围盒，量不了时返回 null。
- *
- * 纯转发，只在 `contentRef` 还没挂上时兜底成 null——那与「模型还没加载完」
- * 是同一个返回值，调用方本来就只需要处理一种「现在量不了」。
- */
-function measureModel(id: string): ModelBounds | null {
-  return contentRef.value?.measureModel(id) ?? null
-}
-
-/**
- * 把屏幕坐标换算成地面平面上的 `[x, z]`，落不到时返回 `null`。
- *
- * 纯转发，与 `measureModel` 同一条路数。**它不是一条事件通道**：库只回答
- * 「这一点对应地面的哪个位置」，至于这一点意味着「画一面墙」还是「什么都不做」，
- * 是宿主/编辑器自己的事。所以这里既没有 emit 也没有 payload 类型，
- * 与 `pickable` / `modelPick` 那一套是两回事。
- *
- * 落不到地面的三种情况（相机或画布没就绪、画布还没尺寸、视线与地面平行）
- * 一律返回 null，调用方自己决定怎么办——编辑器那边是「这一步不算数」。
- */
-function groundPointAt(clientX: number, clientY: number): [number, number] | null {
-  return contentRef.value?.groundPointAt(clientX, clientY) ?? null
-}
-
-/**
- * 当前选中模型的那只 three 组；没有选中、还没挂上、或模型被隐藏时是 null。
- *
- * 「隐藏就不给」是刻意的：包围框与手柄都会让用户以为那个位置有个可操作的东西，
- * 而它此刻并不在画面上。隐藏的模型**仍然可以被量尺寸**（贴地那条路径依赖这一点），
- * 两件事不冲突——一个要的是数字，一个要的是可交互的对象。
- *
- * 依赖链是完整的：`scene.selectedModel`（换人 / 改可见性）→ `measurers` 那张表
- * （节点增删）→ 节点自己的 `modelGroup`（组挂上）。三者任一变化，
- * 这个 computed 都会重算，所以 `contentRef` 还没挂上时先拿到 null 也没关系。
- */
-const selectedObject = computed(() => {
-  const model = scene.selectedModel
-  if (!model || !model.visible) return null
-  return contentRef.value?.modelObjectOf(model.id) ?? null
-})
-
-/**
- * 手柄拖拽过程中的写回。
- *
- * **不传 label**：一次拖拽会产生几十次写入，逐次入栈没法看——store 里那个 400ms
- * 的防抖窗口正是为这种连续改动准备的（与拖动滑块同一条路）。于是整段拖拽在历史里
- * 只会留下一条记录，标签是自动拼出的「模型属性」；想要更好看的标签，宿主持
- * `modelTransformEnd` 再写一次即可，那次会把这个防抖提交顶掉。
- *
- * 库自己写回而不是只发事件，与相机拖动那条路（`onCameraChange`）是对称的：
- * 「在画布上拖出一个物理量」这件事默认就该生效，宿主一行代码都不写也能用。
- *
- * 按 id 找下标而不是直接用当前选中项：库这一层不假设「拖的一定是选中的那个」，
- * 手柄的物体本来就是宿主选中的，两者一致时结果相同，不一致时也不会改错人。
- */
-function onTransform(payload: ModelTransformPayload) {
-  const index = scene.models.findIndex((model) => model.id === payload.id)
-  if (index < 0) return
-
-  scene.patchModel(
-    { position: payload.position, rotation: payload.rotation, scale: payload.scale },
-    undefined,
-    index,
-  )
-  emit('modelTransform', payload)
-}
-
-/**
- * 取当前场景配置的深拷贝，可直接 JSON 序列化后交给宿主自己的接口。
- *
- * **不返回 null**，与上面三条不同：那三条要隔着 `contentRef` 问画布，
- * 画布还没挂上时只能给空；这一条只读 store，而 store 一定在。
- * 写成「可能为 null」只会让宿主多写一层永远走不到的分支。
- *
- * 出去的是**裸的** `SceneConfig`：版本号、场景名、导出时间这类外壳由宿主自己定，
- * 库不替它立这个契约。场景名本来也不在 `SceneConfig` 里——它是编辑器的界面状态。
- */
-function getSceneData(): SceneConfig {
-  return scene.exportConfig()
-}
-
-/**
- * 用一份场景数据初始化场景，返回是否用上了。
- *
- * 与直接调 store 的 `applyConfig` 有两处不同，这两处正是它存在的理由：
- *
- * 1. **先走一遍 `migrateConfig`**，把旧版写 `model`（单对象）的配置折成 `models`
- *    列表。少了这一道不会报错，只会「载入成功但模型没变」——详见那个函数的注释。
- * 2. **载入后清空撤销栈**。这是「初始化」的语义：换了一个场景之后还能 ⌘Z 退回
- *    上一个通常不是想要的，两段无关的历史混在一起也没法看。
- *    （想要「可撤销的载入」，宿主自己调 `applyConfig(patch, '标签')` 即可。）
- *
- * 输入与 `applyConfig` 一样按 `DeepPartial` 收：只写要覆盖的分组，其余保持当前值。
- * `undefined` 表示「本次不改这一项」，`null` 是合法的清空值。
- */
-function loadSceneData(data: DeepPartial<SceneConfig>): boolean {
-  if (typeof data !== 'object' || data === null) return false
-
-  // 不带 label：紧接着 clearHistory 就把当前状态设成新起点了，
-  // 先 commit 一条再把它清掉是多此一举
-  scene.applyConfig(migrateConfig(data))
-  // clearHistory 会顺带清掉 applyConfig 排下的那条 400ms 防抖提交，
-  // 所以这里不会留下一个稍后触发的悬挂写入
-  scene.clearHistory()
-  return true
-}
-
-defineExpose({
-  captureCamera,
-  measureModel,
-  groundPointAt,
-  getSceneData,
-  loadSceneData,
+/*
+  5 个方法转发。三条要隔着画布问（`?? ` 兜底成「现在拿不到」，与原实现同值），
+  另外两条落到 store：`getSceneData` 只读 store、**承诺不返回 `null`**；
+  `loadSceneData` 的实现本来就在 store 里（`SceneCanvas` 那一层也只转发），
+  所以画布没挂上时本组件自己调一次同样成立——**挂载前调也能用**。
+  两条都让本组件自己兜底，好过把 `!` 压上去——那会在挂载前抛异常，
+  比原来的行为更差。
+*/
+defineExpose<SceneViewerApi>({
+  captureCamera: () => activeApi()?.captureCamera() ?? false,
+  measureModel: (id) => activeApi()?.measureModel(id) ?? null,
+  groundPointAt: (clientX, clientY) => activeApi()?.groundPointAt(clientX, clientY) ?? null,
+  getSceneData: () => activeApi()?.getSceneData() ?? scene.exportConfig(),
+  loadSceneData: (data: DeepPartial<SceneConfig>) =>
+    activeApi()?.loadSceneData(data) ?? scene.loadSceneData(data),
 })
 </script>
 
 <template>
-  <div class="tdm-root" :style="{ height: canvasHeight }" @contextmenu="onContextMenu">
-    <TresCanvas
-      :clear-color="clearColor"
-      :alpha="isTransparent"
-      :shadows="shadowsEnabled"
-      @error="onCanvasError"
-    >
-      <SceneContent
-        ref="contentRef"
-        :models="scene.config.models"
-        :floorplan="scene.config.floorplan"
-        :camera="scene.config.camera"
-        :ground="scene.config.ground"
-        :sun="scene.config.sun"
-        :shadow="scene.config.shadow"
-        :camera-transition="cameraTransition"
-        @loaded="onLoaded"
-        @progress="onProgress"
-        @error="onError"
-        @camera-change="onCameraChange"
-        @object-click="emit('objectClick', $event)"
-        @object-dblclick="emit('objectDblclick', $event)"
-        @object-pointer-enter="emit('objectPointerEnter', $event)"
-        @object-pointer-leave="emit('objectPointerLeave', $event)"
-        @object-context-menu="emit('objectContextMenu', $event)"
-      />
+  <!--
+    编辑态：三栏工作台。`height` 照传——两种形态的根都是同一个高度契约，
+    宿主写一次 `height="100%"` 在两种形态下都铺满。
+  -->
+  <SceneEditor
+    v-if="editable === true"
+    ref="editorRef"
+    :height="height"
+    :side-tabs="sideTabs"
+    :inspector-tabs="inspectorTabs"
+    v-on="forwarded"
+  >
+    <!--
+      宿主页的内容透传下去。中间隔着本组件与 `SceneEditor` 两层，而插槽不会自己
+      往下走——两层都要按前缀挑一遍再转（写法与理由见 `utils/panelSlots.ts`）。
 
-      <!--
-        画布级的点选拾取。放在这一层而不是 SceneContent 里，是为了不动
-        SceneContent 那句「不依赖 TresCanvas 内部的注入链」的承诺：
-        本组件是第一个绕开那条链的（全仓库共三处，见 DESIGN.md 设计决定 4），
-        它只碰 3D 层的东西、不访问 store，命中之后只说「这个 id 被点了」。
+      **只挑那两个前缀**，不做「除了 `#scene` 全转发」：后者会把右栏的插槽也塞进
+      左栏，而多出来一个没被读到的插槽**不报错**。
+    -->
+    <template v-for="name in panelSlotNames($slots, SIDE_TAB_PREFIX)" #[name]="scope">
+      <slot :name="name" v-bind="scope" />
+    </template>
+    <template v-for="name in panelSlotNames($slots, INSPECTOR_TAB_PREFIX)" #[name]="scope">
+      <slot :name="name" v-bind="scope" />
+    </template>
 
-        它是空模板组件（渲染返回 null），只在 pickable 打开时才存在；
-        关掉时连那两个 DOM 监听器都不挂。
-      -->
-      <ScenePicker v-if="switches.pickable" @pick="emit('modelPick', $event)" />
-
-      <!--
-        选中视觉：包围框与变换手柄，作用于 store 里那个选中的模型。
-
-        与 ScenePicker 一样放在这一层、不进 SceneContent：本层是唯一读 store 的地方，
-        而选中项正是 store 里的界面状态，交给 SceneContent 就得再定义一套 props
-        把它传进去，那条链上没有任何一环需要知道这件事。
-
-        它是空组件之外的普通组件，但一样「关掉就什么都不存在」：
-        两个开关都没开时连这个组件都不渲染，里面那次每帧的包围盒计算自然也没有。
-      -->
-      <SceneSelection
-        v-if="switches.selection || switches.gizmo"
-        :model-id="scene.selectedModel?.id ?? ''"
-        :object="selectedObject"
-        :box="switches.selection"
-        :gizmo="switches.gizmo"
-        :mode="gizmoMode"
-        @transform="onTransform"
-        @transform-end="emit('modelTransformEnd', $event)"
-      />
-
-      <!--
-        宿主注入自有 3D 内容的入口。
-        注意：这里只能是组件或元素，不能用裸 <template> 包裹——
-        TresJS 的编译器会把裸 <template> 当成字面量标签，
-        其子节点会被静默挂到 Scene 根上；带 v-if / v-for 的 <template> 不受影响。
-      -->
+    <template #scene>
       <slot name="scene" />
-    </TresCanvas>
+    </template>
+  </SceneEditor>
 
-    <SceneToolbar v-if="switches.toolbar" />
-
+  <!--
+    画布态：`editable` 原样转下去，`false` 与 `undefined` 在这一层是**两件事**
+    （前者四个开关全关，后者走旧默认），所以这里只能传 `props.editable`，
+    不能写成 `:editable="false"`。`v-bind` 传 `undefined` 时键仍在 rawProps 里，
+    Vue 那条布尔特例不会启动。
+  -->
+  <SceneCanvas
+    v-else
+    ref="canvasRef"
+    :height="height"
+    :editable="editable"
+    v-on="forwarded"
+  >
     <!--
-      加载进度遮罩。pointer-events: none 是必须的：它是 inset-0 的，
-      命中判定留在身上就会把整张画布的指针事件全吃掉——不只是点选拾取，
-      连 OrbitControls 的转视角都一起失效（它的监听器就挂在 canvas 上）。
-      这一层是纯信息、没有任何可点内容，去掉命中不会让它变得不好用。
+      `#scene` 透传给宿主。这一层必须是**具名插槽的 template**，
+      不能是裸 `<template>`——后者会被 TresJS 的编译器当成字面量标签，
+      子节点静默挂到 Scene 根上（见 SceneCanvas 里同一处注释）。
     -->
-    <div
-      v-if="scene.loading"
-      class="tdm-loading"
-    >
-      <span>模型加载中 {{ scene.progress }}%</span>
-      <div class="tdm-progress">
-        <div
-          class="tdm-progress-bar"
-          :style="{ width: `${scene.progress}%` }"
-        />
-      </div>
-    </div>
-
-    <!--
-      失败提示：只覆在画布顶部，不遮挡已经渲染出来的内容。
-      同样要 pointer-events: none——它横跨整个宽度，不然画布顶边那一条
-      会变成点不到、也拖不动的死区。
-    -->
-    <div
-      v-if="scene.hasError"
-      class="tdm-error"
-    >
-      模型加载失败：{{ scene.error }}
-    </div>
-  </div>
+    <template #scene>
+      <slot name="scene" />
+    </template>
+  </SceneCanvas>
 </template>

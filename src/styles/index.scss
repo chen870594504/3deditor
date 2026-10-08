@@ -12,11 +12,20 @@
  * `@use` 的先后**就是产物里规则的先后**，所以顺序本身是契约的一部分：
  * 令牌必须排在所有消费者之前；其余按「先根、后控件」排。
  *
- * 加一个 partial 时留意一处老坑：`playground/styles/editor.scss` 里有几条规则
+ * 加一个 partial 时留意一处老坑：`src/styles/_editor.scss` 里有几条规则
  * **靠源码顺序决胜负**（`.tdm-view-btn` / `.tdm-draw-btn` 那三档 min-width，
- * 特异性同为 (0,1,0)，后面的赢；以及排在最末的那些 `@media`）。那些规则搬进来时
+ * 特异性同为 (0,1,0)，后面的赢；以及那几个 `@media`）。那些规则搬进来时
  * 必须维持它们的相对次序，或者改写成靠特异性表达——见 CLAUDE.md 硬性约束 8。
  */
 
 @use './tokens';
 @use './canvas';
+
+/* 编辑器那三栏与面板的样式。
+ *
+ * 排在 `canvas` **之后**：编器样式里没有一条重定义 `.tdm-root` / `.tdm-toolbar` /
+ * `.tdm-loading` / `.tdm-progress` / `.tdm-error`（与画布那几条撞名的只有
+ * `.tdm-viewport > .tdm-root`，它靠 (0,2,0) 的特异性赢，不靠顺序），所以这里
+ * 换了先后也不会改任何一条的胜负。真正的顺序依赖在 `_editor.scss` 的**内部**。
+ */
+@use './editor';

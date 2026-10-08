@@ -1,6 +1,7 @@
 import type { App, Component, Plugin } from 'vue'
 import { createPinia } from 'pinia'
 import { EDITOR_ASSETS_KEY, EMPTY_EDITOR_ASSETS } from './editor/assets'
+import { EDITOR_HOOKS_KEY, EMPTY_EDITOR_HOOKS } from './editor/hooks'
 import SceneFloorplan from './components/SceneFloorplan.vue'
 import SceneToolbar from './components/SceneToolbar.vue'
 import SceneViewer from './components/SceneViewer.vue'
@@ -173,6 +174,21 @@ export { useEditorAssets } from './editor/assets'
 export type { EditorAssetCategory, EditorAssetEntry, EditorAssets } from './editor/assets'
 
 /**
+ * 编辑器回调宿主的入口。
+ *
+ * `useEditorHooks` 与 `useEditorAssets` 同一个理由导出：宿主自己也要用同一份
+ * ——典型是宿主在画布外自绘一栏、或者自己写一个「运行一次」的按钮，读的必须是
+ * 编辑器读到的那份回调，另存一份副本迟早不一致。
+ *
+ * `EditorHooks` 类型随包导出，是因为宿主写 `createThreeDMaker({ hooks })` 时
+ * 就是照它拼那个对象。它唯一的成员 `runEventCode` **必须由宿主提供**：
+ * 库里没有任何一份默认实现（那需要 `new Function`，见该类型的注释）。
+ */
+export { useEditorHooks } from './editor/hooks'
+
+export type { EditorHooks } from './editor/hooks'
+
+/**
  * 模型 id 的派生子。
  *
  * `object-click` 载荷里的 id 就是这么算出来的，导出它是为了让宿主
@@ -260,7 +276,7 @@ declare module 'vue' {
  * ```
  */
 export function createThreeDMaker(options: ThreeDMakerOptions = {}): Plugin {
-  const { pinia, registerComponents = true, prefix = 'Tdm', assets } = options
+  const { pinia, registerComponents = true, prefix = 'Tdm', assets, hooks } = options
 
   return {
     install(app: App) {
@@ -282,6 +298,15 @@ export function createThreeDMaker(options: ThreeDMakerOptions = {}): Plugin {
        * 不发任何请求、不报错，库一个字面量地址都不含。
        */
       app.provide(EDITOR_ASSETS_KEY, assets ?? EMPTY_EDITOR_ASSETS)
+
+      /**
+       * 编辑器回调宿主的那几件事，与素材同一条路数与同一条理由。
+       *
+       * 今天只有 `runEventCode`：执行模型事件绑定里那段代码要 `new Function`，
+       * 而库不许含它（见 `EditorHooks`）。不传就是空对象——编辑器照常渲染，
+       * 只是不执行任何用户代码。
+       */
+      app.provide(EDITOR_HOOKS_KEY, hooks ?? EMPTY_EDITOR_HOOKS)
 
       if (!registerComponents) return
 

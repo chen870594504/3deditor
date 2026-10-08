@@ -143,52 +143,71 @@ const scene = useSceneStore()
 </script>
 
 <template>
-  <TdmSceneViewer model="/chair.glb" height="480px" />
-  <SceneViewer model="/chair.glb" :toolbar="false" @loaded="scene.markLoaded()" />
+  <TdmSceneViewer editable height="480px" />
+  <SceneViewer :editable="false" height="480px" @loaded="scene.markLoaded()" />
 </template>
 ```
 
-这段在展示两种用法并存：第一行走全局组件（有类型提示），第二行走具名导入（自己传 props）。
+这段在展示两种用法并存：第一行走全局组件（有类型提示），第二行走具名导入。两行都只有一个 `editable` 差着——中间那个 `:editable="false"` 是"只读画布"，去掉它就是"整个编辑器"。
 
 ## 预览还是编辑：`editable` 一个开关
 
 **问题**：有时候你只想让人转着看看模型，有时候你要让人真的动手改。要是为此维护两套组件，迟早会各长各的。
 
-**做法**：同一个 `SceneViewer`，用 `editable` 切换。
+**做法**：同一个 `SceneViewer`，用 `editable` 切换**形态**。
+
+| `editable` | 你得到的 |
+| --- | --- |
+| **不传** | 一块画布：三维视口 + 内置工具栏（这条是旧版行为，留着是为了兼容） |
+| `false` | 一块**只读**画布：没有内置工具栏，点不中模型，也没有包围框与手柄 |
+| `true` | **整个编辑器**：左栏挑料 ｜ 中栏画布 ｜ 右栏改属性，外加事件绑定弹窗、户型图绘制工具、W/E/R 与 Esc 与 ⌘Z |
 
 ```vue
-<!-- 只给人转着看：没有内置工具栏、点不中模型、也没有包围框与手柄 -->
-<SceneViewer :editable="false" model="/chair.glb" height="480px" />
+<!-- 只给人转着看：干干净净一块画布 -->
+<SceneViewer :editable="false" height="480px" />
 
-<!-- 可编辑：内置工具栏 + 点选 + 包围框 + 变换手柄 -->
-<SceneViewer :editable="true" model="/chair.glb" height="480px" />
+<!-- 可编辑：三栏工作台，给它一个有高度的容器它就铺满 -->
+<div style="height: 720px">
+  <SceneViewer editable height="100%" />
+</div>
 ```
 
-这两行只差一个 `editable`，页面上的表现差得很远：上面那行是一块干干净净的画布，下面那行冒出一条工具栏，点模型能选中，选中后出现一圈框和一副手柄。
+这两行只差一个 `editable`，页面上的表现差得很远：上面那行是一块干干净净的画布，下面那行是一个能直接用的场景编辑器。
 
-**它不新增任何能力**，只是改下面四个开关的默认值（`toolbar` / `pickable` / `selection` / `gizmo`）：
+**`editable` 里的一切都不用你配**：点选、包围框、变换手柄、工具栏的让位，全由它一处说了算。你要做的只有给它一个高度。
 
-| `editable` | 效果 |
-| --- | --- |
-| 不传（默认） | 完全按四个开关各自的值来——与没有这个 prop 之前一致 |
-| `false` | 四个一律关掉 |
-| `true` | 四个一律打开 |
+> `editable` 只管**形态**。12 个事件、5 个对外方法在两种形态下都在——`editable` 不会让它们增减。
 
-**谁显式传了谁说话。** `:editable="true"` 配上 `:toolbar="false"`，就是"要编辑，但不要内置工具栏"——你想自己画一条工具栏时就这么写。
+### 顶栏是你的
 
-`editable` 只管这四个开关。其余 prop、下面 12 个事件、5 个对外方法，都不会因为它而增减。
+编辑器**不包括顶栏**。场景名、保存、预览、"导出 JSON"这类按钮全是**策略**，库不知道你要把它们放哪、更不知道保存到哪去。所以：
 
-**什么时候会用到 `resolveSceneSwitches`**：你在模板里想自己判断"此刻点选到底开没开"（比如自己画个按钮的禁用态）。它导出了，和组件内部走的是同一条规则：
+```vue
+<div class="我的页面">
+  <header>你自己的顶栏：场景名 · 保存 · 预览……</header>
+  <SceneViewer editable height="100%" />
+</div>
+```
+
+顶栏要读的那几样（当前场景名、撤销栈、预览开关）都在公开面上，见「场景里有什么，走 store」一节。
+
+### 想自己判断"此刻点选到底开没开"
+
+**`resolveSceneSwitches` 仍然导出**——它是"分开关 ?? 总闸 ?? 旧默认"那条规则的唯一实现，库内部按它渲染。你自己画界面时想得到同一个答案就用它：
 
 ```ts
-resolveSceneSwitches({ editable, pickable, /* … */ })
+resolveSceneSwitches({ editable })
 ```
 
-不用它，你就得在模板里抄一遍"三级优先级"的判断，两份规则迟早不一致——症状是"按钮亮着可点，画布上却点不中"。
+不用它，你就得在模板里抄一遍那条判断，两份规则迟早不一致——症状是"按钮亮着可点，画布上却点不中"。
+
+> **其余四个开关（`toolbar` / `pickable` / `selection` / `gizmo`）已经不是组件的 prop 了。**
+> 想要点选与手柄就是 `editable`（编辑形态），想要干净画布就是 `false`——中间那些组合不再开放。
+> 理由与升级办法见下面「props」一节末尾那条警告。
 
 ## 最小示例
 
-**这是最快的跑通路径**：一块画布 + 一个从后端读场景、再存回去的完整流程。
+**这是最快的跑通路径**：一个能用的编辑器 + 一个从后端读场景、再存回去的完整流程。
 
 ```vue
 <script setup lang="ts">
@@ -217,16 +236,8 @@ function onTransform(payload: ModelTransformPayload) {
 </script>
 
 <template>
-  <!-- editable 一下就把点选 / 包围框 / 手柄都打开，不必再写三个 prop -->
-  <SceneViewer
-    ref="viewer"
-    editable
-    height="100%"
-    model="/chair.glb"
-    :camera-transition="450"
-    :shadow="{ enabled: true, type: 'contact', contactOpacity: 0.6 }"
-    @model-transform="onTransform"
-  />
+  <!-- editable 一下就是整个编辑器：三栏、点选、包围框、手柄全在它里面 -->
+  <SceneViewer ref="viewer" editable height="100%" @model-transform="onTransform" />
   <button @click="save">保存</button>
 </template>
 ```
@@ -235,104 +246,187 @@ function onTransform(payload: ModelTransformPayload) {
 
 关于 `ref`：它就是 Vue 里"贴了标签的盒子"。你把标签（`ref="viewer"`）贴在组件上，之后用 `viewer.value` 就能把盒子打开、拿到这个组件实例，进而调它的方法。注意 `viewer.value?.` 里那个问号——组件还没挂上时盒子是空的。
 
-跑起来之后你会看到：椅子出现在画布上，右下角一条工具栏，点中椅子会出现一圈青绿色的框和一副 X/Y/Z 手柄。
+跑起来之后你会看到：左边一栏模型库、中间画布、右边属性面板。空场景时左栏挑一个，或者直接把 `.glb` 拖进画布。
 
----
+### 想要一块只有画布、没有编辑器的页面
+
+不传 `editable` 就是它。这时**场景里的东西自己往 store 里放**：
+
+```vue
+<script setup lang="ts">
+import { onMounted } from 'vue'
+import { SceneViewer, useSceneStore } from '3deditor'
+
+const scene = useSceneStore()
+
+onMounted(() => {
+  scene.addModel('/chair.glb')                       // 摆一个模型
+  scene.applyConfig({ camera: { fov: 35 } })         // 场景长什么样，也走 store
+})
+</script>
+
+<template>
+  <SceneViewer height="480px" />
+</template>
+```
+
+**为什么"往场景里放东西"不走 prop**：prop 只到得了"那一个模型"，而一个场景里有几个模型、分别摆在哪，是一份会长大的数据。store 那个入口（`addModel` / `patchModel` / `removeModel`）本来就是为这件事准备的，编辑器自己走的也是同一条路——见下一节。
+
+### 场景里有什么，走 store
+
+**props 只管"组件长什么样"，场景内容本身在 store 里。** `useSceneStore()` 是一块公共白板——组件在写、你的代码在读，两边看到同一个东西（Pinia store，id `tdm-scene`，带前缀避免和你的 store 撞名）。它的核心是 `scene.config`：**一份普通对象，能 `JSON.stringify`，能存数据库**。
+
+```ts
+const scene = useSceneStore()
+
+// 往场景里放东西
+scene.addModel(url?)                     // 追加一个模型并选中它；url 留空 = 内置示例几何体
+scene.patchModel(patch, label?, index?)  // 改一个模型；index 缺省 = 当前选中项
+scene.removeModel(index)
+scene.selectModel(index)                 // 切换"当前在编辑哪一个"
+scene.models / scene.selectedModel       // 只读视图，渲染与遍历用
+
+// 改场景本身（相机 / 地面 / 日照 / 阴影 / 户型图）
+scene.applyConfig(patch, label?)         // 深合并写入；给了 label 就立刻记一条历史
+scene.resetConfig()                      // 全部恢复默认值
+scene.loadSceneData(data)                // 用一份（可能是旧格式的）场景数据初始化：先迁移、再深合并、最后清空撤销栈
+
+// 取数据
+scene.exportConfig()                     // 深拷贝，可直接交给后端
+
+// 历史栈（自己画撤销 / 重做按钮时读它）
+scene.undo() / scene.redo() / scene.clearHistory()
+scene.canUndo / scene.canRedo / scene.history
+```
+
+**配置项长什么样**：`scene.config` 上就是那几个分组（`models` / `camera` / `ground` / `sun` / `shadow` / `floorplan`），字段名就是它自己的名字——`scene.config.camera.fov`、`scene.config.shadow.type`。整份默认值在 `DEFAULT_SCENE_CONFIG` 里，可以 import 出来对照。
+
+几条**不照做会静默出错**的：
+
+- ⚠️ **`applyConfig` 对数组是整体替换**，而 `models` 与 `floorplan.walls` 都是数组。只想改其中一个模型请用 `patchModel`（一个只写了 `{ url }` 的补丁会把那个模型其余字段连同 `id` 一起抹掉）；自己拼户型图数组时先过一遍 `cloneFloorplanPatch(patch)`——不过它就会让你和配置共用同一个数组，你在外面改一下画布跟着变，而这条路一次历史记录都不触发。
+- **"当前选中哪一个"是界面状态，不进 `config`**——所以在列表里点一下不算一次场景改动，历史里也不会多出一串噪声。
+- **`loading` / `progress` / `error` 是运行时状态**，同样不进 `config`、不进导出、不进历史。
 
 ## `SceneViewer` 的 props
 
-**props 就是"你从外面告诉组件的事"**，像给一台机器的控制面板按按钮。这个组件有 9 个扁平 prop 保持原有契约不变，另有 `pickable`、三个选中视觉相关的 prop，以及 `cameraTransition`：
+**props 就是"你从外面告诉组件的事"**，像给一台机器的控制面板按按钮。
 
-| Prop          | 类型                              | 默认值      | 说明                                                |
-| ------------- | --------------------------------- | ----------- | --------------------------------------------------- |
-| `model`       | `string \| DeepPartial<ModelConfig>` | `''`     | 模型地址，或整个模型分组（见下）；写入**当前选中的那个模型**          |
-| `background`  | `string`                          | `'#0b1020'` | 画布背景色，传 `'transparent'` 可透出页面背景       |
-| `environment` | `EnvironmentPreset`               | —           | 环境贴图预设，**不设置则不发起任何网络请求**        |
-| `height`      | `string \| number`                | `'480px'`   | 画布高度，数字按 px 处理                            |
-| `editable`    | `boolean`                         | —           | **预览 / 编辑总闸**（见上一节）：`false` 关掉下面四个开关，`true` 全开，不传则按四个开关各自的值 |
-| `toolbar`     | `boolean`                         | `true`      | 是否显示内置工具栏                                  |
-| `autoRotate`  | `boolean`                         | `false`     | 是否自动旋转视角                                    |
-| `wireframe`   | `boolean`                         | `false`     | 是否线框渲染（会遍历改写模型所有材质的 wireframe）  |
-| `showGrid`    | `boolean`                         | `true`      | 是否显示地面网格                                    |
-| `draco`       | `boolean`                         | `false`     | 模型是否为 Draco 压缩格式                           |
-| `pickable`    | `boolean`                         | `false`     | 是否允许在画布上点选模型（见「点选模型」一节）      |
-| `selection`   | `boolean`                         | `false`     | 是否给选中的模型画一圈包围框（见「在画布上编辑模型」） |
-| `gizmo`       | `boolean`                         | `false`     | 是否给选中的模型挂 X/Y/Z 变换手柄（同上）           |
-| `gizmoMode`   | `TransformMode`                   | `'translate'` | 手柄模式：`'translate'` / `'rotate'` / `'scale'`  |
-| `cameraTransition` | `number`                     | `0`         | 机位改动滑过去的时长（毫秒），0 = 瞬移              |
+**这个组件的公开面只有七个 prop**，全部列在下面——是的，就这么少，而且这是刻意的：组件在"开箱即编辑器"这个身份下，真正需要宿主决定的就这七件事。其余的一切（场景长什么样、有几个模型、相机怎么摆）走 store，见「场景里有什么，走 store」一节。
+
+| Prop            | 类型                       | 默认值    | 说明                                                         |
+| --------------- | -------------------------- | --------- | ------------------------------------------------------------ |
+| `editable`      | `boolean`                  | —         | **预览 / 编辑总闸**（见上一节）：`true` 渲染整个编辑器，`false` 渲染只读画布，不传则兼容旧行为 |
+| `height`        | `string \| number`         | `'480px'` | 组件高度，数字按 px 处理                                     |
+| `autoRotate`    | `boolean`                  | `false`   | 是否自动旋转视角                                             |
+| `draco`         | `boolean`                  | `false`   | 模型是否为 Draco 压缩格式                                     |
+| `initialScene`  | `DeepPartial<SceneConfig>` | —         | **挂载时装载一份场景数据，只装一次**（见下面那条）             |
+| `sideTabs`      | `EditorPanelTab[]`         | `[]`      | 往**左栏**导轨末尾追加的页，内容走 `#side-tab-<key>` 插槽      |
+| `inspectorTabs` | `EditorPanelTab[]`         | `[]`      | 往**右栏**导轨末尾追加的页，内容走 `#inspector-tab-<key>` 插槽 |
 
 > ⚠️ **设高度请用 `height`，不要用内联 `style="height: …"`。**
 >
-> 你写在组件上的 `class` / `style` 会透传到画布根节点上，而透传的样式**是合并在后面的**。所以内联的 `height` 会把你通过 `height` prop 算出来的那个值覆盖掉。两者同时写时以你的内联样式为准——看起来就像 `height` prop 失效了，但不会报错。
+> 你写在组件上的 `class` / `style` 会透传到组件根节点上，而透传的样式**是合并在后面的**。所以内联的 `height` 会把你通过 `height` prop 算出来的那个值覆盖掉。两者同时写时以你的内联样式为准——看起来就像 `height` prop 失效了，但不会报错。
 
-> ⚠️ **`toolbar` / `pickable` / `selection` / `gizmo` 这四行的"默认值"列，是 `editable` 也没传时的值。** 传了 `editable` 就以它为准（分开关优先）。
+> ⚠️ **`sideTabs` / `inspectorTabs` 只在 `editable` 为真时有落点。** 画布形态没有面板，这两个 prop 传了也不会渲染（同样不报错）。`height` / `autoRotate` / `draco` / `initialScene` 则在哪种形态下都照常生效。
 
-`selection` / `gizmo` / `gizmoMode` 读的是 store 里那个选中项（由 `selectModel` 或用户在编辑器里点出来）。它们不改变选中逻辑，也**不经过 `events`**。
+`draco` 有一条**容易踩空**的语义：它写进的是**当前选中项**的 `draco` 标记，而读它的是加载那一步。所以**场景空着时它什么都不做**——没有选中项可写。要精确控制就分两步：`addModel(url)` 之后 `patchModel({ draco: true })`——那一条写在哪个模型上就是哪个模型上。
 
-`cameraTransition` 是唯一的动效开关。你写 `450` 之类之后，`camera.position` / `camera.target` 的**任何**改动都会滑过去：2D / 3D 切换、聚焦模型、点「重置机位」、撤销、面板里手改数值。
+### 拿一份存好的场景把画布填上
 
-**它只影响画面。** 配置在写入那一刻就已经是终点值了——所以右栏读数、按钮高亮、历史记录立刻都是终点的样子，不必等画面追上。两端缓入缓出，中途被打断时直接落到终点。
-
-### `model` 的两种写法
-
-**你在只需要一个网址时用第一种，要顺带配名字/位置时用第二种。**
+你后端里存过一份 `getSceneData()` 的产物（或者任何同形状的 JSON），想直接渲染出来——用 `initialScene`：
 
 ```vue
-<!-- 简写：只给地址 -->
-<SceneViewer model="/chair.glb" />
+<script setup lang="ts">
+import { ref, onMounted } from 'vue'
+import { SceneViewer } from '3deditor'
 
-<!-- 完整：一次给出模型分组的多个字段，未提到的字段保持默认 -->
-<SceneViewer
-  :model="{
-    url: '/chair.glb',
-    name: '办公椅',
-    position: [0, 0.2, 0],
-    rotation: [0, Math.PI / 4, 0],
-    scale: [1.2, 1.2, 1.2],
-    events: { click: { enabled: true, code: 'console.log(event.name)' } },
-  }"
-  @object-click="onPick"
-/>
+const saved = ref(null)
+
+onMounted(async () => {
+  saved.value = await fetch('/api/scene/9f2').then((r) => r.json())
+})
+</script>
+
+<template>
+  <SceneViewer editable :initial-scene="saved" />
+</template>
 ```
 
-第一行是"只给地址"的简写，椅子会出现在默认位置。第二行一次给出整组字段：地址、显示名、位置、转了 45°、放大 1.2 倍，并给"单击"挂了一段代码。你没写到的字段保持默认。
+**"只装一次"是要紧的那半句**，它决定了几件事：
 
-> ⚠️ **对象写法请传稳定引用**（`setup` 里的常量，或者 `computed`）。
->
-> `model` 是深监听的。你传一个内联字面量，它每次渲染都会重新同步一遍——把用户在编辑器里改好的变换冲掉。这个 bug 的样子是"我明明拖好了，一动别的地方它就弹回去了"。
+- **数据可以晚到**。上面那样先 `null`、拉到再赋值是能用的——组件会在**第一次拿到非空值**时装载。之后你再改这个 ref 就不生效了，场景已经归 store 管。
+- **它不会覆盖用户的编辑**。`editable` 下用户在画布上拖一个模型，改的是 store，**不影响你手里那个对象**（载入是深拷贝）。所以 `initialScene` 不是"受控绑定"——你要的如果是"父组件拿着真值、画布只是视图"，那与"库自己把改动写回 store"这件事是冲突的，那条路走不通。
+- **它替代不了 `loadSceneData()`**。两者是**同一个实现**（内部都是先迁移旧格式、再深合并、最后清空撤销栈），区别只在你什么时候给数据：挂载时给用 prop，运行中随时给用方法。同一份数据**不要两边都给**。
+- ⚠️ **和 `autoRotate` / `draco` 一起用时，以 `initialScene` 为准。** 那两个值（相机的自动旋转、每个模型的 draco）整份场景里本来就带着；那两个 prop 是给"从空场景起步"的宿主准备的。
 
-> 类型用 `DeepPartial<ModelConfig>`（也就是这个 prop 的类型）。你手写一个**完整**的 `ModelConfig` 字面量，会在升级后编译失败。直接读 `exportConfig()` 的结果不受影响。
+> 顺带一条：**旧格式的配置可以原样喂进来**。早期版本写的是单个 `model` 对象，`initialScene` 与 `loadSceneData()` 都会先把它折成 `models` 列表再装载——不用你手动迁移。
 
-> **这个 prop 的语义是"当前选中的那一个模型"。** 选中项不存在（空场景）时，它**追加一个新的**。
->
-> 要同时摆多个模型，用下面「多个模型」一节里的 `addModel` / `patchModel` / `selectModel`。
+### 扩展左右栏 tab
 
-### 6 个分组 prop
-
-**想把一整块能力一次配好时用它**，比如"我这页面的相机固定 35° 视野、俯角不超过 90°"。
-
-另有 6 个分组 prop（`model` / `camera` / `ground` / `floorplan` / `sun` / `shadow`），类型是各配置分组的 `DeepPartial`。
-
-注意这里**没有 `models`**：prop 的表达力只到"那一个模型"。多模型请直接用 store。
+**往左边加一页自己的工具、往右边加一页自己的属性**——旧版里这两件事没有入口。现在各给了一个 prop，**声明与内容分开**：页的名字 / 图标 / 顺序是数据（库要拿去画导轨），页里画什么由具名插槽给。
 
 ```vue
-<SceneViewer
-  :camera="{ fov: 35, maxPolarAngle: Math.PI / 2 }"
-  :ground="{ visible: true, cellSize: 0.5, infiniteGrid: true }"
-  :sun="{ showSky: true, elevation: 12, azimuth: 150 }"
-  :shadow="{ enabled: true, type: 'contact', contactOpacity: 0.6 }"
-/>
+<script setup lang="ts">
+import { SceneViewer } from '3deditor'
+import type { EditorPanelTab } from '3deditor'
+
+const sideTabs: EditorPanelTab[] = [
+  { key: 'device', label: '设备' },        // 有 key 就够，图标不写会退回占位字形
+]
+const inspectorTabs: EditorPanelTab[] = [
+  { key: 'about', label: '说明' },
+]
+</script>
+
+<template>
+  <SceneViewer editable height="100%" :side-tabs="sideTabs" :inspector-tabs="inspectorTabs">
+    <!-- 插槽名 = 前缀 + key：上面这页的 key 是 'device'，插槽就叫 #side-tab-device -->
+    <template #side-tab-device>
+      <div>这里画你自己那一页的内容</div>
+    </template>
+
+    <template #inspector-tab-about>
+      <div>右栏同理，前缀换成 inspector-tab-</div>
+    </template>
+  </SceneViewer>
+</template>
 ```
 
-这段在一次性调好几块：相机视野收窄到 35°、地面网格改成 0.5 米一格且无限延伸、太阳压到 12° 仰角、阴影换成接触阴影。没写到的字段一律保持默认。
+`EditorPanelTab` 就三个字段：
 
-其中 `floorplan` 比其他五个多一条**必须注意**的事：它的 `walls` / `openings` / `rooms` 是数组，而深合并对数组是**整体替换**、且**按引用**装进配置。你自己拼数组时请先过一遍 `cloneFloorplanPatch(patch)`（理由见下面「`floorplan` — 户型图」）。
+| 字段    | 类型         | 必需 | 说明                                                        |
+| ------- | ------------ | ---- | ----------------------------------------------------------- |
+| `key`   | `string`     | 是   | 唯一键。插槽名按它拼：`#side-tab-<key>` / `#inspector-tab-<key>` |
+| `label` | `string`     | 是   | 导轨上的名字，同时是 `aria-label` 与悬停提示                 |
+| `icon`  | `IconPath[]` | 否   | 导轨图标（24 格、只用描边、只吃 `currentColor`）。不写退回占位立方体 |
 
-> 扁平 prop 与分组 prop 都是**初始值**：传进去之后同步进 store，用户在编辑器里的改动不会再被覆盖。
+几条**不照做会踩坑**的：
+
+- **`key` 别与内置分类撞名**（左栏 `floor` / `wall` / `door` / `window` / `skybox`，右栏 `history` / `model` / `floorplan` / `sun` 等七个）。撞上时以你的页为准，Vue 在开发模式会打一条重复 key 警告——生产里它只表现为"内置那页点不开了"。
+- **左右两栏的 `key` 各是各的**，两边都叫 `device` 互不影响。
+- **插槽名拼错不报错**：一个没被提供的插槽是合法的空插槽，表现是那一页点开之后一个字都没有。
+- **右栏只有 306px 宽**，宿主页的正文要自己管好横向溢出（加个 `overflow-x: auto` 或者用定宽控件）。
+- **库不替你保存任何东西**：宿主页里的状态归你自己管，`getSceneData()` 吐出的配置里没有它。
+
+### 从旧版本升级：被删掉的那些 prop
+
+**如果你之前用的是 `model` / `background` / `wireframe` / `showGrid` / `environment` / `cameraTransition` / `pickable` / `selection` / `gizmo` / `gizmoMode` / `toolbar`，或者 6 个分组 prop（`camera` / `ground` / `floorplan` / `sun` / `shadow` 与 `:model` 的对象写法），它们现在**都还在，但不再通过 props 给了**。
+
+> ⚠️ **它们不会报错——这是最需要留意的一点。**
 >
-> 两层同时给同一个字段时**以分组 prop 为准**——`wireframe` / `draco` / `environment` 这几个兼容用的扁平 prop 会先看分组里有没有写该字段，写了就自己让位。
->
-> 物体级的 `castShadow` / `receiveShadow` 只走 `model` 分组这一条路。
+> Vue 对不认识的 prop **静默放行**：那个值会原样落到组件根的 DOM 属性上。所以 `<SceneViewer model="/chair.glb" />` 今天不报错、不警告，渲染出的 HTML 上多一个 `model="/chair.glb"` 属性，而椅子根本不会出现。`:model="{ url: …, name: … }"` 更迷惑一点——它的表现是根节点上出现一个字符串化的 `model="[object Object]"`。
+
+| 你原来写的              | 现在怎么写                                                     |
+| ----------------------- | -------------------------------------------------------------- |
+| `model="…"`             | `useSceneStore().addModel(url)`（要多个就多调几次）             |
+| 5 个 UI 开关            | 交给 `editable`：编辑形态自动全开，画布形态自动全关             |
+| 6 个分组 prop / `background` / `wireframe` / `showGrid` / `environment` | `useSceneStore().applyConfig({ … })`                            |
+| `cameraTransition`      | 不用管。编辑器自己取内部常量，纯画布为 0                        |
+
+`applyConfig` 的用法与几条容易踩的（数组是整体替换）见「场景里有什么，走 store」一节。一句话：**能配的东西没少，只是入口从 prop 挪到了 store**——因为 prop 的表达力只到"那一个模型"，而一个场景里有几个模型本身就说不清。
+
+> **想自己判断"此刻点选 / 手柄到底开没开"，用 `resolveSceneSwitches({ editable })`**（从包里具名导出）。它返回四个开关的生效值，宿主自己画工具栏时按的就是它——见上一节末尾。
+
 
 ## 事件
 
@@ -349,9 +443,13 @@ function onTransform(payload: ModelTransformPayload) {
 | `objectPointerEnter` | `ObjectClickPayload` | 指针进入模型（需 `events.pointerenter.enabled`） |
 | `objectPointerLeave` | `ObjectClickPayload` | 指针离开模型（需 `events.pointerleave.enabled`） |
 | `objectContextMenu`  | `ObjectClickPayload` | 右键模型（需 `events.contextmenu.enabled`）     |
-| `modelPick`          | `ModelPickPayload`   | 在画布上点中模型（需 `pickable`，与 `events` 无关） |
-| `modelTransform`     | `ModelTransformPayload` | 手柄拖拽过程中逐帧派发（需 `gizmo`）             |
-| `modelTransformEnd`  | `ModelTransformPayload` | 手柄拖拽结束、且变换**确实变了**（需 `gizmo`）   |
+| `modelPick`          | `ModelPickPayload`   | 在画布上点中模型（需编辑形态，见「点选模型」一节；与 `events` 无关） |
+| `modelTransform`     | `ModelTransformPayload` | 手柄拖拽过程中逐帧派发（需编辑形态）             |
+| `modelTransformEnd`  | `ModelTransformPayload` | 手柄拖拽结束、且变换**确实变了**（需编辑形态）   |
+
+> 五个 `object*` 事件的门控在**每个模型自己的** `events` 上：`model.events.click.enabled` 这样（5 个键 `click` / `dblclick` / `pointerenter` / `pointerleave` / `contextmenu`，各带一个 `enabled` 与一段 `code`）。可以用 `patchModel({ events: { click: { enabled: true } } })` 打开。
+>
+> ⚠️ **库只负责"发事件 + 读 `enabled`"，从不执行 `code`。** 这很重要，也是刻意的：你的场景数据可能来自后端或用户输入，库要是替你把它们执行了，那就是一个谁都担不起的安全口子。要让那段代码跑起来，**得你自己接这五个 emit**，再把 `code` 编译成函数执行（编辑器走的就是这条路）。
 
 三个载荷长这样：
 
@@ -391,7 +489,7 @@ interface ModelTransformPayload {
 >
 > 它挂进 payload 是为了让多部件模型能分辨"点中的是哪个部件"。要透传请只取你需要的字段。
 
-### 点选模型：`pickable` 与 `modelPick`
+### 点选模型：`modelPick`
 
 **这两个看起来像一回事，其实回答的是两个问题。**
 
@@ -400,7 +498,7 @@ interface ModelTransformPayload {
 
 |  | `objectClick` | `modelPick` |
 | --- | --- | --- |
-| 开启方式 | 该模型的 `events.click.enabled` | 画布级 prop `pickable` |
+| 怎么开 | 该模型的 `events.click.enabled` | **`editable` 为真时自动开**（编辑形态的内置能力） |
 | 开销 | 开了任意一类事件就**每帧** raycast 一次整棵子树 | 两个 DOM 监听器 + **每次点击**一次 raycast |
 | 载荷 | 带 `type` / `name` / `url` | 只有 `id` |
 | 点空白 | —（点的就是模型） | 什么都不发 |
@@ -411,29 +509,30 @@ interface ModelTransformPayload {
 
 点空白处（地面、网格、背景）**不发** `modelPick`。所以"点一下画布就取消选中"这类行为需要你自己补一句。
 
-`pickable` 判定单击用的是与 `events` 同一个判据，而且**跳过 `visible` 为 false 的模型**——所以"点哪选哪"和你眼睛里看到的画面一致。
+`modelPick` 判定单击用的是与 `events` 同一个判据，而且**跳过 `visible` 为 false 的模型**——所以"点哪选哪"和你眼睛里看到的画面一致。
 
-### 在画布上编辑模型：`selection` 与 `gizmo`
+> ⚠️ **`pickable` 不再是 prop。** 点选能力现在**绑在编辑形态上**：`editable` 为真时自动可用，否则没有。也就是说"**裸画布 + 点选**"这个组合不再能表达——想让人在画布上点选，就得进编辑形态（会连三栏一起出来）。
+>
+> 想在纯画布页面里接住"用户点了哪个模型"，请走 `objectClick`（给模型开 `events.click.enabled`）那条路。
 
-**你要让人在画布上直接拖着改模型时，打开这两个。**
+### 在画布上编辑模型：`modelTransform` 与 `modelTransformEnd`
+
+**你要让人在画布上直接拖着改模型时，用编辑形态。**
 
 ```vue
 <SceneViewer
-  model="/chair.glb"
-  pickable
-  selection
-  gizmo
-  gizmo-mode="translate"
+  editable
+  height="100%"
   @model-pick="onPick"
   @model-transform="onTransform"
   @model-transform-end="onTransformEnd"
 />
 ```
 
-这段在把编辑器手柄全打开：能点选、选中后有框、有手柄，拖手柄时两个事件分别逐帧和松手时通知你。
+`editable` 一下，手柄就全打开了：能点选、选中后有框、有手柄，拖手柄时两个事件分别逐帧和松手时通知你。
 
-- **`selection`** —— 给选中的那个模型套一圈包围框，颜色是内置示例几何体同款的青绿。
-- **`gizmo`** —— 给选中的那个模型挂一副 X/Y/Z 手柄。`gizmoMode` 决定拖出来的是平移、旋转还是缩放。
+- **包围框** —— 给选中的那个模型套一圈，颜色是内置示例几何体同款的青绿。
+- **手柄** —— 给选中的那个模型挂一副 X/Y/Z 手柄。拖出来的是平移 / 旋转 / 缩放，由编辑器的按键（W / E / R）或右栏属性决定——**`gizmoMode` 不再是 prop**。
 
 两个事件都是**输出**，不是输入——库里已经把值写回 store 了。
 
@@ -441,89 +540,11 @@ interface ModelTransformPayload {
 
 你不用做任何事，也只会看到一条"模型属性"标签，不会刷屏。
 
-`selection` / `gizmo` 都不依赖 `pickable`，也不给任何模型带来逐帧 raycast。关掉开关时整个组件都不渲染。
+> ⚠️ **`selection` / `gizmo` / `gizmoMode` 不再是 prop。** 它们与 `pickable` 一样，从三个独立开关收成 `editable` 一个总闸——宿主已经用 `editable` 说了"我要编辑"，再让它逐个开开关就是重复表达，漏关一个还不报错。
+
+包围框与手柄都不给任何模型带来逐帧 raycast，关掉时整个组件都不渲染。
 
 **隐藏的模型不给选中视觉**（否则你会在拖一个看不见的东西），但隐藏的模型仍然能量尺寸。
-
-## 模型事件：`events` 与 `code`
-
-**你在属性面板里给某个模型写了一段 JS，想让它在被点击时跑起来——这一节讲的就是这条链。**
-
-每个模型的 `events` 里存着 5 类指针事件各自的启用位与一段 JS 代码：
-
-```ts
-interface ModelEventHandler {
-  enabled: boolean   // 唯一门控：决定挂不挂指针监听器、发不发事件
-  code: string       // 要执行的 JS 语句体；库**完全不解释**它
-}
-
-// 5 个键：click / dblclick / pointerenter / pointerleave / contextmenu
-```
-
-⚠️ **库只负责"发事件 + 读 `enabled`"，从不执行 `code`。**
-
-这很重要，而且是刻意的：**库不碰 `new Function`，也不碰 `eval`**。你的场景数据可能来自后端、来自用户输入，库要是替你把它们执行了，那就是一个谁都担不起的安全口子。
-
-所以要真正跑起来，**你自己接这 5 个 emit**。下面这段接上去就能跑：
-
-```ts
-import { useSceneStore } from '3deditor'
-import type { ModelEventPayload, ModelEventType } from '3deditor'
-
-const scene = useSceneStore()
-const compiled = new Map<string, (event: unknown, model: unknown) => void>()
-
-function run(type: ModelEventType, payload: ModelEventPayload) {
-  // 按载荷里的 id 找回**发出事件的**那个模型，而不是「此刻选中的那个」：
-  // 点一下 A 之后、代码跑起来之前去列表里切到 B 是完全可能发生的
-  const model = scene.exportConfig().models.find((item) => item.id === payload.id)
-  const handler = model?.events?.[type]
-  if (!handler?.enabled || !handler.code.trim()) return
-
-  let fn = compiled.get(handler.code)
-  if (!fn) {
-    try {
-      // 最后一个参数是**语句体**，不是函数表达式
-      fn = new Function('event', 'model', handler.code) as typeof fn
-      compiled.set(handler.code, fn!)
-    } catch (error) {
-      console.error('事件代码编译失败', error)
-      return
-    }
-  }
-
-  try {
-    // model 传深拷快照：传 config.models[n] 本身的话，用户代码一句
-    // `model.events.click.enabled = true` 就会真的写进 store、进历史栈
-    fn(payload, model)
-  } catch (error) {
-    console.error('事件执行出错', error)
-  }
-}
-```
-
-这段做四件事：从载荷里找回是哪个模型；读它这段代码的启用位；把代码编译成函数（并缓存，不会每次都编译）；执行，同时兜住可能的报错。
-
-接上这五个事件：
-
-```vue
-<SceneViewer
-  @object-click="run('click', $event)"
-  @object-dblclick="run('dblclick', $event)"
-  @object-pointer-enter="run('pointerenter', $event)"
-  @object-pointer-leave="run('pointerleave', $event)"
-  @object-context-menu="run('contextmenu', $event)"
-/>
-```
-
-接上之后：用户单击模型，属性面板里写的那段 `console.log(...)` 就会真的打到控制台。
-
-编辑器里默认填的模板是 `console.log('单击', event, model)`。另外三个导出：
-
-- `MODEL_EVENT_TYPES` —— 固定顺序的 5 个键
-- `MODEL_EVENT_LABELS` —— 中文名
-- `defaultEventCode(type)` —— 默认模板
-- `activeEventTypes(model)` —— 唯一那套门控判断。你想自己画界面时用它，结果一定与库一致
 
 ## `SceneViewer` 的对外方法
 
@@ -555,6 +576,7 @@ function run(type: ModelEventType, payload: ModelEventPayload) {
   出去的是**裸的 `SceneConfig`**：版本号、场景名、导出时间这类外壳由你自己定。要存成文件的话，编辑器那边的形状是 `{ version, name, exportedAt, config }`，可以照抄。
 - **`loadSceneData`** 用一份场景数据初始化场景。入参和 `applyConfig` 一样按 `DeepPartial` 收：只写要覆盖的分组，其余保持当前值，`undefined` 表示"本次不改这一项"。
   两处要注意的：它**先走一遍 `migrateConfig`**（早先的配置写的是单个 `model` 对象，现在是 `models` 列表）；载入后会**清空撤销栈**。想要"可撤销的载入"，自己调 `applyConfig(patch, '标签')`。
+  **挂载前调也可以**——它的实现在 store 里，所以画布还没挂上时一样成立（这一点与 `getSceneData` 同）。挂载时就要给数据的场合，用 `initialScene` prop 更顺手，两者是**同一条实现**。
 
 `migrateConfig` 单独导出，因为"你自己读盘、自己 `applyConfig`"那条路同样合法：
 
@@ -565,197 +587,6 @@ scene.applyConfig(migrateConfig(await fetch('/api/scene/9f2').then((r) => r.json
 ```
 
 这段在你**不走组件、直接操作 store** 时用：从后端拉到一份可能是旧格式的配置，先迁移成当前格式，再写进 store。漏掉 `migrateConfig` 的症状是静默的——旧格式里的 `model` 字段没人认识，于是场景是空的，而不是报错。
-
-## 配置：`SceneConfig`
-
-`scene.config` 就是它。默认值见 `DEFAULT_SCENE_CONFIG`。
-
-**这是你的场景的全部内容**——它只是一份普通对象，能 `JSON.stringify`，能存数据库。想"保存场景"，就是把它存下来；想"打开场景"，就是把它写回去。
-
-### `models` — 模型列表
-
-场景里可以同时摆多个模型，所以这一组是**数组**。
-
-⚠️ 默认是**空数组**：打开就是空场景。想要那个占位物体（地址为空、渲染成内置示例几何体），调一次 `addModel()`。
-
-| 字段                                  | 默认值            | 说明                                          |
-| ------------------------------------- | ----------------- | --------------------------------------------- |
-| `id`                                  | 随机 uuid         | 模型标识，由 store 生成；地址变化时重新生成   |
-| `url`                                 | `''`              | 模型地址，留空则渲染内置示例几何体            |
-| `draco` / `wireframe`                 | `false` / `false` | 加载与渲染方式                                |
-| `name`                                | `''`              | 显示名；留空时回退成从地址派生的短名          |
-| `position` / `rotation` / `scale`     | `[0,0,0]` / `[0,0,0]` / `[1,1,1]` | 相对父级的变换三元组       |
-| `repeat`                              | **不存在**        | 贴图在两个方向重复几次 `(u, v)`，见下          |
-| `visible`                             | `true`            | 是否渲染                                      |
-| `castShadow` / `receiveShadow`        | `true` / `true`   | 物体级阴影，与全局总闸 **AND**                 |
-| `events`                              | 5 类全关           | 5 类指针事件各自的启用位与 JS 代码，见「模型事件」 |
-
-> `rotation` 的**单位是弧度**，与 `camera.minPolarAngle` / `maxPolarAngle` 一致。
-
-> ⚠️ **`repeat` 默认不存在，不是 `[1, 1]`。**
->
-> 它补偿的是"把一个模型拉伸到一块区域大小"那类用法。你 `scale` 放大几倍，贴图也跟着拉伸，图案的**实物尺寸**就随区域大小变了。给一个非 1 的 `repeat` 把这个倍数还回去，图案尺寸就恒定了。
->
-> 它**只改贴图、不改几何**。要求资产的 **UV 恰好铺满 0..1**，两个分量都必须是正数。
-
-> `id` 是 uuid，由 store 生成并维护，也存在配置里，所以导出导入会原样带上——你想"换模型也保持同一个 id"，显式传一个固定值即可。
-
-> ⚠️ **`models` 与配置里其他分组有一个不对称：`applyConfig` 对数组是整体替换。**
->
-> 所以 `applyConfig({ models: [...] })` 等于把整张列表换掉，而不是按下标合并。
->
-> 只想改其中一个模型请用 `patchModel(patch, label?, index?)`——否则一个只写了 `{ url }` 的补丁会把那个模型其余字段连同 `id` 一起抹掉。
-
-> 物体级 `castShadow` / `receiveShadow` 只有 `shadow.type` 是 `map` 或 `accumulative` 时才有实际效果（接触阴影走的是另一条烘焙路径）。
-
-### `floorplan` — 户型图
-
-默认是**空户型**（`foundation: null` + 三个空数组）。
-
-| 字段         | 类型                              | 默认值 | 说明                                        |
-| ------------ | --------------------------------- | ------ | ------------------------------------------- |
-| `foundation` | `{ x, z, width, depth }` 或 null  | `null` | 一块矩形地基板；`x` / `z` 是**中心点**，不是最小角 |
-| `walls`      | `FloorplanWall[]`                 | `[]`   | 墙，存**中心线**（两个端点）+ 墙高 + 墙厚 + 可选的外观地址 `url` |
-| `openings`   | `FloorplanOpening[]`              | `[]`   | 门窗。**没有自己的坐标**，只有 `hostWallId` + 沿墙米数 |
-| `rooms`      | `FloorplanRoom[]`                 | `[]`   | 房间：由墙体泛洪自动围出来的多边形 + 名称 + 颜色 |
-
-> 单位一律**米**、角度一律**弧度**。`SceneConfig` 只放**可 JSON 往返**的数据——"画到一半的那条墙链"不进配置。
-
-> ⚠️ **`applyConfig({ floorplan: { walls: [...] } })` 里的 `walls` 会整体替换整张表**（与 `models` 同样是数组语义）。
->
-> 你自己拼数组时请调一次 `cloneFloorplanPatch(patch)`。原因是 `applyPatch` 对数组做的是**别名**而不是拷贝，逐层拷过再写，才能切断你和配置之间的那条暗通道（墙的 `start` / `end`、房间的 `polygon` 都是嵌套数组，只拷顶层不够）。
->
-> 漏掉它的症状：你在外面改了一下自己那个数组，画布里的墙跟着变——而这条路上谁都没触发历史记录。
-
-### 其余分组
-
-**`camera`** — 相机
-
-| 字段                                          | 默认值        | 说明                              |
-| --------------------------------------------- | ------------- | --------------------------------- |
-| `position` / `target`                         | `[4,3,6]` / `[0,0,0]` | 机位与注视点，三元组       |
-| `fov` / `near` / `far`                        | `45` / `0.1` / `200` | 透视相机参数               |
-| `autoRotate` / `autoRotateSpeed`              | `false` / `1.2` | 自动旋转及其速度                |
-| `damping` / `dampingFactor`                   | `true` / `0.06` | 阻尼惯性及其系数                |
-| `minDistance` / `maxDistance`                 | `1.5` / `150` | 推拉距离上下限                    |
-| `minPolarAngle` / `maxPolarAngle`             | `0` / `π/2`   | 俯仰上下限，**单位是弧度**        |
-| `enableRotate`                                | `true`        | 是否允许旋转视角                  |
-| `enablePan` / `enableZoom`                    | `true` / `true` | 平移与缩放开关                  |
-
-**`ground`** — 地面网格：`visible` `size` `cellSize` `cellThickness` `cellColor` `sectionSize` `sectionThickness` `sectionColor` `infiniteGrid` `fadeDistance` `fadeStrength` `followCamera`
-
-**`sun`** — 日照与环境：`showSky` `elevation` `azimuth` `turbidity` `rayleigh` `mieCoefficient` `mieDirectionalG` `ambientIntensity` `keyIntensity` `fillIntensity` `environment` `skybox`
-
-> 主光方向由 `elevation` / `azimuth` 用与天空盒相同的球坐标公式推导，所以**影子方向和天上的太阳始终一致**。
->
-> `skybox` 是**六个面地址的定长元组**（顺序 `[+X, -X, +Y, -Y, +Z, -Z]`，即 `[右, 左, 上, 下, 前, 后]`——后三个字是社区惯例对这三对轴的叫法，本项目的资产**不按它排队**，见 `SkyboxFaces` 与 `SKYBOX_FACE_FILES`）。`null` 表示不用天空盒。
->
-> 它与 `environment` 是**同一个位置的两种填法**：两者写的都是 `scene.environment`，这一组字段里最多只有一个不是空的。
-
-**`shadow`** — 阴影：`enabled` `type`（`'map'` / `'contact'` / `'accumulative'`）`castShadow` `receiveShadow` `mapSize` `bias` `normalBias` `contactOpacity` `contactBlur` `contactScale` `contactResolution` `accFrames` `accOpacity` `accScale` `accBlend`
-
-## 状态管理：`useSceneStore`
-
-**store 你可以想成一块公共白板**：组件在写，你的代码也在读，两边看到的是同一个东西。它是 Pinia 的 store，id 为 `tdm-scene`（带前缀，避免和你的 store 撞名）。
-
-```ts
-const scene = useSceneStore()
-
-// 配置（唯一事实来源）
-scene.config                      // SceneConfig，reactive
-scene.applyConfig(patch, label?)  // 深合并写入；给了 label 就立刻记一条历史
-scene.exportConfig()              // 深拷贝，可直接 JSON 序列化
-scene.resetConfig()               // 全部恢复默认值
-
-// 历史栈
-scene.history                     // { id, label, at, config }[]，上限 50
-scene.historyIndex
-scene.canUndo / scene.canRedo
-scene.undo() / scene.redo() / scene.jumpTo(i) / scene.clearHistory()
-
-// 运行时状态（刻意不进 config，导入导出时不会被带走）
-scene.loading / scene.progress / scene.error / scene.hasError
-
-// 兼容访问器，读写都会落到 config 对应字段
-scene.modelUrl / scene.background / scene.autoRotate / scene.wireframe / scene.showGrid
-
-// 行为
-scene.setModel(url) / scene.clearModel() / scene.resetView() / scene.toggle('wireframe')
-```
-
-**为什么"运行时状态"要单独拎出来**：`loading` / `progress` / `error` 是"此刻加载到哪了"，不是"场景长什么样"。它们不进 `config`，所以不会被导出、不会进历史、也不会被你存进数据库。
-
-`resetView()` 恢复的是**显示类开关**：`background` / `camera.autoRotate` / `model.wireframe` / `model.visible` / `ground.visible`。
-
-**它不碰机位，也不碰模型的位置旋转缩放**——那是 `resetConfig()` 的范畴。想"把镜头转回原样"用前者，想"整个场景推倒重来"用后者。
-
-改动 `config` 会被自动记录：400 毫秒内的连续改动合并成一条，标签按变化的顶层分组自动生成（`模型属性` / `相机` / `地面` / `日照环境` / `阴影` / `背景`）。
-
-### 多个模型
-
-**什么时候会用到**：你的场景里不止一个物体，比如一个房间里摆了椅子、桌子、灯。这时"当前在编辑哪一个"就变成一个必须回答的问题。
-
-| 成员                            | 说明                                                                    |
-| ------------------------------- | ----------------------------------------------------------------------- |
-| `models`                        | `config.models` 的只读视图，渲染与遍历用                                 |
-| `addModel(url?)`                | 追加一个模型并选中它，返回它的下标。`url` 留空 = 追加一个内置示例几何体   |
-| `removeModel(index)`            | 移除指定条目；越界是空操作                                              |
-| `selectModel(index)`            | 切换「当前在编辑哪一个」；越界是空操作                                   |
-| `selectedIndex` / `selectedModel` | 当前选中项的下标与对象。空场景时 `selectedModel` 是 `undefined`          |
-| `patchModel(patch, label?, index?)` | 深合并一份补丁到某一个模型上；`index` 缺省时落到 `selectedIndex`       |
-| `setModel(url, index?)`         | 载入模型并复位加载态；`index` 缺省时落到 `selectedIndex`                  |
-| `clearModel(index?)`            | 卸载资源、回到内置几何体                                                |
-
-```ts
-const scene = useSceneStore()
-
-scene.addModel('/chair.glb')
-scene.addModel('/table.glb')        // 两个模型并存，第一个原封不动
-scene.patchModel({ position: [1, 0, 0] }, '挪一下', 1)
-scene.selectModel(0)                // 属性面板从此描述第一个模型
-scene.removeModel(1)
-```
-
-这段在摆两个模型：椅子放原处，桌子加进来再往右挪 1 米，然后把"当前选中"切回椅子，最后删掉桌子。
-
-> ⚠️ **选中项是界面状态，不是配置。** 它是独立的 `selectedIndex`，不进 `config`、不进历史、不进导出物。
->
-> 这是刻意的：要是把"选中哪个"塞进配置，那你在列表里点一下就算一次场景改动，历史里会多出一串纯噪声，撤销一次只是换了个选中项。
->
-> 它只可能因为"列表变短"而越界，store 里 watch 一下列表长度就足以收回界内。
-
-> 单模型时代的那些入口（`model` prop、`setModel` / `clearModel` / `modelUrl` / `wireframe` / `hasModel`）语义一律收窄成"当前选中的那个模型"。
->
-> 所以场景里只有一个模型时，它们的行为和从前**完全一致**——你不用为升级改任何一行代码。
->
-> `setModel()` / `clearModel()` 会在**地址真的变了**时换一个新的 `model.id`，重复提交同一个地址不会换。
-
----
-
-## 从包里能 import 什么
-
-| 类别 | 导出 |
-| --- | --- |
-| 组件 | `SceneViewer` / `SceneToolbar` / `SceneFloorplan`（后两个是配套件，`SceneViewer` 已经自动用上了） |
-| 插件 | `createThreeDMaker`（默认导出也是它） |
-| store | `useSceneStore` |
-| 配置 | `DEFAULT_SCENE_CONFIG` / `migrateConfig` / `cloneFloorplanPatch` / `createFloorplanConfig` |
-| 事件 | `MODEL_EVENT_TYPES` / `MODEL_EVENT_LABELS` / `activeEventTypes` / `defaultEventCode` |
-| 名称与档位 | `deriveModelId`（从地址派生可读短名，`model.name` 留空时的默认值）/ `viewModeOf`（现在算 2D 俯视还是 3D 透视） |
-| 开关规则 | `resolveSceneSwitches` / `DEFAULT_SCENE_SWITCHES`（`editable` 那条「分开关 ?? 总闸 ?? 旧默认」的唯一实现，见「预览还是编辑」） |
-| 户型图算术 | `wallPieces` / `removeWall` / `wallLength` / `wallRotationY` / `pointAlongWall` / `findNearestWall` / `findEnclosedArea` / `pointInPolygon` / `polygonCenter` / `pickRoomColor` / `createFloorplanId` / `openingFreeGap` / `openingOverlaps` / `openingMagnetOffset` / `resolveOpeningDrag` / `openingFilledByModel` / `openingRejectReason` / `dropOpeningFills` |
-| 户型图常量 | `CELL_SIZE` / `DEFAULT_WALL_HEIGHT` / `DEFAULT_WALL_THICKNESS` / `DOOR_WIDTH` / `DOOR_HEIGHT` / `WINDOW_WIDTH` / `WINDOW_HEIGHT` / `WINDOW_SILL` / `OPENING_EDGE_GAP` |
-| 墙面与洞口贴装 | `wallFaceTiles` / `wallFaceFit` / `wallFaceIsSheet` / `wallFaceUnusable` / `openingFaceUnusable` / `openingFaceOversized` |
-| 零件表几何 | `parseModelParts` / `placeModelParts` / `MAX_PARTS` / `MAX_COUNT` |
-| 类型 | `SceneConfig` / `ModelConfig` / `FloorplanWall` / `FloorplanOpening` / `FloorplanRoom` / `SceneViewerProps` / `ThreeDMakerOptions` / `TransformMode` / `EnvironmentPreset` / 各 payload 与分组配置，以及它们的 `DeepPartial` |
-
-> **户型图那一大组算术与常量导出，是为了让你不必抄一遍。**
->
-> 户型图的放置、夹取、磁吸与贴面铺法，抄漏一处**不报错**——例如夹取漏掉，墙体就会切出负长度，变成一块法线翻转的黑面。这种 bug 只有眼睛看得出来。
->
-> 它们全是不依赖 three、不依赖 DOM 的纯函数，你可以在任何地方直接跑（连浏览器都不需要）。`MAX_PARTS` / `MAX_COUNT` 是**公开约定**而不是内部实现——超了整份零件表会被拒掉。
->
-> 曲线与中间结果类型（`EnclosedAreaResult` / `FloorplanPiece` / `NearestWallHit` / `OpeningGap` / `WallFaceBounds` / `WallFaceTile` / `ModelPartsResult` 等）一并导出。
 
 ---
 

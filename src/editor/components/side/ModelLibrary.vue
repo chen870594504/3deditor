@@ -650,7 +650,7 @@ function toggleSkybox(entry: LibraryEntry) {
     （`.tdm-side-body`，它自己就是 `.tdm-tabpanel`）整块重建并淡入；
     库内切分类不重建组件，靠「内容瞬换 + 导轨上琥珀高亮移动 + 滚动归零」给反馈。
     给宫格补一个 `.tdm-tabpanel` 去要淡入**恰恰不行**：`tdm-rise` 是 translateY(6px)，
-    两层同帧叠加会变成 12px 的错位（editor.scss 里那条注释点名批评过这个形态）。
+    两层同帧叠加会变成 12px 的错位（src/styles/_editor.scss 里那条注释点名批评过这个形态）。
 
     一格一个模型：一张方形缩略图，下面一行**常显**的名字。
 
@@ -658,7 +658,7 @@ function toggleSkybox(entry: LibraryEntry) {
     再分细缩略图就只剩图标大小，名字条也塞不下几个字。
     名字常显是拿版面换来的：格子比只放缩略图时高约一行、一屏少看一行，
     换来的是「哪一格叫什么」不必悬停就能读（原先名字是悬停才浮出来的浮层，
-    见 editor.scss 里 `.tdm-lib-name` 那段）。
+    见 src/styles/_editor.scss 里 `.tdm-lib-name` 那段）。
 
     格子本身就是按钮，不做「先选中再确定」两步——而它**有三种意思**：
     追加到场景、给某个工具当铺装、或者换掉背景的天空盒（「空盒子」那一格是
@@ -697,7 +697,7 @@ function toggleSkybox(entry: LibraryEntry) {
 
   <!--
     宫格**自己就是那个滚动口**（.tdm-list--grow + .tdm-scroll），是左栏唯一的滚动列表，
-    5px 内边距来自 `.tdm-list` 本身（右栏那几份清单也一样，见 editor.scss 里的分节）。
+    5px 内边距来自 `.tdm-list` 本身（右栏那几份清单也一样，见 src/styles/_editor.scss 里的分节）。
 
     `:key="section.key"` 是**功能必需，不是为了动画**：不加它，这个 div 在分类
     之间是同一个元素，`scrollTop` 会被留下来——从一条长列表切到另一条仍溢出的
