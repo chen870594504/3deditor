@@ -9,17 +9,18 @@ import type { SkyboxFaces } from '../../types'
  *
  * ## 清单从哪来
  *
- * **内置的只有「有哪五类」这件事，每一类里有什么由宿主给。** 这个文件里
- * 写死的是五个分类的 `key` / `label` / `kind` 与它们的先后（下面的 `LIBRARY_SHAPE`），
+ * **内置的只有「有哪五类」这件事与兜底那份条目表。** 这个文件里写死的是五个
+ * 分类的 `key` / `label` / `kind` 与它们的先后（下面的 `LIBRARY_SHAPE`），
  * 以及「一个目录一个模型，目录里放同名的 .glb 与 .png」这套拼地址的约定；
- * 条目本身来自 `useEditorAssets()`——也就是宿主交给
- * `createThreeDMaker({ assets })` 的那份表（形状见 `editor/assets.ts`）。
+ * 条目本身来自 `useEditorAssets()`——正常就是 `defaultAssets.ts` 那份库内置的
+ * 标准素材表，宿主也可以整份换掉（`createThreeDMaker({ assets })`）
+ * 或只换根地址（`SceneViewer` 的 `assetBaseUrl`）。
  *
- * 这么切是因为**库不许内置任何地址**：清单原先连同素材根地址一起写死在编辑器里，
- * 而根地址读的是 `import.meta.env`——库构建会把 `import.meta.env.VITE_*` 直接
- * 内联进产物，于是每一家宿主的 `dist/index.js` 里都会带上本仓库那台服务器。
- * 把「哪一类」与「这一类里有什么」拆开之后，库这一半一个字面量地址都不含，
- * 缺省（宿主没给）就是空表、左栏一句空态，不发任何请求。
+ * 这么切是因为**「哪一类」是承重的、得由编辑器定，而「这一类里有什么」
+ * 是素材包长什么样、该有份能用的默认**：真实宿主装完库写一句
+ * `<SceneViewer editable />` 就该看到五个分类有货，而不是先配一份表。
+ * 早先的规矩反过来（库一个字面量地址都不含、缺省是空表），代价是每一家宿主
+ * 都得先做那道功课，而漏做的表现是「左栏空的、不报错」。见设计决定 50。
  *
  * 刻意**不去抓服务器的目录索引页**，即使那台 nginx 已经开了 autoindex、
  * 抓下来解析出列表是可行的：
@@ -29,7 +30,8 @@ import type { SkyboxFaces } from '../../types'
  *     生产环境要靠再开一条 CORS 规则才能读，等于为了这个功能放宽服务器配置。
  *   - 写死的列表在离线、代理没配好、服务器换路径时都还能用。
  *
- * 代价是**往服务器上放了新模型要去那份表里加一行**。这是有意的取舍。
+ * 代价是**往服务器上放了新模型要去 `defaultAssets.ts` 里加一行**。
+ * 这是有意的取舍。
  *
  * ## 内置的这五类：工具钉住的那四类 + 天空盒
  *
@@ -70,7 +72,8 @@ import type { SkyboxFaces } from '../../types'
 /**
  * 内置五类：key、显示名、以及这一类里的东西点一下是干什么的。
  *
- * 顺序即界面上的显示顺序。**条目不在这一份里**（那属于宿主，见 `useEditorAssets`）。
+ * 顺序即界面上的显示顺序。**条目不在这一份里**（它从 `useEditorAssets` 进来，
+ * 缺省是 `defaultAssets.ts` 那份标准素材表）。
  *
  * `as const` **不能省**：它是下面 `LibrarySectionKey` 能推成字面量联合的唯一原因，
  * 而 `SidePanel.vue` 的 `satisfies Record<LibrarySectionKey, IconPath[]>` 正是靠
@@ -419,23 +422,38 @@ const BUILTIN_KEYS: readonly string[] = LIBRARY_SHAPE.map((shape) => shape.key)
  * 内置五类，**已经拼好地址**，左栏直接 `v-for` 它。
  *
  * 写成 `computed` 而不是模块常量：条目的来源是 `useEditorAssets()`，也就是
- * `inject` 出来的一份宿主输入——**模块求值那一刻它还不存在**。原先这里是
- * 一个模块常量（源数据写死、没有任何响应式来源），改成注入之后那前提没有了，
- * 常量也就当不成。
+ * `inject` 出来的一份输入——**模块求值那一刻它还不存在**。它后面可能是库内置
+ * 那份默认表，也可能是宿主整份换掉的、或者只在根地址上被 `assetBaseUrl` 改过的
+ * 那一份，三种情况都得现算。
  *
- * 与它配套的 `resolve` / `resolveSkyboxFace` 都改成**把根地址当参数**收：
+ * 与它配套的 `resolve` / `resolveSkyboxFace` 都**把根地址当参数**收：
  * 原先它们闭包在模块级那个 `ASSET_BASE` 上，那是「库自带地址」的写法，
- * 现在地址由调用方（也就是宿主）给。
+ * 现在是**这份表自己带着地址进来**、由调用方传下去。
  *
- * 宿主给的表里，key 不在这五个里的分类**会被忽略**——理由是那五个 key 承重，
- * 见本文件顶上那一节。少给一类不是错误：那一类照常出现，宫格里是空态文案。
+ * 生效那份表里，key 不在这五个里的分类**会被忽略**——理由是那五个 key 承重，
+ * 见本文件顶上那一节。某类没给不是错误：那一类照常出现，宫格里是空态文案。
  */
 export function useLibrarySections(): ComputedRef<LibrarySection[]> {
   const assets = useEditorAssets()
-  const base = normalizeBase(assets.baseUrl)
 
-  return computed(() =>
-    LIBRARY_SHAPE.map((shape) => {
+  return computed(() => {
+    /*
+      根地址的归一化**必须在这个 computed 里面**，与下面那句 `assets.categories`
+      同一个道理。
+
+      它原先在外面（`const base = normalizeBase(assets.baseUrl)`，只算一次）。
+      那时没人中途换过 `baseUrl`——素材是插件在 `install` 时 provide 一次的，
+      装配完就不动了，所以写在哪儿都一样。`SceneViewer` 的 `assetBaseUrl` 之后
+      这个前提没有了：那是个**能绑在模板上**的 prop，宿主换镜像时左栏得跟着换。
+      摆在外面就是一份调用那一刻的快照，换不换都不动，而且**不报错**
+      ——只有盯着缩略图才看得出。
+
+      依赖是从 getter 上取的（`SceneViewer` provide 的那个带 getter 的对象读
+      `props.assetBaseUrl`），所以这里读一次就够，不必再 watch 什么。
+    */
+    const base = normalizeBase(assets.baseUrl)
+
+    return LIBRARY_SHAPE.map((shape) => {
       const category = assets.categories.find((item) => item.key === shape.key)
       return {
         key: shape.key,
@@ -445,8 +463,8 @@ export function useLibrarySections(): ComputedRef<LibrarySection[]> {
         kind: shape.kind,
         entries: (category?.entries ?? []).map((item) => toEntry(base, shape.key, shape.kind, item)),
       }
-    }),
-  )
+    })
+  })
 }
 
 /**

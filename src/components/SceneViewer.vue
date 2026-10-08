@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { useTemplateRef, watch } from 'vue'
+import { provide, useTemplateRef, watch } from 'vue'
 import SceneCanvas from './SceneCanvas.vue'
 import SceneEditor from '../editor/components/SceneEditor.vue'
+import { EDITOR_ASSETS_KEY, useEditorAssets } from '../editor/assets'
 import { useSceneStore } from '../stores/scene'
 import {
   INSPECTOR_TAB_PREFIX,
@@ -107,7 +108,7 @@ watch(() => props.draco, (value) => { scene.patchModel({ draco: value }) }, { im
  * 立即跑一次 `patchModel({ draco: false })`；若 `initialScene` 先落笔，此刻
  * `models[0]` 已经存在，那一下会把整份场景里那个模型的 `draco: true` **静静抹掉**。
  * 排在这儿则是反过来：整份场景最后落笔，它自带的 `autoRotate` 与逐模型的 `draco`
- * 说了算——与 README 里那条「两者同时传时以 `initialScene` 为准」是同一件事。
+ * 说了算——这就是那条已经发布的规则：「两者同时传时以 `initialScene` 为准」。
  *
  * 它写的是 store，而 store 是全局的，所以**不必**把这个 prop 往
  * `SceneEditor` / `EditorStage` / `SceneCanvas` 三层透传。
@@ -122,6 +123,49 @@ watch(
   },
   { immediate: true },
 )
+
+/**
+ * 素材：把上面 inject 到的那一份**再 provide 一次**，带上 `assetBaseUrl` 的覆盖。
+ *
+ * ## 为什么在这一个组件里
+ *
+ * 它是唯一公开入口，也是左栏（`SceneEditor → SidePanel → ModelLibrary`，
+ * 两个 `useLibrarySections()` 的调用点都在里面）唯一的祖先；素材本来就是靠
+ * `inject` 到达左栏的，所以覆盖发生在这一层，**中间三层一行都不用动**。
+ *
+ * **必须无条件执行，不能塞进 `editable === true` 那一支。** setup 只跑一次，
+ * 而编辑态 / 画布态是模板里的 `v-if`——把 provide 放进分支里，挂载时是画布态
+ * 就永远补不回来了（setup 不会重跑），之后切到编辑态左栏会是一片空。
+ *
+ * 因为它在 setup 里、每个实例各做一次，同一页面上两个 `SceneViewer`、
+ * 同一个进程里两个 SSR 请求各拿各的那份，互不串——这正是 `assets.ts` 那段
+ * 「用 provide 不用模块级常量」要守的纪律，本次继续守着。
+ */
+const inheritedAssets = useEditorAssets()
+
+provide(EDITOR_ASSETS_KEY, {
+  /*
+    带 getter 的**普通对象**，不是 `computed`、也不是 `reactive`。
+
+    - **不能是 `computed`**：`useEditorAssets()` 的调用方（`useLibrarySections`）
+      直接读 `assets.baseUrl`，而 `inject` **不解包 ref**——传一个 computed 下去，
+      那边拿到的是个 ref 对象，`assets.baseUrl` 就成了 `undefined`，
+      地址静默拼不出来，左栏整片 404 而不报错。
+    - **不能是 `reactive`**：要包的那份（`DEFAULT_EDITOR_ASSETS`）是**冻结**的，
+      而 Vue 对冻结对象做 `reactive()` 是 no-op——响应式直接失效，也不报错。
+      而且它是模块级单例，深层代理过去会让一个实例的写入污染所有宿主。
+      包装对象自己必须是可写的，所以只能自己建一个。
+
+    getter 读的是 `props.assetBaseUrl`，因此吃到了 prop 的响应式。**但这一条
+    只在下游也响应式时才成立**：`useLibrarySections` 里那句根地址归一化
+    （`normalizeBase(assets.baseUrl)`）已经在 computed 里面——原先它在外面，
+    是个潜伏的坑，本轮一并搬进去了（见那里的注释）。
+  */
+  get baseUrl() {
+    return props.assetBaseUrl ?? inheritedAssets.baseUrl
+  },
+  categories: inheritedAssets.categories,
+})
 
 /**
  * 12 个事件逐条转发。

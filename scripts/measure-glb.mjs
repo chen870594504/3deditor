@@ -4,7 +4,7 @@
   用法：
     node scripts/measure-glb.mjs <本地文件 | http(s) 地址> [...更多个]
 
-  为什么有这个脚本：`playground/utils/modelList.ts` 里门窗那两类的 `width` /
+  为什么有这个脚本：`src/editor/defaultAssets.ts` 里门窗那两类的 `width` /
   `height` 是**这件洞口要开多大**，写小了窗两侧被墙吞掉、写大了两侧露缝，
   两种都不报错（`DOOR` 那一段写了完整的两种表现）。而「量一下资产有多宽」
   以前只能靠把模型拖进 Blender 或者目测——用户报过的「窗户大小不对，

@@ -43,7 +43,7 @@ pnpm preview      # 预览构建产物
 几条容易踩的：
 
 - **没有 lint / formatter 配置**（无 ESLint / Prettier / Biome / EditorConfig）。不要凭空引入，也不要假设某个风格工具会兜住格式问题。
-- **没有测试框架**。`scripts/smoke.mjs` 是唯一的自动化测试，且**不支持筛选用例**——一次跑全部 98 条。想单点验证某个纯函数，写一个临时 node 脚本 `import('../dist/index.js')`（必须先 `pnpm build:only`），用完删掉。
+- **没有测试框架**。`scripts/smoke.mjs` 是唯一的自动化测试，且**不支持筛选用例**——一次跑全部 105 条。想单点验证某个纯函数，写一个临时 node 脚本 `import('../dist/index.js')`（必须先 `pnpm build:only`），用完删掉。
 - `pnpm smoke` 读的是 `dist/index.js`，改完 `src/` 不重新构建就测的是旧产物。
 - **验证 playground 构建必须另给 outDir**。仓库没有 `build:playground` 脚本，裸跑 `vite build` 会用默认 `outDir: dist` **覆盖库产物**。正确做法：
 
@@ -58,7 +58,7 @@ pnpm preview      # 预览构建产物
   pnpm exec sass --no-source-map <file.scss> > /tmp/out.css
   ```
 - `node scripts/measure-glb.mjs <本地文件|http(s) 地址>` 离线量一份 glb 的包围盒，输出模型清单要的格式。
-  `playground/utils/modelList.ts` 里门窗那两类的 `width` / `height` 是「洞口要开多大」，量法口径与渲染端一致（片会被筛掉），写错了不报错、只有目视才发现。
+  `src/editor/defaultAssets.ts` 里门窗那两类的 `width` / `height` 是「洞口要开多大」，量法口径与渲染端一致（片会被筛掉），写错了不报错、只有目视才发现。
 
 ## 架构
 
@@ -93,7 +93,7 @@ SceneCanvas.vue  由合并后的 SceneViewer.vue 改名而来，收窄成**内�
      ↑
 SceneEditor.vue  三栏工作台 = SidePanel | EditorStage | InspectorPanel + 事件绑定弹窗
      ↑
-SceneViewer.vue  公开面：七个 prop（editable / height / autoRotate / draco / initialScene / sideTabs / inspectorTabs）
+SceneViewer.vue  公开面：八个 prop（editable / height / autoRotate / draco / initialScene / sideTabs / inspectorTabs / assetBaseUrl）
 ```
 
 `SceneCanvas` 里面才是 `SceneContent`（`TresCanvas` 内部，组装各 `Scene*` + 相机 + 控制器 +
@@ -141,13 +141,17 @@ SceneViewer.vue  公开面：七个 prop（editable / height / autoRotate / drac
 
 ### `playground/`（宿主示例）
 
-**现在只剩两件事**：`App.vue`（宿主外壳：`AppHeader` + 一个 `<SceneViewer editable height="100%">`
-+ 两页自己的面板）与那两件库碰不得的东西（`useConfigIO.ts` 保存、`useEventRunner.ts` 执行代码）。
+**现在只剩两件事**：`App.vue`（宿主外壳：`AppHeader` + 一个
+`<SceneViewer editable height="100%" :asset-base-url="ASSET_BASE">` + 两页自己的面板）与那两件
+库碰不得的东西（`useConfigIO.ts` 保存、`useEventRunner.ts` 执行代码）。
 `main.ts` 挂载应用并引样式，`styles/base.scss` 是**宿主页面**的底座（`html` / `body` / `#app`
-与 `.pg-panel` —— 宿主自己那两页的样式），`utils/` 是宿主自己的图标与模型清单。
+与 `.pg-panel` —— 宿主自己那两页的样式），`utils/` 是宿主自己的图标与那两件素材相关的东西
+（`editorAssets.ts` 只给出 DEV 期的同源代理前缀，**清单引用库那份 `DEFAULT_EDITOR_ASSETS`，
+不留第二份**）。
 
 **它同时是库诚实的一份用法示例**：公开面在这里被完整地用了一遍（一个 `editable` 决定形态、
-两个 prop 声明面板页、`getSceneData()` 取数据落盘），没有一处走后门 import 内部模块。
+两个 prop 声明面板页、`assetBaseUrl` 换素材服务器、`getSceneData()` 取数据落盘），没有一处走后门
+import 内部模块。
 **往 `src/` 里加东西之前，先想一遍 `App.vue` 会不会变复杂**——它变复杂通常说明那件东西该留在
 host 这一层。
 
@@ -157,16 +161,34 @@ host 这一层。
    漏掉它构建照样成功，但产物里没有任何组件样式，宿主渲染出的是一片裸 DOM。`pnpm smoke` 专门守这条回归。
 2. **样式是手写 SCSS，不用任何原子 CSS 引擎**（UnoCSS 已卸载，只剩 `@unocss/reset` 给 playground 用）。
    库样式收敛在 `.tdm-root` 下、**不注入全局 reset**——重置是宿主的事，混进去就是污染宿主应用。
+   反过来也有一条：**容器根（两栏、属性面板的每一节、事件弹窗的表头与脚注）是 `div`，不是
+   `aside` / `header` / `section` / `footer`**。作用域只赢「两边都声明了的属性」，宿主按**标签**写的
+   `aside { padding / margin / line-height / background }`（后台模板里很典型）会整片压上两栏，
+   而 `.tdm-col` 只声明了四条属性、挡不住。同一个道理还有一条**属性**级的：`.tdm-field-label`
+   显式写着 `font-weight: 400`，因为宿主几乎必有一条 `label { font-weight: 700 }`。
+   两种都**不报错，只有目视才发现**，所以有两条自动防线：`scripts/smoke.mjs` 里一条「模板里的
+   容器根不用语义元素」的源码扫描（`nav` 是刻意的例外），以及编辑态渲染断言里两栏连标签名一起断
+   （见设计决定 2 与目视清单第 153 条）。
 3. **运行时依赖全部声明为 `peerDependencies`**，`vite.config.ts` 的 `EXTERNAL` 必须与之一致。
    `vue` / `three` 出现两份实例会直接让响应式与 WebGL 上下文失效；`pinia` 同理（宿主已有时要复用其实例）。
 4. **库构建只从 `src/index.ts` 一个入口出发**，playground 因此进不了产物。不要加第二个 entry。
 5. `dist/style.css` 是单文件（`cssCodeSplit: false` + `assetFileNames: 'style.css'`），
    `package.json` 的 `sideEffects` 只列 `**/*.css`。
-6. **`.env` 的键名是 `VITE_ASSE_IMAGE_URL`（`ASSE` 少一个 R，历史遗留）**，改它要同时改四处：
-   `.env`、`env.d.ts`、`vite.config.ts`、`src/editor/composables/useModelLibrary.ts`。
-   另外 `vite.config.ts` 里的 `ASSET_PROXY_PREFIX`（`/3d-assets`）必须与 `useModelLibrary.ts` 的
-   `DEV_ASSET_PREFIX` 一致——只改一边的表现是列表里的地址代理不到，清一色加载失败。
+6. **素材地址有两处，改一处要看看另一处**：
+   - **库内默认**：`src/editor/defaultAssets.ts` 的 `DEFAULT_ASSET_BASE_URL`（字面量，**那个文件里不许
+     出现 `import.meta.env`**——库构建会把它内联进产物，等于把本仓库的 `.env` 发给每一家宿主）。
+     它是 `DEFAULT_EDITOR_ASSETS` 的根地址，宿主一行不写时左栏读的就是它。**`dist/index.js` 与
+     sourcemap 里带着那台服务器的域名是刻意的**（见设计决定 50），别在「产物里搜不到域名」这类
+     检查里把它当 bug 删掉。
+   - **dev 代理的目标**：`.env` 的 `VITE_ASSE_IMAGE_URL`（**`ASSE` 少一个 `R`，是照那台服务器
+     原样读的历史遗留**），由 `vite.config.ts` 的 `loadEnv()` 读走当代理目标；`vite.config.ts`
+     从 `defaultAssets.ts` 导入那个常量当兜底，所以**两份不同源时 `.env` 赢**。
+   另外 `vite.config.ts` 里的 `ASSET_PROXY_PREFIX`（`/3d-assets`）必须与
+   `playground/utils/editorAssets.ts` 的 `DEV_ASSET_PREFIX` 一致（**不再是
+   `useModelLibrary.ts`**）——只改一边的表现是列表里的地址代理不到，清一色加载失败。
    那台服务器不发 CORS 头而 `GLTFLoader` 走 `fetch`，所以必须靠这个同源代理。
+   缩略图是 `<img>`、**不受 CORS 约束**——于是「缩略图全都好好的、拖进场景加载失败」正是这个坑，
+   很容易误判成地址写错。
 7. `.gitignore` 只排除 `.env.local` / `.env.*.local`，**不排除 `.env` 本身**。
 8. **`src/styles/_editor.scss` 里有一处靠源码顺序决胜负的地方**：`.tdm-view-btn` 与 `.tdm-draw-btn`
    先并入三选择器组（`min-width: 40px`），之后各自再单独收窄（34px / 30px）。特异性同为 (0,1,0)，
@@ -183,7 +205,7 @@ host 这一层。
 
 ## 验证到哪一步（不要补的测试）
 
-`pnpm verify` 的 98 条断言**跑在 SSR 下**（`createSSRApp` + `renderToString`），
+`pnpm verify` 的 105 条断言**跑在 SSR 下**（`createSSRApp` + `renderToString`），
 而 `TresCanvas` 的 children 在 SSR 下根本不渲染。所以下列内容**测不到**，
 不要为它们补冒烟用例（只会得到一条永远为真的断言）：
 
@@ -207,12 +229,15 @@ host 这一层。
 
 | 文件 | 读者 | 内容 |
 |---|---|---|
-| `README.md` | 用这个库的宿主 | 安装、注册插件、`editable` 两种形态、`SceneViewer` 的 props / emits、扩展左右栏 tab、配置分组、`useSceneStore`、**对外方法**、导出清单 |
-| `DESIGN.md` | 改这个仓库的人 | 编辑器的设计、**49 条编号设计决定**、152 条**目视清单**、目录结构、发布流程、待办 |
+| `README.md` | 用这个库的宿主 | **一份精简卡片（≤80 行）**：一句话简介、安装、快速开始、三条核心概念、props / 事件 / 对外方法三张表 |
+| `DESIGN.md` | 改这个仓库的人 | 编辑器的设计、**50 条编号设计决定**、154 条**目视清单**、目录结构、发布流程、待办 |
 
-`README.md` 是一份**面向宿主的用法手册**，只有四类内容：怎么装进来、怎么用组件、
-API 是什么（签名 / 默认值 / 字段含义 / 用法规则）、以及宿主不照做就会出错的那几条警告。
-**它不解释「为什么这么设计」**——那类推理一律进 `DESIGN.md`，哪怕它读起来很有用。
+`README.md` 是一份**面向宿主的用法卡片**，结构是固定的（**总长 ≤80 行**）：一句话简介 →
+安装（一条命令）→ 快速开始（一个最小示例）→ 核心概念（最多 3 条）→ props / 事件 / 对外方法
+三张表。**不写「特性列表」「为什么选我们」「架构图」「贡献指南」这类章节**，也
+**不解释「为什么这么设计」**——那类推理一律进 `DESIGN.md`，哪怕它读起来很有用。
+卡片放不下的宿主向内容（升级对照表、`npmrc` 令牌、git 安装那两道闸、CORS 与同源代理）
+**现在只住在 `DESIGN.md` 里**，别以为它们还在 README。
 
 `README.md` 是**唯一随包发出去的那份**（`files` 只收 `dist`，但 npm 强制带上 README），
 `DESIGN.md` 不会——所以 README 里不写任何宿主读不到的东西，也不留指不回本仓库的引用。
@@ -252,8 +277,10 @@ API 是什么（签名 / 默认值 / 字段含义 / 用法规则）、以及宿�
   真正动大手术前，确认工作区干净（`git status` 为空）比留 `.bak` 更有效——脏工作区上一个提交
   也救不回来。
 - **`.env` 是被跟踪的**（`.gitignore` 只排除 `.env.local` / `.env.*.local`，见硬性约束 7）。
-  这意味着 `VITE_ASSE_IMAGE_URL` 的任何改动都会直接进下一次提交，改它时要按第 6 条同时改四处，
-  别只改一边——只改一边的表现是列表清一色加载失败，而这不会报错。
+  这意味着 `VITE_ASSE_IMAGE_URL` 的任何改动都会直接进下一次提交。它现在只是 dev 代理的目标
+  （库内默认住在 `src/editor/defaultAssets.ts`，是**提交里本来就带着的另一个字面量**），
+  按第 6 条那两处一起看——只改一边时，dev 期代理指向一台服务器、而宿主不写任何配置时读的是另一台，
+  表现是「自己开发时好好的、宿主那边清一色加载失败」，两者都不报错。
 
 ### 分发
 
@@ -264,7 +291,8 @@ API 是什么（签名 / 默认值 / 字段含义 / 用法规则）、以及宿�
 发布用 `pnpm publish`（`prepublishOnly` 会先跑一遍 `build + smoke`）。**推送到哪个 registry 由
 `package.json` 的 `publishConfig.registry` 声明**，不靠 `.npmrc`。
 
-宿主有两条装法，代价落在不同处，README 的「安装」一节是给宿主看的完整说法：
+宿主有两条装法，代价落在不同处，完整说法在 DESIGN.md「分发」里（**原先在 README 的「安装」一节，
+README 精简成卡片之后搬了过去**）：
 
 - **GitHub Packages**（主路径）：拿到的是构建好的产物、不挑 Node，但该源**即使包是公开的也强制
   带令牌拉取**——每个项目、每台 CI 都要各配一次勾了 `read:packages` 的 classic PAT。失败信号是

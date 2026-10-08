@@ -1,8 +1,8 @@
 /**
  * 宿主面板页的插槽名怎么拼——**这条规则只写在这里一处**。
  *
- * 它是一条**公开契约**（`EditorPanelTab.key` 的注释里、README 的扩展那一节里
- * 都照着这两行说话），而它同时要被五处用到：`SceneViewer` 与 `SceneEditor` 各转发
+ * 它是一条**公开契约**（`EditorPanelTab.key` 的注释里、以及 `SceneViewer` 的
+ * `sideTabs` / `inspectorTabs` 两个 prop 的文档里都照着这两行说话），而它同时要被五处用到：`SceneViewer` 与 `SceneEditor` 各转发
  * 一次（`panelSlotNames`），左右两个面板各拼一次自己的那个（两个前缀常量）。
  *
  * 不共享的代价是**静默**的：拼错一个连字符不报错，宿主的整块面板会一个字都不显示

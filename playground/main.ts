@@ -15,7 +15,6 @@ import '@unocss/reset/tailwind.css'
 import './styles/base.scss'
 
 import { createThreeDMaker } from '../src'
-import { EDITOR_ASSETS } from './utils/editorAssets'
 import { runModelEvent } from './composables/useEventRunner'
 import App from './App.vue'
 
@@ -28,22 +27,19 @@ const app = createApp(App)
 app.use(createPinia())
 
 /**
- * 素材与回调都由**宿主**交给插件，而不是库自己内置一份。
+ * 这里**只接一个回调**，素材一个字都不配——那正是这次改造要演示的事情：
+ * 装完插件、写一句 `<SceneViewer editable />`，左栏那五个分类就该有货。
  *
- * 素材：那台服务器的域名与开发期代理都是这个示例自己的配置（`utils/editorAssets.ts`），
- * 库一个字面量地址都不含——否则 `vite build --mode lib` 会把
- * `import.meta.env.VITE_*` 直接内联进每一个宿主的产物。
+ * 素材缺省是库内置那份标准表（`src/editor/defaultAssets.ts`）。开发期需要的
+ * 同源代理前缀是**这一页自己的事**，走 `<SceneViewer>` 的 `assetBaseUrl`
+ * （见 `App.vue`，值在 `utils/editorAssets.ts`）——它只覆盖根地址，清单仍取
+ * 库那一份。要整份换成自己那套目录才写 `createThreeDMaker({ assets })`。
  *
  * 回调：`runEventCode` 是「把模型事件绑定里的那段字符串跑起来」。它只能靠
  * `new Function` 实现，而库产物里不许出现这四个字（冒烟测试钉着这一条），
  * 所以这份实现留在 playground，作为**宿主自己那一份决定**的一个参照——
  * 不接这个回调也完全合法（编辑器照常存代码，只是不执行）。
  */
-app.use(
-  createThreeDMaker({
-    assets: EDITOR_ASSETS,
-    hooks: { runEventCode: runModelEvent },
-  }),
-)
+app.use(createThreeDMaker({ hooks: { runEventCode: runModelEvent } }))
 
 app.mount('#app')

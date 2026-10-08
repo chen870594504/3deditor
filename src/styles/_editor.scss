@@ -1731,6 +1731,11 @@
 
 .tdm-field-label {
   font-size: 11px;
+  /* 400 是**显式写出来防宿主**的，不是为了改外观（原先就是继承来的 normal）：
+     这里用的是 <label>，而后台模板的通用样式里几乎必有一条 `label { font-weight: 700 }`。
+     按标签写的规则特异性是 (0,0,1)，比 .tdm-root 那层继承更近，于是字段名会整片变粗
+     ——**不报错**，只是与 playground 里的观感对不上。同类问题见设计决定 2。 */
+  font-weight: 400;
   color: var(--tdm-text);
   overflow: hidden;
   text-overflow: ellipsis;

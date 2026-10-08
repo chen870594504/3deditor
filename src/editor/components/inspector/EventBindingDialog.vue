@@ -258,13 +258,21 @@ const codeSummary = computed(() => {
         tabindex="-1"
         @click.stop
       >
-        <header class="tdm-modal-head">
+        <!--
+          表头是 `div` 而不是 `header`：宿主按**标签**写的全局样式会命中它
+          （后台模板里 `header { height: 60px; background: …; padding: 0 20px }`
+          这种随处可见），而 `.tdm-root` 的作用域只赢「两边都声明了的属性」。
+          完整理由在两栏那两处（SidePanel.vue / InspectorPanel.vue）。
+          这里切掉不损失语义：`header` 只有在 `<body>` 的直接后代位置上才是 banner，
+          包在 `role="dialog"` 里它本来就只是个普通块，标题由下面那个 `<h2>` 承担。
+        -->
+        <div class="tdm-modal-head">
           <h2 id="tdm-evt-title" class="tdm-modal-title">事件绑定</h2>
           <span class="tdm-modal-sub">
             <b class="tdm-modal-target">{{ targetLabel }}</b> · 库只负责发事件，代码由编辑器执行
           </span>
           <button type="button" class="tdm-btn tdm-btn--sm" @click="clearAll">清空全部</button>
-        </header>
+        </div>
 
         <div class="tdm-modal-body">
           <ul class="tdm-evt-list">
@@ -321,12 +329,13 @@ const codeSummary = computed(() => {
           </div>
         </div>
 
-        <footer class="tdm-modal-foot">
+        <!-- 脚注同理：`footer` 只有在 `<body>` 的直接后代位置上才是 contentinfo -->
+        <div class="tdm-modal-foot">
           <span class="tdm-hint tdm-hint--quiet">
             关闭后点击模型即可看到效果，代码的输出与报错都在浏览器控制台（F12）
           </span>
           <button type="button" class="tdm-btn tdm-btn--primary" @click="close">完成</button>
-        </footer>
+        </div>
       </div>
     </div>
   </Teleport>

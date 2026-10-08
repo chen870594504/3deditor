@@ -31,7 +31,8 @@ const compiled = new Map<string, (event: unknown, model: unknown) => void>()
  * 这种完全指不到点子上的报错，所以这里把用法写进错误信息。
  *
  * 反过来，返回的函数签名是写死的 `(event, model)`：用户代码能直接用的
- * 就是这两个名字，不需要自己声明形参。这条约定在 README 里也写了一份。
+ * 就是这两个名字，不需要自己声明形参。**这条约定与 `defaultEventCode` 那边
+ * 是同一份**（`src/utils/eventCode.ts` 里用同一个说法解释过），改一处就要改另一处。
  */
 export function compileEventHandler(
   code: string,

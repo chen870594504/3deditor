@@ -1,20 +1,68 @@
-import type { EditorAssetEntry } from '../../src'
+import type { EditorAssetEntry, EditorAssets } from './assets'
 
 /**
- * 模型的清单——**这是宿主那一侧的数据**。
+ * 库内置的那一份**标准素材表**。
  *
- * 库只认「一份宿主传进来的表」（`createThreeDMaker({ assets })`），本文件就是
- * playground 作为宿主传进去的那一份。搬到 `src/` 之前它连着素材根地址一起写在
- * 编辑器里，而根地址读 `import.meta.env`、库构建会把它**内联进产物**——
- * 于是每一家宿主的 `dist/index.js` 里都会带上本仓库那台服务器。拆开之后
- * 库那一半一个字面量地址都不含。
+ * ## 它为什么在库这一侧
  *
- * 单独拆出来只是因为这一类的模型会长（每种地板都是一张贴图加一个 glb），
- * 全摆进下面那几行会把本文件撑得很长。
- * **它仍然是写死的清单**：不抓服务器目录是有意的取舍，不是还没做。
+ * 这份表原先住在 `playground/utils/modelList.ts`——那是「库不许内置任何地址」
+ * 那条规矩的样子：地址与清单都归宿主，库一个字面量都不含。规矩本身没写错，
+ * 错的是它**默认的那一侧**。真实宿主装完库写一句 `<SceneViewer editable />`
+ * 之后，左栏是**空的**——不是加载失败，是根本没有清单可渲染（空地址、空分类，
+ * 一句空态、不发请求、不报错）。而「左栏应该有五类模型」这件事，是编辑器
+ * 自带的功能，不是宿主该先做的一道功课。
  *
- * `file` 是服务器上 `floor/` 下的**子目录名**，目录里放同名的 `.glb` 与 `.png`
- * （`tile1` → `floor/tile1/tile1.glb` 与 `floor/tile1/tile1.png`）。
+ * 于是反过来：**库内置一份可用的默认，宿主按需覆盖**。三级优先级是
+ *
+ * | 谁 | 换什么 |
+ * |---|---|
+ * | `SceneViewer` 的 `assetBaseUrl` prop | **只换根地址**（换镜像 / 开发期同源代理前缀） |
+ * | `createThreeDMaker({ assets })` | **整份**（地址 + 清单） |
+ * | 本文件 `DEFAULT_EDITOR_ASSETS` | 什么都不写时的默认 |
+ *
+ * ## 代价（写在这里，因为它是这次反转唯一真正付出的东西）
+ *
+ * `DEFAULT_ASSET_BASE_URL` 是个**私有域名**，而 `vite build` 会把这份表原样
+ * 打进 `dist/index.js`，`sourcemap` 也跟着 `dist` 一起发出去（`files` 只收
+ * `dist`，`.map` 在里面）。所以从这一版起，任何一家宿主的产物里都能搜到这个
+ * 域名——**这是知情的取舍，不是漏了**。别当成 bug 删掉那个常量：删了它，
+ * 「一行不写就有模型」这个承诺跟着一起没。
+ *
+ * 文件里的地址**写字面量、不读 `import.meta.env`**：库构建会把
+ * `import.meta.env.VITE_*` 内联进产物，读它等于把本仓库的 `.env` 发给每一家宿主。
+ * 开发期的同源代理前缀是**宿主那一侧**的事（playground 自己拼），不进这里。
+ *
+ * ## 清单写死、不抓目录
+ *
+ * 刻意**不去抓服务器的目录索引页**，即使那台 nginx 已经开了 autoindex、
+ * 抓下来解析出列表是可行的：
+ *   - 抓目录页 = 把整棵目录结构暴露在页面上，谁打开编辑器都能看到
+ *     服务器上放了什么、叫什么名字。列表写死在数据里就没有这个口子。
+ *   - 目录页的响应也不带 `Access-Control-Allow-Origin`（实测），
+ *     生产环境要靠再开一条 CORS 规则才能读，等于为了这个功能放宽服务器配置。
+ *   - 写死的列表在离线、代理没配好、服务器换路径时都还能用。
+ *
+ * 代价是**往服务器上放了新模型要来这里加一行**。这是有意的取舍。
+ *
+ * 表里只写**条目**（key + 有几个、分别叫什么）：有哪五类、它们的顺序、中文名、
+ * 以及「这一类点一下是干什么的」仍然由编辑器自己定（`useModelLibrary.ts` 的
+ * `LIBRARY_SHAPE`）。所以本文件里没有 `label` 那一层分类名。
+ */
+
+/**
+ * 标准素材包的根地址，末尾斜杠可有可无（拼之前会补齐）。
+ *
+ * 单独摘出来是为了让 `vite.config.ts` 能拿它当开发期代理目标的兜底值——
+ * 那边 `loadEnv(...).VITE_ASSE_IMAGE_URL` 读不到时才用它，于是
+ * 「换台服务器」只需要改一处，`.env` 从「源」降级成「覆盖」。
+ */
+export const DEFAULT_ASSET_BASE_URL = 'https://box.hczyun.cn/usr/tool/rhmh/data/rhmh/static/3d-assets/'
+
+/**
+ * 地板。
+ *
+ * `file` 是服务器上 `floor/` 下的**子目录名**，目录里放同名的 `.glb` 与
+ * `.png`（`tile1` → `floor/tile1/tile1.glb` 与 `floor/tile1/tile1.png`）。
  * 分类那一段目录名不在这里写，它取分类自己的 `key`。
  *
  * `span` 是**这件资产的一张贴图铺几米见方**（`EditorAssetEntry.span` 有完整解释）。
@@ -22,7 +70,7 @@ import type { EditorAssetEntry } from '../../src'
  * 4 × 4 块砖 → 一块砖 0.6 米；`wood` 的一张图里是 12 行板 → 一条板 0.2 米宽。
  * 换资产时这个数**要照新图里的格子数重算**，不是照抄。
  */
-export const FLOOR = [
+const FLOOR = [
   { label: '瓷砖地板', file: 'tile1', span: 2.4 },
   { label: '木制地板', file: 'wood', span: 2.4 },
 ] satisfies readonly EditorAssetEntry[]
@@ -34,12 +82,13 @@ export const FLOOR = [
  * 再加一件照 `FLOOR` 那样加一行即可，不用动别处。
  *
  * 空数组是**合法状态**，不是待填的占位：分类照常出现在左栏导轨上，宫格里显示
- * 现成的空态文案（见 `useModelLibrary.ts` 顶上那段 `files: []` 的说明）。
+ * 现成的空态文案（`ModelLibrary.vue` 里那句 `.tdm-lib-empty`，由
+ * `resolveLibrarySection` 那条「第一个有货的」兜底决定进编辑器的第一眼落在哪）。
  * 所以「上传了资产但还没来这里加一行」的表现是**空分类**，不是报错。
  */
-export const WALL = [
+const WALL = [
   { label: '墙壁1', file: 'wall1' },
-  { label: '墙壁2', file: 'wall2' }
+  { label: '墙壁2', file: 'wall2' },
 ] satisfies readonly EditorAssetEntry[]
 
 /**
@@ -76,7 +125,7 @@ export const WALL = [
  *
  * ## 这里写的 1.8 × 2.1 是**手写的，而且非手写不可**
  *
- * 它看起来与 `WINDOW` 那一栏的 3.6 × 2.7 是同一件事，其实是两件：
+ * 它看起来与 `WINDOW` 那一栏的 2.5 × 2.7 是同一件事，其实是两件：
  * 那两个数是量出来的，这两个是**定的**。理由在资产自己身上：
  * 服务器上这份 `doubleGlassDoor.glb` 除了门本身，还带着**一块地面
  * （14 × 0.02 × 17 米）与三面墙（6.1 × 3.4、14 × 3.4）**，量出来的外廓是
@@ -88,7 +137,7 @@ export const WALL = [
  * 而事实可以是脏的。换了资产、或者哪天这份 glb 清理干净了，
  * 拿 `node scripts/measure-glb.mjs` 量一遍再回来改这个数。
  */
-export const DOOR = [
+const DOOR = [
   { label: '双开玻璃门', file: 'doubleGlassDoor', width: 1.8, height: 2.1 },
 ] satisfies readonly EditorAssetEntry[]
 
@@ -150,15 +199,15 @@ export const DOOR = [
  * 那时编辑器量出来的数会被填进去；写了就照写的开洞，两边差到 3 倍以上时
  * 控制台会点一句名（那说明清单或资产有一个是错的，而它说得出是哪一个）。
  */
-export const WINDOW = [
+const WINDOW = [
   { label: '窗户1', file: 'window1', width: 2.5, height: 2.7 },
 ] satisfies readonly EditorAssetEntry[]
 
 /**
  * 天空盒。
  *
- * 服务器上是 `skybox/bak1/` … `skybox/bak38/` 三十八个目录，编号连号，
- * 所以这里**循环生成**而不是手抄三十八行：手抄多一行少一行都不会报错，
+ * 服务器上是 `skybox/bak1/` … `skybox/bak32/` 三十二个目录，编号连号，
+ * 所以这里**循环生成**而不是手抄三十二行：手抄多一行少一行都不会报错，
  * 表现只是宫格里少一格、或者多一格点出来是空图。
  *
  * **每个目录里不是模型，是六张 jpg**：`back` / `down` / `front` / `left` /
@@ -176,7 +225,7 @@ export const WINDOW = [
  */
 const SKY_BOX_COUNT = 32
 
-export const SKY_BOX = [
+const SKY_BOX = [
   /*
     「空盒子」排在最前面，`file` 空串。
 
@@ -198,8 +247,35 @@ export const SKY_BOX = [
     「33 个天空盒」）——量词说的是「这一类有几格」，而它就是这一类的一格。
   */
   { label: '空盒子', file: '' },
-  ...Array.from(
-    { length: SKY_BOX_COUNT },
-    (_, i) => ({ label: `天空盒${i + 1}`, file: `bak${i + 1}` }),
-  ),
+  ...Array.from({ length: SKY_BOX_COUNT }, (_, i) => ({
+    label: `天空盒${i + 1}`,
+    file: `bak${i + 1}`,
+  })),
 ] satisfies readonly EditorAssetEntry[]
+
+/**
+ * 库内置的那一份：标准地址 + 上面五类。
+ *
+ * **冻结**，与 `DEFAULT_SCENE_SWITCHES` 同一个理由：它是模块级单例，
+ * 而 `useEditorAssets()` 会把它原样交给每一家宿主。谁要是就地往
+ * `categories` 里 push 一件资产，改的就不只是他自己那一次渲染——
+ * 同一个页面里所有 `SceneViewer`、以及同一进程里所有 SSR 请求，全都跟着变。
+ * 冻结让这件事变成一条明确的报错，而不是一个查不出来的串请求。
+ *
+ * 冻结的是**外层对象与分类数组**两层；`categories` 里每一项的 `entries`
+ * 已经由各自的 `satisfies readonly ...` 在类型上钉成只读，不必再逐层冻一遍。
+ *
+ * 宿主想基于这份默认加东西，**不要改它**——`{ ...DEFAULT_EDITOR_ASSETS }`
+ * 摊平出来的是一份新对象（`categories` 那几个数组仍是共享的、只读使用），
+ * 往新对象的 `categories` 里加一项即可。playground 就是这么做的。
+ */
+export const DEFAULT_EDITOR_ASSETS: EditorAssets = Object.freeze({
+  baseUrl: DEFAULT_ASSET_BASE_URL,
+  categories: Object.freeze([
+    { key: 'floor', entries: FLOOR },
+    { key: 'wall', entries: WALL },
+    { key: 'door', entries: DOOR },
+    { key: 'window', entries: WINDOW },
+    { key: 'skybox', entries: SKY_BOX },
+  ]),
+})

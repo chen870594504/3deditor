@@ -31,7 +31,17 @@ const open = ref(props.section.open ?? true)
 </script>
 
 <template>
-  <section v-if="visible" class="tdm-sec" :class="{ 'tdm-sec--closed': !open }">
+  <!--
+    根元素是 `div` 而不是 `section`，理由与两栏那两处（SidePanel.vue / InspectorPanel.vue）
+    同源：宿主按**标签**写的全局样式会整片压上来，而 `.tdm-root` 的作用域只赢
+    「两边都声明了的属性」。这一处比那两处更密——属性面板每一页都是若干个这一块，
+    宿主一条 `section { padding: 8px 24px; margin-bottom: 20px }` 就能把每一节都推出
+    一圈内边距、彼此拉开一条缝（**不报错**，只有眼睛看得出来）。
+    切成 `div` 不损失语义：这里的 `section` **没有可访问名**（标题在折叠按钮里面、
+    不是 `aria-labelledby` 指过来的），所以它本来就不是 region 地标，读屏那边没有变化。
+    这一条同守 `scripts/smoke.mjs` 里那条「容器根不用语义标签」的源码扫描。
+  -->
+  <div v-if="visible" class="tdm-sec" :class="{ 'tdm-sec--closed': !open }">
     <button type="button" class="tdm-sec-head" :aria-expanded="open" @click="open = !open">
       <span class="tdm-sec-idx">{{ section.index }}</span>
       <span class="tdm-sec-title">{{ section.title }}</span>
@@ -41,5 +51,5 @@ const open = ref(props.section.open ?? true)
     <div class="tdm-sec-body">
       <InspectorField v-for="field in section.fields" :key="field.key" :field="field" />
     </div>
-  </section>
+  </div>
 </template>

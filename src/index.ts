@@ -1,6 +1,7 @@
 import type { App, Component, Plugin } from 'vue'
 import { createPinia } from 'pinia'
-import { EDITOR_ASSETS_KEY, EMPTY_EDITOR_ASSETS } from './editor/assets'
+import { EDITOR_ASSETS_KEY } from './editor/assets'
+import { DEFAULT_EDITOR_ASSETS } from './editor/defaultAssets'
 import { EDITOR_HOOKS_KEY, EMPTY_EDITOR_HOOKS } from './editor/hooks'
 import SceneFloorplan from './components/SceneFloorplan.vue'
 import SceneToolbar from './components/SceneToolbar.vue'
@@ -171,6 +172,34 @@ export type { ViewMode } from './utils/viewMode'
  */
 export { useEditorAssets } from './editor/assets'
 
+/**
+ * 库内置的那份标准素材表，以及「清空」那个取值。
+ *
+ * `DEFAULT_EDITOR_ASSETS` 导出，理由与 `DEFAULT_SCENE_CONFIG` 那类一样、
+ * 但更强一层：宿主**确实绕不过去**。今天的 `assets` 是**整份替换**、
+ * `extraSections` 只能**追加分类**，所以「在内置的『地板』里再加一件资产」
+ * 这个需求没有任何出口——除非拿到这份默认表摊平一份、往 `categories` 里加一项：
+ *
+ *     const mine = {
+ *       ...DEFAULT_EDITOR_ASSETS,
+ *       categories: [...DEFAULT_EDITOR_ASSETS.categories, { key: 'wall', entries: [...] }],
+ *     }
+ *
+ * 它是**冻结**的，所以摊平之后的那个新对象才是宿主该改的东西，
+ * 直接 push 进 `categories` 会报错（这正是冻结要拦的那件事）。
+ * playground 是这条用法的一个现成例子。
+ *
+ * `EMPTY_EDITOR_ASSETS` 一起导出，让「关掉内置模型库」不必手写
+ * `{ baseUrl: '', categories: [] }` 那个字面量——它同时是「关掉」这件事的
+ * **唯一说法**（判据是 `??`，空表不会被当成没传）。
+ *
+ * 那一份地址常量**不单独导出**：它就是 `DEFAULT_EDITOR_ASSETS.baseUrl`，
+ * 再单开一个导出属于放无关的东西。
+ */
+export { EMPTY_EDITOR_ASSETS } from './editor/assets'
+
+export { DEFAULT_EDITOR_ASSETS } from './editor/defaultAssets'
+
 export type { EditorAssetCategory, EditorAssetEntry, EditorAssets } from './editor/assets'
 
 /**
@@ -230,7 +259,9 @@ export type { ModelPart, ModelPartShape, ModelPartsResult, PlacedPart } from './
  * 宿主想知道「这个模型到底挂了几类事件」时，用它得到的结果一定与库一致。
  *
  * 注意 `defaultEventCode` 只是默认模板文本，库自身**从不执行**它，
- * 也不执行配置里的任何 `code`。要跑起来请见 README 的「模型事件」一节。
+ * 也不执行配置里的任何 `code`——`dist/index.js` 里不许出现 `new Function`，
+ * 冒烟测试钉着这一条。要跑起来得宿主接住那五个 `object*` 事件、自己把 `code`
+ * 编译成函数（见 `EditorHooks` 的 `runEventCode`）。
  */
 export {
   MODEL_EVENT_LABELS,
@@ -294,10 +325,15 @@ export function createThreeDMaker(options: ThreeDMakerOptions = {}): Plugin {
        * ——那是 SSR 下会串请求的写法。`app.provide` 在 `app.use()` 时就位，
        * 晚于所有模块求值、早于任何组件 setup，正是这条链唯一站得住的时机。
        *
-       * 没传就是 `EMPTY_EDITOR_ASSETS`（空地址、空分类）：编辑器据此渲染空态，
-       * 不发任何请求、不报错，库一个字面量地址都不含。
+       * 没传就是 `DEFAULT_EDITOR_ASSETS`（库内置那份标准素材表）：装完库写一句
+       * `<SceneViewer editable />` 左栏就有货，宿主一行都不用配。
+       *
+       * 判据是 `??` 而不是真假——**传进来的空表要原样生效**。宿主
+       * `assets: { baseUrl: '', categories: [] }` 的意图是「关掉模型库」，
+       * 写成 `assets?.categories.length ? … : DEFAULT` 就会把这个意图静默吃掉，
+       * 而这是那种「不报错、只有看画面才知道」的 bug。
        */
-      app.provide(EDITOR_ASSETS_KEY, assets ?? EMPTY_EDITOR_ASSETS)
+      app.provide(EDITOR_ASSETS_KEY, assets ?? DEFAULT_EDITOR_ASSETS)
 
       /**
        * 编辑器回调宿主的那几件事，与素材同一条路数与同一条理由。

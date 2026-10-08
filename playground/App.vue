@@ -6,6 +6,7 @@ import { ICON_EQUIPMENT } from './utils/libraryIcons'
 import { SceneViewer, useSceneStore } from '../src'
 import type { EditorPanelTab } from '../src'
 import { pushEvent } from '../src/editor/composables/useEditorState'
+import { ASSET_BASE } from './utils/editorAssets'
 
 /*
   宿主外壳。
@@ -16,9 +17,11 @@ import { pushEvent } from '../src/editor/composables/useEditorState'
   W/E/R 与 Esc 与 ⌘Z 全在库里面。
 
   它同时是这个仓库最诚实的一份用法示例：**库的公开面在这里被完整地用了一遍**
-  （一个 prop 决定形态、两个 prop 声明自己的面板页、`getSceneData()` 取数据落盘），
-  没有一处走后门 import 内部模块——`useEditorState` 那几条是公开导出，
-  宿主自己画顶栏时按的就是同一组状态。
+  （一个 prop 决定形态、一个 prop 换素材地址、两个 prop 声明自己的面板页、
+  `getSceneData()` 取数据落盘），没有一处走后门 import 内部模块——
+  `useEditorState` 那几条是公开导出，宿主自己画顶栏时按的就是同一组状态。
+  **素材清单则一个字都不在这里**：那是库内置的，这一页只在开发期把根地址
+  换成同源代理前缀。
 */
 defineOptions({ name: 'App' })
 
@@ -49,7 +52,7 @@ const HOST_INSPECTOR_TABS: EditorPanelTab[] = [{ key: 'about', label: '说明' }
  * 宿主自己那一条快捷键：`⌘S` 保存。
  *
  * 它**必须留在宿主**：库既不知道「保存到哪」，也不做任何落盘
- * （组件只产出数据，见 README「保存场景」）。编辑器内部那几条
+ * （组件只产出数据，走公开的 `getSceneData()`）。编辑器内部那几条
  * （W/E/R、Esc、⌘Z）在库里，由 `SceneEditor` 自己挂上。
  *
  * `preventDefault` 是必需的：不挡住的话浏览器会弹「保存网页」对话框，
@@ -88,12 +91,19 @@ onUnmounted(() => {
       `height="100%"`：`.tdm-app` 是一条竖排 flex，顶栏之外剩下的高度全给它。
       不写的话组件根会用默认的 480px，底下一大片空白。
 
+      `asset-base-url` 只在**开发期**有值：那时把素材根地址换成同源代理前缀，
+      绕开那台服务器不发 CORS 头的问题（见 `utils/editorAssets.ts`）。
+      生产构建下它是 `undefined`，也就是**不覆盖**——清单和地址都取库内置那份，
+      这一页一个字都不用配。所以这一行同时是「库内置默认」与「只换地址」
+      两条路各自的示例。
+
       编辑态的一切（三栏、事件弹窗、绘制工具、快捷键）都在这个组件里面，
       外加下面这两页宿主自己的面板——它们的正文本页自己画。
     -->
     <SceneViewer
       editable
       height="100%"
+      :asset-base-url="ASSET_BASE"
       :side-tabs="HOST_SIDE_TABS"
       :inspector-tabs="HOST_INSPECTOR_TABS"
     >

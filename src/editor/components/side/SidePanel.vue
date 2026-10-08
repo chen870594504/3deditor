@@ -483,8 +483,20 @@ function activate(item: RailItem) {
     代价是 Tab 键会先走完内容再走到导轨，与右栏相反——可接受的小差异。
 
     根类仍是 tdm-col--left，所以预览模式那条 display:none 自动生效。
+
+    **根元素是 `div` 而不是 `aside`**（右栏同，两处必须一起改）。这一条是真实宿主
+    踩出来的：库的样式全都收在 `.tdm-root` 下，但作用域只赢「**两边都声明了的属性**」
+    ——`.tdm-col` 只写了 display / flex-direction / min-width / min-height 四条，
+    而宿主那份通用样式里常有一条按**标签**写的
+    `aside { padding: 8px 24px; margin-bottom: 20px; line-height: 32px; background: … }`
+    （后台模板的 `styles/index.scss` 里很典型），于是这两栏被它整片压住——
+    **不报错，只是版面坏掉**。换成 `div` 之后宿主那边没有对应规则可命中，同理不用
+    `header` / `section` / `article` / `footer`（属性面板的每一节、事件弹窗的表头与脚注
+    原先都是这么写的，已经跟着改了）。`nav` 那两处导轨是例外、留着：它是真语义，
+    而按 `nav` 写全局样式的模板极少。
+    这条约定由 `scripts/smoke.mjs` 里那条「容器根不用语义元素」的源码扫描守着。
   -->
-  <aside class="tdm-col tdm-col--left">
+  <div class="tdm-col tdm-col--left">
     <nav ref="nav" class="tdm-nav">
       <!--
         这一层原先绑着 `:key="leftTab"`：切面板时整块重建，让 tabpanel 的淡入动画
@@ -615,5 +627,5 @@ function activate(item: RailItem) {
         />
       </div>
     </nav>
-  </aside>
+  </div>
 </template>

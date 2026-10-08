@@ -1,16 +1,23 @@
 import { inject, type InjectionKey } from 'vue'
+/*
+  值的那一半在 `defaultAssets.ts`。**这条 import 是单向的**：那边只从本文件
+  取类型（`import type`，编译后整行消失），所以运行时没有环。反过来写
+  （本文件在模块顶层去建那份默认表）就会真的成环，而两个模块顶层都有副作用，
+  环下必有一方拿到 `undefined`——那种 bug 只在生产构建里发作。
+*/
+import { DEFAULT_EDITOR_ASSETS } from './defaultAssets'
 
 /**
- * 编辑器要用哪些素材，由宿主说了算。
+ * 编辑器要用哪些素材，以及它从哪来。
  *
- * 这一层存在的理由只有一个：**库不许内置任何地址**。原先那份清单（含模型的
- * 相对路径）与素材根地址写死在编辑器代码里，跟着 `import.meta.env` 一起读——
- * 而库构建会把 `import.meta.env.VITE_*` 直接内联进 `dist/index.js`，
- * 于是任何一家宿主的产物里都会带上本仓库那台服务器的域名。搬进 `src/` 之前
- * 必须先把这条线剪断，剪法就是「库只认一份宿主传进来的表」。
+ * 这个模块只放**形状与读取入口**，不放值：缺省那份在 `defaultAssets.ts`，
+ * 反转那条规矩的理由也完整写在那个文件顶上。这里只留一句话的版本——
+ * **库内置一份可用的标准素材表，宿主按需覆盖**：只想换台服务器就给
+ * `SceneViewer` 的 `assetBaseUrl`（只换根地址），要整份换（自己那套目录）
+ * 就给 `createThreeDMaker({ assets })`。两级都没给时落在 `DEFAULT_EDITOR_ASSETS`。
  *
- * 库因此**一个字面量地址都不含**：`baseUrl` 空着就是空着，左栏渲染一句空态，
- * 不发任何请求、也不报错。缺省那份 `EMPTY_EDITOR_ASSETS` 就是这件事的落点。
+ * 这一层（`provide` / `inject`）本身没变，变的是**没人 provide 时的兜底值**：
+ * 从「空表、左栏一句空态」变成「库内置那份」。见设计决定 50。
  *
  * ## 宿主回答的是「哪一类里有什么」，不是「有哪几类」
  *
@@ -27,7 +34,7 @@ import { inject, type InjectionKey } from 'vue'
  * 要**追加**分类走 `SidePanel.vue` 的 `extraSections`：那条路才带图标与插槽。
  */
 
-/** 一个素材条目。形状与原先那份写死在编辑器里的清单逐字一致，只是搬到了宿主这一侧 */
+/** 一个素材条目。形状与 `defaultAssets.ts` 那份内置清单逐字一致——宿主自己那套照它拼 */
 export interface EditorAssetEntry {
   /** 界面上显示的名字，也是追加进场景后写进 `model.name` 的值 */
   label: string
@@ -127,13 +134,15 @@ export interface EditorAssets {
   /**
    * 素材根地址，末尾斜杠可有可无（拼之前会补齐）。
    *
-   * **库不含任何默认值**：不传就是空串，左栏渲染空态。原先那台私有素材服务器
-   * 的域名连同 dev 代理前缀一起还给了 playground——它的 CORS 与 dev 代理
-   * 都是宿主自己的事。
+   * 缺省是库内置的 `DEFAULT_EDITOR_ASSETS.baseUrl`（标准素材包那台服务器）。
+   * 只想换台服务器（换镜像、换开发期的同源代理前缀）**不必整份换**——
+   * 给 `SceneViewer` 的 `assetBaseUrl` 就够，那时清单仍取 `defaultAssets.ts`
+   * 那一份，只把根地址换掉。要整套目录都换成自己的，才走
+   * `createThreeDMaker({ assets })`。
    *
-   * 连注释里都不写那个域名的字面量：sourcemap 随 `dist` 一起发出去
-   * （`files` 只收 `dist`，而 `.map` 在里面），一句话会跟着进每一家宿主的产物。
-   * 所以验收时那条「`dist/` 里搜不到域名与 dev 代理前缀」才搜得干净。
+   * 传空字符串是**合法的「关掉模型库」**：左栏五个分类照常出现在导轨上，
+   * 宫格一律空态，不发任何请求。判「给没给」一律按 `undefined`，不按真假——
+   * 一个空地址与「没配」是两件不同的事。
    */
   baseUrl: string
   categories: readonly EditorAssetCategory[]
@@ -142,21 +151,34 @@ export interface EditorAssets {
 /**
  * 注入键。
  *
- * 用 `provide` / `inject` 而不是模块级常量：这套值来自宿主（插件选项或组件 prop），
+ * 用 `provide` / `inject` 而不是模块级常量：这份值来自宿主（插件选项或组件 prop），
  * 在模块求值那一刻还不存在，而模块级常量改不成 `computed` 就得引入一份**模块级
  * 可变状态**——那是 SSR 下会串请求的写法，代价比多一个 `inject` 大得多。
+ *
+ * 注意这一条**不因「库内置了默认表」而失效**：默认表本身可以是个模块常量，
+ * 但「哪个实例用的是哪一份」不行——同一个进程里两个 SSR 请求、同一页面上两个
+ * `SceneViewer` 各带各的 `assetBaseUrl`，那件事只有 per-instance 的 provide 说得清。
  */
 export const EDITOR_ASSETS_KEY: InjectionKey<EditorAssets> = Symbol('tdm-editor-assets')
 
-/** 宿主什么都没给时的那一份：空地址、空分类。左栏据此渲染空态，不发任何请求 */
+/**
+ * 显式清空的那一份：空地址、空分类。左栏据此渲染空态，不发任何请求。
+ *
+ * 它**不再是缺省**（缺省是 `DEFAULT_EDITOR_ASSETS`），只是一个给宿主用的取值：
+ * 不想要内置的模型库时传 `assets: EMPTY_EDITOR_ASSETS`。因为库的判据是
+ * `assets ?? DEFAULT`，传一个「空但存在」的对象不会被当成「没传」——
+ * 这正是「关掉」与「没配」必须分得开的地方。
+ */
 export const EMPTY_EDITOR_ASSETS: EditorAssets = { baseUrl: '', categories: [] }
 
 /**
  * 取当前这套素材。**必须在组件 setup 里调用**（`inject` 的前提）。
  *
- * 没人在上层 provide 时退回 `EMPTY_EDITOR_ASSETS`，而不是抛错：编辑器本身要能
- * 在「宿主还没配素材」的状态下正常渲染（左栏一句空态），这比一个白屏有用得多。
+ * 兜底与插件安装那一侧（`index.ts` 的 `assets ?? DEFAULT_EDITOR_ASSETS`）**同值**：
+ * 正常装上插件时走不到这一条（`install` 一定 provide 过），它是给
+ * 「组件被单独渲染、没有经过 `app.use`」那种情形站的岗——那时也该拿到同一份
+ * 默认，而不是一片空栏。
  */
 export function useEditorAssets(): EditorAssets {
-  return inject(EDITOR_ASSETS_KEY, EMPTY_EDITOR_ASSETS)
+  return inject(EDITOR_ASSETS_KEY, DEFAULT_EDITOR_ASSETS)
 }

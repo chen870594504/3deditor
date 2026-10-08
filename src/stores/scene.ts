@@ -47,7 +47,7 @@ const DEFAULT_MODEL_VIEW = createModelConfig()
  * 「模型属性」），而且宿主导入一份配置时还得接受「该选中第几个」这种指令。
  *
  * 早先平铺在 store 上的 `modelUrl` / `background` / `autoRotate` / `wireframe` /
- * `showGrid` 保留为可写 computed 委托。这是为了不破坏已经写进 README 的对外 API，
+ * `showGrid` 保留为可写 computed 委托。这是为了不破坏**已经发布的对外 API**，
  * 也让 SceneToolbar 无需改动：它们一律指向**当前选中的那个模型**。
  */
 export const useSceneStore = defineStore('tdm-scene', () => {

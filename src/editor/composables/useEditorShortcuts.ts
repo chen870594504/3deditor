@@ -24,7 +24,8 @@ import { exitPreview, redo, undo } from './useSceneActions'
  * 自己抄一遍快捷键」正是三栏进库时要一并解决的那类问题。
  *
  * 留在宿主的是**策略**那一类：`⌘S` 保存。库连「保存到哪」都不知道
- * （组件本身不落盘），所以那一条由宿主的 keydown 处理，见 README。
+ * （组件本身不落盘，只经 `getSceneData()` 把数据交出去），
+ * 所以那一条由宿主的 keydown 处理（`playground/App.vue` 就是这么做的）。
  *
  * ## 挂在 window 上而不是某个容器
  *
@@ -133,7 +134,7 @@ export function useEditorShortcuts(): void {
 
     /**
      * 撤销 / 重做。只有 `z` 一支——`⌘S` 保存不在这里，它属于**宿主**：
-     * 库连「保存到哪」都不知道，组件本身不落盘（见 README「保存场景」）。
+     * 库连「保存到哪」都不知道，组件本身不落盘（只经 `getSceneData()` 把数据交出去）。
      */
     switch (event.key.toLowerCase()) {
       case 'z':

@@ -21,8 +21,10 @@ import { createSSRApp, defineComponent, h } from 'vue'
 import { renderToString } from '@vue/server-renderer'
 import {
   createThreeDMaker,
+  DEFAULT_EDITOR_ASSETS,
   DEFAULT_SCENE_CONFIG,
   DEFAULT_SCENE_SWITCHES,
+  EMPTY_EDITOR_ASSETS,
   SceneViewer,
   deriveModelId,
   resolveSceneSwitches,
@@ -83,6 +85,9 @@ check('具名导出齐全', () => {
   // 总闸那条算术进公开面有两条理由（见 index.ts 的注释），其中一条就是这里够得着它
   assert(typeof resolveSceneSwitches === 'function', 'resolveSceneSwitches 不是函数')
   assert(DEFAULT_SCENE_SWITCHES, 'DEFAULT_SCENE_SWITCHES 缺失')
+  // 库内置那份素材表要够得着，否则上面那几条断言只能自己抄一份地址
+  assert(DEFAULT_EDITOR_ASSETS?.baseUrl, 'DEFAULT_EDITOR_ASSETS 缺失')
+  assert(EMPTY_EDITOR_ASSETS, 'EMPTY_EDITOR_ASSETS 缺失')
   return 'createThreeDMaker / useSceneStore / SceneViewer / resolveSceneSwitches 均存在'
 })
 
@@ -243,18 +248,18 @@ check('旧默认值没被动过', () => {
  * 以及 Vue 有没有把「没传的布尔」悄悄转成 `false`。后者一旦发生，`.tdm-toolbar`
  * 会从**所有**宿主页面上消失（`editable` 被转成 false 就是只读模式）。
  */
-async function renderViewer(props, slots) {
+async function renderViewer(props, slots, pluginOptions = {}) {
   const pinia = createPinia()
   const app = createSSRApp({ render: () => h(SceneViewer, props, slots) })
   app.use(pinia)
-  app.use(createThreeDMaker({ pinia }))
+  app.use(createThreeDMaker({ pinia, ...pluginOptions }))
   return { html: await renderToString(app), store: useSceneStore(pinia) }
 }
 
 /** 渲染失败时把结果放进同一个列表，不中断后面那些与总闸无关的断言 */
-async function tryRenderViewer(name, props, slots) {
+async function tryRenderViewer(name, props, slots, pluginOptions) {
   try {
-    return await renderViewer(props, slots)
+    return await renderViewer(props, slots, pluginOptions)
   } catch (error) {
     results.push({ ok: false, name, detail: error.message })
     return { html: '', store: null }
@@ -287,6 +292,46 @@ const hostTabViewer = await tryRenderViewer(
     'inspector-tab-about': () => h('p', '关于页'),
   },
 )
+
+/**
+ * 素材那几条。分四种情形各渲染一次，为的是把「默认 → 只换地址 → 整份换 →
+ * 关掉」四步各钉一条，**并且每一步都是独立的证据**。
+ *
+ * 判据是宫格里的 `<img class="tdm-lib-thumb" src=…>`：模型库在 `TresCanvas`
+ * 之外，SSR 下真的会渲染（`ModelLibrary.vue:742` 那一支无条件渲染，
+ * 而 `resolveLibrarySection` 的兜底落在**第一个有货的分类**＝地板）。
+ *
+ * 地址一个字都不在这里另抄：期望值由 `DEFAULT_EDITOR_ASSETS.baseUrl` 拼出来，
+ * 那边改了地址这一条跟着走。抄一份的话，改地址时这里会红，而红得没有意义
+ * ——它只是「测试里也有一份旧地址」，不是产品坏了。
+ */
+const PLUGIN_ASSETS = {
+  baseUrl: '/plug/',
+  categories: [{ key: 'floor', entries: [{ label: '插件地板', file: 'plugfloor' }] }],
+}
+
+const defaultAssetsViewer = editingViewer
+const mirrorViewer = await tryRenderViewer('渲染只换素材地址的编辑画布', {
+  editable: true,
+  assetBaseUrl: '/mirror/',
+})
+const pluginAssetsViewer = await tryRenderViewer('渲染整份换素材的编辑画布', { editable: true }, undefined, {
+  assets: PLUGIN_ASSETS,
+})
+const propOverPluginViewer = await tryRenderViewer(
+  '渲染 prop 压过插件选项的编辑画布',
+  { editable: true, assetBaseUrl: '/prop/' },
+  undefined,
+  { assets: PLUGIN_ASSETS },
+)
+const emptyAssetsViewer = await tryRenderViewer('渲染显式关掉模型库的编辑画布', { editable: true }, undefined, {
+  assets: EMPTY_EDITOR_ASSETS,
+})
+
+/** 把 SSR 出来的缩略图地址都抠出来（宫格里那几个 `<img class="tdm-lib-thumb">`） */
+function thumbSrcs(html) {
+  return [...html.matchAll(/class="tdm-lib-thumb"[^>]*?src="([^"]*)"/g)].map((match) => match[1])
+}
 
 check('props 真的转发到了底层（autoRotate）', () => {
   /**
@@ -339,8 +384,21 @@ check(':editable="true" 渲染三栏工作台', () => {
    * 走的正是「分开关优先于总闸」那一支）。
    */
   assert(editingViewer.html.includes('tdm-body'), '编辑态没有渲染出三栏容器 .tdm-body')
-  assert(editingViewer.html.includes('tdm-col--left'), '编辑态缺少左栏')
-  assert(editingViewer.html.includes('tdm-col--right'), '编辑态缺少右栏')
+  /*
+    两栏的**标签名**一起断，不是顺手写细一点：它们的根一旦退回 `aside` 这类语义
+    元素，宿主通用的 `aside { padding / margin / line-height / background }`
+    就会整片压上来——真实宿主踩过，而那种坏法只体现在版面上、控制台一个字都不报。
+    `.tdm-root` 的作用域只赢「两边都声明了的属性」，赢不了宿主多出来的那些。
+    见设计决定 2 与目视清单第 153 条。
+  */
+  assert(
+    editingViewer.html.includes('<div class="tdm-col tdm-col--left"'),
+    '编辑态缺少左栏（或者它的根不再是 div）',
+  )
+  assert(
+    editingViewer.html.includes('<div class="tdm-col tdm-col--right"'),
+    '编辑态缺少右栏（或者它的根不再是 div）',
+  )
   assert(
     !editingViewer.html.includes('class="tdm-toolbar"'),
     '编辑态还渲染了内置工具栏——编辑器自绘界面时它该让位',
@@ -400,6 +458,110 @@ check('分隔线只画在有第二组的地方', () => {
  * 上面那次渲染里**仍然把插槽给了**：给了之后转发那段动态插槽的代码才会被走到，
  * 少了它，一段写错的转发（比如前缀拼错）连一次都不会执行。
  */
+
+check('一行不写也有库内置那份模型清单', () => {
+  /**
+   * 这一条守的是这次改造的**承诺本身**：宿主装完库、写一句
+   * `<SceneViewer editable />`，左栏那五类就该有货。它同时钉住了三件事
+   * ——「没传就是库内置那份」「`normalizeBase` 补了末尾斜杠」
+   * 「`resolve()` 拼的是 `<base><分类>/<file>/<file>.png`」，
+   * 三者任一坏掉，这条就红，而现场只是左栏一片空白或整片 404。
+   *
+   * 期望值由公开导出的 `DEFAULT_EDITOR_ASSETS.baseUrl` 拼出来（见上面那段）：
+   * 地址改了这里跟着走，不另抄一份。
+   */
+  const expected = `${DEFAULT_EDITOR_ASSETS.baseUrl}floor/tile1/tile1.png`
+  const srcs = thumbSrcs(defaultAssetsViewer.html)
+  assert(srcs.length > 0, '编辑态左栏一个缩略图都没有——模型库没拿到条目')
+  assert(
+    srcs.includes(expected),
+    `左栏没拼出内置清单的地址。期望含 ${expected}，实得 ${JSON.stringify(srcs.slice(0, 3))}`,
+  )
+  return `一行不写就渲染出 ${srcs.length} 个缩略图，地址取自库内置那份`
+})
+
+check('assetBaseUrl 只换根地址，清单不变', () => {
+  /**
+   * 「只换地址」是刻意收窄的签名：宿主换的多半是镜像（同一套目录换个域名），
+   * 所以这一条要同时断言**换了**与**清单还是那一份**——只断前者的话，
+   * 一个「连清单一起清空」的实现照样过。
+   */
+  const srcs = thumbSrcs(mirrorViewer.html)
+  assert(
+    srcs.includes('/mirror/floor/tile1/tile1.png'),
+    `assetBaseUrl 没生效。实得 ${JSON.stringify(srcs.slice(0, 3))}`,
+  )
+  assert(
+    !mirrorViewer.html.includes(`${DEFAULT_EDITOR_ASSETS.baseUrl}floor/`),
+    'assetBaseUrl 生效了，但默认地址**同时**还在——那是两份清单混在一起',
+  )
+  return '根地址换成 /mirror/，条目仍是库内置那一份'
+})
+
+check('插件选项仍然能整份换掉素材', () => {
+  /**
+   * 默认值改成「有货」之后最容易出的事，是 `assets` 选项被那条 `??` 顺手吃掉。
+   * 这条守的就是它：给了就整份按给的来。
+   */
+  const srcs = thumbSrcs(pluginAssetsViewer.html)
+  assert(
+    srcs.includes('/plug/floor/plugfloor/plugfloor.png'),
+    `插件选项的 assets 没生效。实得 ${JSON.stringify(srcs.slice(0, 3))}`,
+  )
+  assert(
+    !pluginAssetsViewer.html.includes(`${DEFAULT_EDITOR_ASSETS.baseUrl}floor/`),
+    '插件选项生效了，却还混着库内置那份清单',
+  )
+  return '整份替换生效，内置那份没有混进来'
+})
+
+check('assetBaseUrl 压过插件选项的地址', () => {
+  /** 三级优先级里最上面那一级：页面上写死的一行胜过应用级配置 */
+  const srcs = thumbSrcs(propOverPluginViewer.html)
+  assert(
+    srcs.includes('/prop/floor/plugfloor/plugfloor.png'),
+    `prop 没压过插件选项。实得 ${JSON.stringify(srcs.slice(0, 3))}`,
+  )
+  assert(!propOverPluginViewer.html.includes('/plug/floor/'), '插件选项的地址还在用它')
+  return 'prop > 插件选项 > 库内置'
+})
+
+check('显式传空表仍然是空（关得掉模型库）', () => {
+  /**
+   * 这条守的是那条**判据必须是 `??` 而不是真假**。
+   *
+   * 写成 `assets?.categories.length ? … : DEFAULT` 之类「空即替换成默认」的
+   * 判据时，宿主「关掉模型库」这个意图会被静默吃掉：他传了一对空表，
+   * 拿到的却是满栏模型，而且**不报错**。
+   *
+   * 两个断言缺一不可：没有图（真的空了）**且**导轨还在（不是整栏塌掉——
+   * 「空」与「坏」是两件事，把整个左栏渲染没了的实现不该蒙混过关）。
+   */
+  assert(thumbSrcs(emptyAssetsViewer.html).length === 0, '显式传空表后左栏还有缩略图')
+  assert(
+    emptyAssetsViewer.html.includes('tdm-rail-item'),
+    '显式传空表把整个左栏弄没了——「关掉模型库」的含义是空态，不是没有面板',
+  )
+  return '传 EMPTY_EDITOR_ASSETS 后宫格空、导轨仍在'
+})
+
+check('内置素材表是冻结的', () => {
+  /**
+   * 它是模块级单例，而 `useEditorAssets()` 会把它原样交给每一家宿主。
+   * 不冻结的话，谁朝着 `categories` push 一件资产，改的就不只是他自己那一次
+   * 渲染——同一页面里所有 `SceneViewer`、同一进程里所有 SSR 请求全都跟着变，
+   * 而这是查不出来的（与 `DEFAULT_SCENE_SWITCHES` 那条同一个理由）。
+   */
+  assert(
+    Object.isFrozen(DEFAULT_EDITOR_ASSETS),
+    'DEFAULT_EDITOR_ASSETS 没冻结：谁都能就地改掉所有宿主的默认素材',
+  )
+  assert(
+    Object.isFrozen(DEFAULT_EDITOR_ASSETS.categories),
+    'DEFAULT_EDITOR_ASSETS.categories 没冻结：push 一件资产就能污染所有宿主',
+  )
+  return '外层对象与分类数组都已冻结'
+})
 
 // ---------- 4. 样式产物 ----------
 
@@ -1158,6 +1320,14 @@ check('公开契约里有物体级 API', () => {
     'DEFAULT_SCENE_SWITCHES',
     'SceneSwitches',
     'SceneSwitchInput',
+    /*
+      素材那一组。`assetBaseUrl` 只有声明了才会被 Vue 当成 prop——
+      漏了它，宿主写上去的属性会落到根 div 上（`attrBaseUrl` 那种形态），
+      地址不生效也**不报错**。
+    */
+    'assetBaseUrl',
+    'DEFAULT_EDITOR_ASSETS',
+    'EMPTY_EDITOR_ASSETS',
   ]
   const missing = needed.filter((name) => !both.includes(name))
   assert(missing.length === 0, `类型声明里缺少：${missing.join(', ')}`)
@@ -1244,6 +1414,41 @@ check('three 对象的模板 ref 没有走 useTemplateRef', () => {
   }
   assert(offenders.length === 0, `改用 shallowRef + 同名 ref 属性：${offenders.join('；')}`)
   return 'src 里的 three 模板 ref 全是 shallowRef'
+})
+
+// ---------- 5b-2. 容器根不用语义元素 ----------
+
+check('模板里的容器根不用 aside / header / section 这类语义元素', () => {
+  /**
+   * 与上面那条同一种做法：把一条**不报错的**约定钉成可执行契约。
+   *
+   * 库的样式全都收在 `.tdm-root` 下，但作用域只赢「**两边都声明了的属性**」——
+   * 宿主那份通用样式里一条按**标签**写的
+   * `aside { padding: 8px 24px; margin-bottom: 20px; line-height: 32px }`
+   * （后台模板自带的 `assets/styles/index.scss` 里就有，且原样命中过左右两栏）
+   * 会把整片版面接管，而 `.tdm-col` 只声明了四条属性、挡不住。**控制台一个字都不报**，
+   * 只有眼睛看得出来——真实宿主踩过一次，见设计决定 2 与目视清单第 153 条。
+   *
+   * 所以库自己的容器一律用 `div`：宿主那边不会有 `div { … }` 这种规则来命中它。
+   * `nav` 是**唯一的例外**（两根导轨），它是真语义，而按 `nav` 写全局样式的模板极少；
+   * 其余在用的标签（`p` / `ul` / `li` / `label` / `h2`…）都是内容元素，
+   * 宿主多半也会写，但那些**属性**由各自的 `.tdm-*` 类显式声明着（`.tdm-field-label`
+   * 那条 `font-weight` 就是为此补的）。
+   *
+   * 查的是**开标签**（`<aside` 起手）而不是裸字面量：这些文件的注释里写满了这几个
+   * 标签名（正是在解释为什么不能用），照裸词查会全部误判——与上面那条
+   * `new Function` 踩的是同一个坑，所以同样加个 `<`。
+   */
+  const banned = ['aside', 'header', 'section', 'article', 'footer', 'main']
+  const pattern = new RegExp(`<\\s*(${banned.join('|')})\\b`, 'i')
+  const files = listVueFiles(new URL('../src/', import.meta.url))
+  const offenders = []
+  for (const file of files) {
+    const hit = pattern.exec(readFileSync(fileURLToPath(file), 'utf8'))
+    if (hit) offenders.push(`${file.pathname.split('/src/')[1]} 里的 <${hit[1].toLowerCase()}>`)
+  }
+  assert(offenders.length === 0, `容器根改成 div：${offenders.join('；')}`)
+  return `src 的 ${files.length} 个 .vue 里没有 ${banned.join(' / ')} 开标签`
 })
 
 // ---------- 5c. 模型 id：随模型更换而重新生成 ----------

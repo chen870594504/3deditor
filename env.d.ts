@@ -8,14 +8,11 @@ declare module '*.vue' {
 }
 
 /*
-  vite/client 自带的 ImportMetaEnv 有一个 `[key: string]: any` 索引签名，
-  所以下面这条不加也能过编译——加它是为了让键名写错能被 tsc 抓出来，
-  并给这个地址留一处说明。
+  这里原先还有一条 `ImportMetaEnv` 的增强，给 `VITE_ASSE_IMAGE_URL` 声明类型、
+  防键名写错。**它撤掉了**：键名里那个 `ASSE`（少一个 R）如今只在 `.env` 与
+  `vite.config.ts` 里出现一次，而那边是用 `loadEnv()` 按字符串取值的，
+  根本没有 `import.meta.env.VITE_ASSE_IMAGE_URL` 这个读点，增强也就没有对象。
 
-  注意键名里的 `ASSE` 是照 .env 里的原样写的（那边少了一个 R）。
-  playground 侧在 useModelLibrary 里读它，两处必须一起改。
+  地址的默认值在 `src/editor/defaultAssets.ts` 的 `DEFAULT_ASSET_BASE_URL`，
+  `.env` 只是它的覆盖项。详见 CLAUDE.md 的硬性约束 6。
 */
-interface ImportMetaEnv {
-  /** 模型资源服务器的目录地址，供 playground 的模型库拼接文件名 */
-  readonly VITE_ASSE_IMAGE_URL?: string
-}

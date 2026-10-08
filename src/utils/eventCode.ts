@@ -37,7 +37,9 @@ export const MODEL_EVENT_LABELS: Record<ModelEventType, string> = {
 /**
  * 某类事件的默认脚本。
  *
- * 参数固定是 `event` 与 `model`（README 里的宿主示例同样按这两个名字注入）。
+ * 参数固定是 `event` 与 `model`。**这是一条对外约定**，宿主接 `object*` 事件后
+ * 自己那段执行器也是按这两个名字注入（`playground/useEventRunner.ts` 就是范例），
+ * 所以改名等于静默改掉所有既有配置里那段代码的语义。
  * 写成一个纯函数而不是常量表，是为了让「默认内容与事件类型对得上」
  * 这件事由代码保证：改标签时不会漏改某个模板。
  */

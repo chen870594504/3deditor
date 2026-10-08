@@ -158,7 +158,13 @@ const { tip, showTip, hideTip } = useRailTip(() => inspectorRef.value)
 </script>
 
 <template>
-  <aside class="tdm-col tdm-col--right">
+  <!--
+    右栏，左栏的镜像。根元素是 `div` 而不是 `aside`——理由与取舍写在 `SidePanel.vue`
+    同名那一处：宿主按**标签**写的全局 `aside` 规则会整片压住这两栏，而 `.tdm-root`
+    的作用域赢不了宿主多出来的那些属性。**两栏必须一起改**：只改一边的表现是另一栏
+    还带着宿主的 padding 与行高，看着像「这一栏还行、那一栏坏了」。
+  -->
+  <div class="tdm-col tdm-col--right">
     <nav ref="inspector" class="tdm-inspector">
       <!--
         图标导轨。
@@ -287,5 +293,5 @@ const { tip, showTip, hideTip } = useRailTip(() => inspectorRef.value)
         </template>
       </div>
     </nav>
-  </aside>
+  </div>
 </template>

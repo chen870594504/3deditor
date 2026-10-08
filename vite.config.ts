@@ -3,11 +3,12 @@ import vue from '@vitejs/plugin-vue'
 import templateCompilerOptions from '@tresjs/core/template-compiler-options'
 import { defineConfig, loadEnv } from 'vite'
 import dts from 'vite-plugin-dts'
+import { DEFAULT_ASSET_BASE_URL } from './src/editor/defaultAssets'
 
 /**
  * 开发期给远程模型资源起的同源前缀。
  *
- * **必须与 src/editor/composables/useModelLibrary.ts 里的 DEV_ASSET_PREFIX 一致**：
+ * **必须与 playground/utils/editorAssets.ts 里的 DEV_ASSET_PREFIX 一致**：
  * 只改一边的话，列表里的地址代理不到，表现是清一色的加载失败。
  */
 const ASSET_PROXY_PREFIX = '/3d-assets'
@@ -40,13 +41,18 @@ export default defineConfig(({ mode }) => {
    * 必然加载失败。注意同一目录下的缩略图反而是好的：<img> 不受 CORS 约束。
    * 一个同源一个跨域，很容易被误判成「地址写错了」。
    *
-   * 把 ASSET_PROXY_PREFIX/** 转发到 .env 里那个地址，跨域就成了同源。
-   * 目标地址现读 .env，换台服务器只改 .env，这里不用动。
+   * 把 ASSET_PROXY_PREFIX/** 转发到下面那个地址，跨域就成了同源。
+   *
+   * 目标地址现读 .env（`VITE_ASSE_IMAGE_URL`），读不到就退到**库内置那个默认**。
+   * 于是「换台服务器」只有一处要改：改 `src/editor/defaultAssets.ts` 的
+   * `DEFAULT_ASSET_BASE_URL` 就够，`.env` 从「源」降级成「覆盖」
+   * （想临时指到别的服务器、又不改库里的默认值时，才去动它）。
    */
-  const assetBase = loadEnv(mode, process.cwd(), 'VITE_').VITE_ASSE_IMAGE_URL
-  const assetUrl = assetBase ? new URL(assetBase) : null
+  const assetBase =
+    loadEnv(mode, process.cwd(), 'VITE_').VITE_ASSE_IMAGE_URL || DEFAULT_ASSET_BASE_URL
+  const assetUrl = new URL(assetBase)
   /** 地址里的目录部分，重写代理路径时用它替换掉前缀 */
-  const assetPath = assetUrl ? assetUrl.pathname.replace(/\/$/, '') : ''
+  const assetPath = assetUrl.pathname.replace(/\/$/, '')
 
   return {
     plugins: [
@@ -96,24 +102,24 @@ export default defineConfig(({ mode }) => {
         }
       : undefined,
     /*
-      只有解析出地址才挂代理。.env 被清空时宁可不挂——挂一个转发到空地址的
-      代理，报错会出现在网络层，比「干脆没有代理」更难查。
+      代理**恒挂着**：目标地址读不到 .env 时退到库内置那个默认，
+      两处都不是空，所以不存在「转发到一个空地址」这件事。
+      真要不挂，那得先把 `DEFAULT_ASSET_BASE_URL` 改成空——而它不是个空字符串
+      能表达的状态（`new URL('')` 会直接抛）。
     */
-    server: assetUrl
-      ? {
-          proxy: {
-            [ASSET_PROXY_PREFIX]: {
-              target: assetUrl.origin,
-              // 不带这个，Host 会是 localhost:5173，nginx 按虚拟主机分流时会 404
-              changeOrigin: true,
-              // 前缀换成 .env 地址里的目录部分，后面的路径原样带过去
-              rewrite: (path) =>
-                path.startsWith(ASSET_PROXY_PREFIX)
-                  ? assetPath + path.slice(ASSET_PROXY_PREFIX.length)
-                  : path,
-            },
-          },
-        }
-      : undefined,
+    server: {
+      proxy: {
+        [ASSET_PROXY_PREFIX]: {
+          target: assetUrl.origin,
+          // 不带这个，Host 会是 localhost:5173，nginx 按虚拟主机分流时会 404
+          changeOrigin: true,
+          // 前缀换成地址里的目录部分，后面的路径原样带过去
+          rewrite: (path) =>
+            path.startsWith(ASSET_PROXY_PREFIX)
+              ? assetPath + path.slice(ASSET_PROXY_PREFIX.length)
+              : path,
+        },
+      },
+    },
   }
 })

@@ -638,8 +638,18 @@ export interface ThreeDMakerOptions {
    * 写在这一层而不是 `SceneViewer` 的 prop 上，是为了让宿主**只写一次**：
    * 一个页面里挂几个 `SceneViewer` 都共用同一份，不必逐个传。
    *
-   * **不传就是空**：编辑器渲染一句空态，不发任何请求。库不含任何默认地址——
-   * 素材从哪来是宿主的事，见 `EditorAssets`。
+   * **不传就是库内置那份标准素材表**（`DEFAULT_EDITOR_ASSETS`）：装完库写一句
+   * `<SceneViewer editable />`，左栏那五个分类就有货，不必先配一顿。
+   * 只想换台服务器（换镜像、换开发期同源代理前缀）**不必动这一项**——
+   * 给 `SceneViewer` 的 `assetBaseUrl` 就够，那条路只换根地址。
+   *
+   * 这里的语义是**整份替换**：传了就以传的为准，`categories` 也一起替换掉。
+   * 想在内置那份的基础上加东西，摊平 `DEFAULT_EDITOR_ASSETS` 再拼
+   * （见 `index.ts` 里那段用法）。
+   *
+   * 传一个空表（`{ baseUrl: '', categories: [] }`，或直接 `EMPTY_EDITOR_ASSETS`）
+   * 是**关掉模型库**这个动作本身：导轨上五个分类照常，宫格一律空态、不发请求。
+   * 它与「没传」是两件事——判据是 `??`，空表不会被当成没传吃掉。
    */
   assets?: EditorAssets
 
@@ -815,6 +825,44 @@ export interface SceneViewerProps {
    * 宿主页的正文要自己管好横向溢出。
    */
   inspectorTabs?: EditorPanelTab[]
+
+  /**
+   * 只换**素材根地址**，清单仍用生效的那一份（库内置的，或插件选项给的）。
+   *
+   *     <!-- 换台镜像服务器 -->
+   *     <SceneViewer editable asset-base-url="https://cdn.example.com/3d-assets/" />
+   *
+   *     <!-- 开发期指向自己起的同源代理，绕开那台服务器不发 CORS 的问题 -->
+   *     <SceneViewer editable asset-base-url="/3d-assets/" />
+   *
+   * ## 它为什么只收地址，不收清单
+   *
+   * 「哪一类里有哪些模型」是**标准素材包长什么样**的编码，宿主换的通常只是
+   * **镜像**——同一套目录、换个域名。只换一个字符串就够，不必把那份表复述一遍
+   * （复述就会有两份，迟早只改一处）。真要换成自己那套目录，走
+   * `createThreeDMaker({ assets })`，那条路本来就是为「整份替换」准备的。
+   *
+   * ## 三级优先级
+   *
+   * 本 prop → 插件选项 `assets.baseUrl` → 库内置 `DEFAULT_EDITOR_ASSETS.baseUrl`。
+   * 不传（`undefined`）就是往下让一级。
+   *
+   * ## ⚠️ 跨域这件事得自己解决
+   *
+   * 内置地址那台服务器**不发 `Access-Control-Allow-Origin`**，而 `GLTFLoader`
+   * 走 `fetch`——于是模型会被浏览器拦下来。**缩略图却是好的**（`<img>` 不受
+   * CORS 约束），所以现场看起来是「左边有图、点一下加载失败」，很容易误判成
+   * 地址写错了。要跨域用就走本 prop 指到一个同源（或 CORS 可用的）镜像，
+   * 开发期也可以自己挂一条代理再把前缀传进来（playground 就是这么做的）。
+   *
+   * ## ⚠️ 只影响本组件的子树
+   *
+   * 它是**在 `SceneViewer` 这一层 provide 下去的**，所以只对编辑器内部生效。
+   * 宿主在 `SceneViewer` 之外自己调 `useEditorAssets()`（比如自绘一栏），
+   * 读到的是插件选项那一级，**看不到**这里换的地址。要两边一致，
+   * 请把地址写在插件选项上。
+   */
+  assetBaseUrl?: string
 }
 
 /**
