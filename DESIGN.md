@@ -2262,18 +2262,66 @@ Vite 对低于要求的版本**只打一行黄色警告就继续往下跑**（`c
 
 ### 发到 GitHub Packages
 
-`prepublishOnly`（`pnpm build && pnpm smoke`）就是这条路的守卫，它守的是「发出去的产物必须是
-刚构建的」：
+**这一段写成可以照抄的步骤，就是为了「不必每次问 AI」。** 四步里只有第一步要动脑（想清楚发什么
+号），其余三步行行都可以原样粘。命令里那个 registry 地址出现两次、各有各的理由，照抄别省。
 
-`dist/` 被 `.gitignore` 排除，`files` 又只收 `dist`，所以没这道钩子时 `pnpm publish` 会把
-**上一次构建的陈旧产物**、甚至空目录发出去，而 npm 不会因此报错——表现是宿主装到了旧版本，
+#### 一次性：令牌放用户级 `~/.npmrc`
+
+仓库里**没有** `.npmrc`，也不许加回来（理由见上面「本仓库不放 `.npmrc`」那段）。令牌只住在发布者
+自己的用户级配置里，内容就一行：
+
+```
+//npm.pkg.github.com/:_authToken=<勾了 write:packages 的 classic PAT>
+```
+
+发之前先自查一次（**读也要带令牌**——GitHub Packages 对公开包同样不认匿名，见上）：
+
+```bash
+npm whoami --registry https://npm.pkg.github.com     # 应打印 chen870594504
+```
+
+那句报 `401 Unauthorized` 就是令牌过期或没勾 `write:packages`，**不要**往别处找原因。
+
+#### 每次发布
+
+```bash
+# 1. 改 package.json 里的 version（见下面「三条自查」第 1 条）
+#    先看已经发过哪些号：
+npm view @chen870594504/3deditor --registry https://npm.pkg.github.com versions
+
+# 2. 提交并推送——发布前工作区必须是干净的
+git add -A && git commit -m "chore: 发布 0.2.1"
+git push origin development && git push origin development:main
+
+# 3. 发布（prepublishOnly 会自动跑一遍 pnpm build && pnpm smoke）
+pnpm publish --no-git-checks
+
+# 4. 确认那个版本真的上去了（别只看第 3 步没报错）
+npm view @chen870594504/3deditor --registry https://npm.pkg.github.com versions dist-tags
+```
+
+**第 3 步的 `--no-git-checks` 是本机的必需项，不是随手加的。** pnpm 发布前会做一遍 git 自查，
+其中一项要问远端分支——而这台机器**连不上 `github.com`**（2026-10-08 实测：`github.com:443`
+TCP 超时 / 连接重置，DNS 给的两个 IP 都不通；但 `pkg.github.com` 通，所以「发包能做、push 做不了」
+是常态，别把 git 的失败归因于凭据或配置），那道自查必然失败，于是**发布根本走不到**。关掉它之后，
+**「工作区干净、两个分支都推上去了」就全落在第 2 步自己身上**：这两件事没做到，脏工作区照样会被
+原样发出去，而 npm 一声不吭。push 走不通时先在**能连 GitHub 的网络**上把第 2 步做完，再回本机
+发第 3 步——发包这一步不受 `github.com` 不通的影响。
+
+#### 守卫与三条自查
+
+`prepublishOnly`（`pnpm build && pnpm smoke`）是这条路的守卫，它守的是「发出去的产物必须是刚
+构建的」：`dist/` 被 `.gitignore` 排除、`files` 又只收 `dist`，没有这道钩子时 `pnpm publish` 会
+把**上一次构建的陈旧产物**、甚至空目录发出去，而 npm 不会因此报错——表现是宿主装到了旧版本，
 怎么改代码都不生效。
 
-发布前的三条自查：
-
 1. **版本号必须递增**——同一个版本任何源都不接受覆盖，而 GitHub Packages **不允许删除已发布的
-   版本**，发错了只能往上加号。
-2. **白名单看一眼** `npm pack --dry-run`，确认只有 `dist/` + `README` + `LICENSE`。
+   版本**，发错了只能往上加号。所以第 1 步先 `npm view … versions` 看一眼，别凭记忆。
+2. **白名单看一眼** `npm pack --dry-run`——实跑确认（2026-10-08）包里正好
+   `dist/` + `LICENSE` + `README.md` + `package.json`，共 87 个文件，`dist/style.css` 在列。
+   注意**它会顺带跑一遍 `prepare`**（整次 `vite build`），所以不是「轻量看一眼」，而是把整条
+   构建链预演一遍——好处是它同时验了构建，代价是要等，且**不会**替你验 `smoke`（那在
+   `prepublishOnly` 里，只有真 `publish` 才跑）。`--dry-run` 确实不落盘，跑完不会留下 `.tgz`。
 3. **`dist/style.css` 必须在里面**：组件样式是副作用导入，漏了它构建照样成功、宿主却渲染出一片
    裸 DOM，而这个不报错。
 
@@ -2282,8 +2330,9 @@ Vite 对低于要求的版本**只打一行黄色警告就继续往下跑**（`c
 默认指向 npmjs 的机器就会真发出去。所以**发完要去 GitHub 的 packages 页面确认那个版本确实
 出现了**，别只看命令行没报错。
 
-> 今天实测的发布锚点：scope `@chen870594504` 的令牌（classic PAT）有效，`npm whoami` 认得出
-> `chen870594504`；该名下此前只有一个 `0.1.0`（当年那次尝试留下的），本次发的是 `0.1.2`。
+> 实测的发布锚点：scope `@chen870594504` 的令牌（classic PAT）有效，`npm whoami` 认得出
+> `chen870594504`。这条路到 2026-10-08 已走通两次，`0.1.2` 与 `0.2.0` 都是它发的，
+> `dist-tags.latest` 停在 `0.2.0`；`0.1.0` 是改名之前那次尝试留下的。
 
 ## 后续可以做的事
 
