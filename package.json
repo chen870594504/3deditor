@@ -1,6 +1,6 @@
 {
   "name": "@chen870594504/3deditor",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "基于 Vue3 + TresJS 的可嵌入 3D 场景插件",
   "type": "module",
   "license": "MIT",
