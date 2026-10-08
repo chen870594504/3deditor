@@ -60,7 +60,7 @@ function onKeydown(event: KeyboardEvent) {
 
 <template>
   <input
-    class="ed-text"
+    class="tdm-text"
     type="text"
     spellcheck="false"
     :value="display"

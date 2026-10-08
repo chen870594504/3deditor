@@ -23,14 +23,14 @@ defineOptions({ name: 'PreviewBar' })
 </script>
 
 <template>
-  <div class="ed-preview-bar">
-    <span class="ed-micro">预览</span>
-    <b class="ed-preview-name">{{ sceneName }}</b>
-    <span class="ed-preview-note">只读——模型点不动、相机不响应拖拽、绘制工具已收起</span>
+  <div class="tdm-preview-bar">
+    <span class="tdm-micro">预览</span>
+    <b class="tdm-preview-name">{{ sceneName }}</b>
+    <span class="tdm-preview-note">只读——模型点不动、相机不响应拖拽、绘制工具已收起</span>
 
-    <span class="ed-spacer" />
+    <span class="tdm-spacer" />
 
-    <button type="button" class="ed-btn" @click="exitPreview()">
+    <button type="button" class="tdm-btn" @click="exitPreview()">
       <!-- 四角箭头朝内，与顶栏「预览」那枚朝外的正好相反 -->
       <svg
         viewBox="0 0 24 24"
@@ -47,7 +47,7 @@ defineOptions({ name: 'PreviewBar' })
         <path d="M20 15h-4a1 1 0 0 0-1 1v4" />
       </svg>
       退出预览
-      <span class="ed-kbd">Esc</span>
+      <span class="tdm-kbd">Esc</span>
     </button>
   </div>
 </template>

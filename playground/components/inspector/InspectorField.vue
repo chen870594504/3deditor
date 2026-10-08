@@ -87,26 +87,26 @@ onUnmounted(() => {
 <template>
   <template v-if="visible">
     <!-- 纯说明行：不绑任何配置，只解释上面那组字段为什么长这样 -->
-    <p v-if="field.type === 'note'" class="ed-hint ed-hint--quiet">{{ field.hint }}</p>
+    <p v-if="field.type === 'note'" class="tdm-hint tdm-hint--quiet">{{ field.hint }}</p>
 
     <!-- 按钮行：动作名交给 schema 里登记的实现，这里只负责渲染 -->
     <button
       v-else-if="field.type === 'action'"
       type="button"
-      class="ed-btn ed-btn--block"
+      class="tdm-btn tdm-btn--block"
       @click="runAction"
     >
       {{ field.label }}
     </button>
 
     <!--
-      字段行是两段式：`.ed-field` 三列网格 + 下方可选的说明。
-      根节点因此是 Fragment——父级 .ed-sec-body 是普通块容器，多根不影响布局，
+      字段行是两段式：`.tdm-field` 三列网格 + 下方可选的说明。
+      根节点因此是 Fragment——父级 .tdm-sec-body 是普通块容器，多根不影响布局，
       换成包一层 div 只会让每行多一个无语义的层级。
     -->
     <template v-else>
-      <div class="ed-field" :class="{ 'ed-field--dim': dimmed, 'ed-field--pulse': pulsing }">
-        <label class="ed-field-label">{{ field.label }}</label>
+      <div class="tdm-field" :class="{ 'tdm-field--dim': dimmed, 'tdm-field--pulse': pulsing }">
+        <label class="tdm-field-label">{{ field.label }}</label>
 
         <!--
           每种类型显式一个分支，不用 <component :is> 动态分发。
@@ -122,7 +122,7 @@ onUnmounted(() => {
         <button
           v-if="field.type === 'dialog'"
           type="button"
-          class="ed-btn ed-btn--block"
+          class="tdm-btn tdm-btn--block"
           :disabled="dimmed"
           @click="runAction"
         >
@@ -185,7 +185,7 @@ onUnmounted(() => {
         />
 
         <!-- 滑块自己只有一根轨道，可编辑的读数与单位放在第 3 列 -->
-        <span v-if="field.type === 'slider'" class="ed-field-tail">
+        <span v-if="field.type === 'slider'" class="tdm-field-tail">
           <NumberControl
             :model-value="value as number"
             :min="field.min"
@@ -195,17 +195,17 @@ onUnmounted(() => {
             :disabled="dimmed"
             @update:model-value="write"
           />
-          <span v-if="field.unit" class="ed-field-unit">{{ field.unit }}</span>
+          <span v-if="field.unit" class="tdm-field-unit">{{ field.unit }}</span>
         </span>
         <!-- 弹窗入口的读数（例如「2/5」）：第 2 列是按钮，读数落在第 3 列与它对齐 -->
-        <span v-else-if="field.type === 'dialog'" class="ed-field-value">{{ value }}</span>
+        <span v-else-if="field.type === 'dialog'" class="tdm-field-value">{{ value }}</span>
         <!-- 三元组自己占了整条可伸缩列，单位单独放进第 3 列，与滑块读数对齐 -->
-        <span v-else-if="field.type === 'vector' && field.unit" class="ed-field-unit">
+        <span v-else-if="field.type === 'vector' && field.unit" class="tdm-field-unit">
           {{ field.unit }}
         </span>
       </div>
 
-      <p v-if="field.hint" class="ed-hint">{{ field.hint }}</p>
+      <p v-if="field.hint" class="tdm-hint">{{ field.hint }}</p>
     </template>
   </template>
 </template>

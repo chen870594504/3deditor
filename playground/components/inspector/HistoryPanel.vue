@@ -32,38 +32,38 @@ function formatTime(at: number): string {
 </script>
 
 <template>
-  <div class="ed-history">
-    <div class="ed-history-bar">
-      <button type="button" class="ed-btn ed-btn--sm" :disabled="!scene.canUndo" @click="scene.undo()">
+  <div class="tdm-history">
+    <div class="tdm-history-bar">
+      <button type="button" class="tdm-btn tdm-btn--sm" :disabled="!scene.canUndo" @click="scene.undo()">
         撤销
       </button>
-      <button type="button" class="ed-btn ed-btn--sm" :disabled="!scene.canRedo" @click="scene.redo()">
+      <button type="button" class="tdm-btn tdm-btn--sm" :disabled="!scene.canRedo" @click="scene.redo()">
         重做
       </button>
-      <span class="ed-spacer" />
-      <span class="ed-micro">可退 {{ scene.historyIndex }} 步</span>
+      <span class="tdm-spacer" />
+      <span class="tdm-micro">可退 {{ scene.historyIndex }} 步</span>
     </div>
 
     <button
       v-for="row in ordered"
       :key="row.entry.id"
       type="button"
-      class="ed-history-item"
-      :class="{ 'ed-history-item--active': row.index === scene.historyIndex }"
+      class="tdm-history-item"
+      :class="{ 'tdm-history-item--active': row.index === scene.historyIndex }"
       @click="scene.jumpTo(row.index)"
     >
-      <span class="ed-history-idx">{{ String(row.index).padStart(2, '0') }}</span>
-      <span class="ed-history-label">{{ row.entry.label }}</span>
-      <span class="ed-history-time">{{ formatTime(row.entry.at) }}</span>
+      <span class="tdm-history-idx">{{ String(row.index).padStart(2, '0') }}</span>
+      <span class="tdm-history-label">{{ row.entry.label }}</span>
+      <span class="tdm-history-time">{{ formatTime(row.entry.at) }}</span>
     </button>
 
-    <p class="ed-hint ed-hint--quiet">
+    <p class="tdm-hint tdm-hint--quiet">
       最多保留 50 步。拖动滑块产生的连续改动会在 400 毫秒内合并成一条，不会把历史刷满。
     </p>
 
     <button
       type="button"
-      class="ed-btn ed-btn--block ed-btn--sm"
+      class="tdm-btn tdm-btn--block tdm-btn--sm"
       :disabled="scene.history.length <= 1"
       @click="scene.clearHistory()"
     >

@@ -24,8 +24,8 @@ const label = computed(() => (props.modelValue ? '已开启' : '已关闭'))
 <template>
   <button
     type="button"
-    class="ed-toggle"
-    :class="{ 'ed-toggle--on': modelValue }"
+    class="tdm-toggle"
+    :class="{ 'tdm-toggle--on': modelValue }"
     role="switch"
     :aria-checked="modelValue"
     :aria-label="label"

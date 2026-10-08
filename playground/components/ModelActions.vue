@@ -106,60 +106,60 @@ const ICON_REMOVE: IconPath[] = [
   <!--
     画布右下角的模型操作胶囊。
 
-    只在选中某个模型时出现，按钮是**纯图标**（见 .ed-action-tip 那段注释：
+    只在选中某个模型时出现，按钮是**纯图标**（见 .tdm-action-tip 那段注释：
     这块地方放不下文字）。六个动作分成两组：前五个都作用在这个物体本身，
     最后一个是破坏性的，用一道竖线隔开。
   -->
-  <div v-if="selected" class="ed-viewport-actions">
+  <div v-if="selected" class="tdm-viewport-actions">
     <button
       type="button"
-      class="ed-action"
+      class="tdm-action"
       :disabled="!measurable"
       aria-label="贴地：让模型的最低点落到地面上"
       @click="groundModel"
     >
-      <svg class="ed-action-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <svg class="tdm-action-icon" viewBox="0 0 24 24" aria-hidden="true">
         <path v-for="(part, i) in ICON_GROUND" :key="i" :d="part.d" :fill="part.fill ? 'currentColor' : 'none'" />
       </svg>
-      <span class="ed-action-tip" aria-hidden="true">贴地</span>
+      <span class="tdm-action-tip" aria-hidden="true">贴地</span>
     </button>
 
     <button
       type="button"
-      class="ed-action"
+      class="tdm-action"
       :disabled="!measurable"
       aria-label="聚焦：把相机拉到刚好装下这个模型"
       @click="focusModel"
     >
-      <svg class="ed-action-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <svg class="tdm-action-icon" viewBox="0 0 24 24" aria-hidden="true">
         <path v-for="(part, i) in ICON_FOCUS" :key="i" :d="part.d" :fill="part.fill ? 'currentColor' : 'none'" />
       </svg>
-      <span class="ed-action-tip" aria-hidden="true">聚焦</span>
+      <span class="tdm-action-tip" aria-hidden="true">聚焦</span>
     </button>
 
-    <button type="button" class="ed-action" aria-label="复制：原地再摆一个一样的" @click="duplicateModel">
-      <svg class="ed-action-icon" viewBox="0 0 24 24" aria-hidden="true">
+    <button type="button" class="tdm-action" aria-label="复制：原地再摆一个一样的" @click="duplicateModel">
+      <svg class="tdm-action-icon" viewBox="0 0 24 24" aria-hidden="true">
         <path v-for="(part, i) in ICON_DUPLICATE" :key="i" :d="part.d" :fill="part.fill ? 'currentColor' : 'none'" />
       </svg>
-      <span class="ed-action-tip" aria-hidden="true">复制</span>
+      <span class="tdm-action-tip" aria-hidden="true">复制</span>
     </button>
 
-    <button type="button" class="ed-action" aria-label="归零：把物体变换恢复成默认值" @click="resetModelTransform">
-      <svg class="ed-action-icon" viewBox="0 0 24 24" aria-hidden="true">
+    <button type="button" class="tdm-action" aria-label="归零：把物体变换恢复成默认值" @click="resetModelTransform">
+      <svg class="tdm-action-icon" viewBox="0 0 24 24" aria-hidden="true">
         <path v-for="(part, i) in ICON_RESET" :key="i" :d="part.d" :fill="part.fill ? 'currentColor' : 'none'" />
       </svg>
-      <span class="ed-action-tip" aria-hidden="true">归零</span>
+      <span class="tdm-action-tip" aria-hidden="true">归零</span>
     </button>
 
     <button
       type="button"
-      class="ed-action"
-      :class="{ 'ed-action--off': !selected.visible }"
+      class="tdm-action"
+      :class="{ 'tdm-action--off': !selected.visible }"
       :aria-pressed="selected.visible"
       :aria-label="selected.visible ? '隐藏这个模型' : '显示这个模型'"
       @click="toggleModelVisible"
     >
-      <svg class="ed-action-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <svg class="tdm-action-icon" viewBox="0 0 24 24" aria-hidden="true">
         <path
           v-for="(part, i) in selected.visible ? ICON_VISIBLE : ICON_HIDDEN"
           :key="i"
@@ -167,16 +167,16 @@ const ICON_REMOVE: IconPath[] = [
           :fill="part.fill ? 'currentColor' : 'none'"
         />
       </svg>
-      <span class="ed-action-tip" aria-hidden="true">{{ selected.visible ? '隐藏' : '显示' }}</span>
+      <span class="tdm-action-tip" aria-hidden="true">{{ selected.visible ? '隐藏' : '显示' }}</span>
     </button>
 
-    <span class="ed-viewport-actions-sep" aria-hidden="true" />
+    <span class="tdm-viewport-actions-sep" aria-hidden="true" />
 
-    <button type="button" class="ed-action" aria-label="删除这个模型" @click="removeSelectedModel">
-      <svg class="ed-action-icon" viewBox="0 0 24 24" aria-hidden="true">
+    <button type="button" class="tdm-action" aria-label="删除这个模型" @click="removeSelectedModel">
+      <svg class="tdm-action-icon" viewBox="0 0 24 24" aria-hidden="true">
         <path v-for="(part, i) in ICON_REMOVE" :key="i" :d="part.d" :fill="part.fill ? 'currentColor' : 'none'" />
       </svg>
-      <span class="ed-action-tip" aria-hidden="true">删除</span>
+      <span class="tdm-action-tip" aria-hidden="true">删除</span>
     </button>
   </div>
 </template>

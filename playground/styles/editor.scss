@@ -4,62 +4,17 @@
    方向：精密仪器 / 蓝图。
 
    三条贯穿全站的规则，是「精密仪器」与「普通深色后台」的分水岭：
-   1. 用 1px 发丝线划分区域，不用卡片、不用阴影、圆角不超过 3px
-   2. 琥珀（--signal）是全站唯一的强调色，且只出现在「当前状态」和「可操作」上
+   1. 用 1px 发丝线划分区域，不用卡片、不用阴影，圆角不超过 3px
+   2. 琥珀（--tdm-signal）是全站唯一的强调色，且只出现在「当前状态」和「可操作」上
    3. 尺度与字距承担层级，不靠字号堆叠；数据一律等宽字体
 
    字体不引 Google Fonts：国内网络不可靠，而且会拖慢首屏。
+
+   这套视觉系统的**令牌**（--tdm-* 那几十个）已经搬去 `src/styles/_tokens.scss`，
+   随插件一起加载，这个文件里只引用、不定义。下面那段「基座」里的几个值
+   （字体、墨阶底色）也读那些令牌——写死一份的话，宿主改一次主题这里就会脱钩，
+   而脱钩的表现是「换了主题但页面的边角还是旧颜色」，很难联想到是两处各写了一份。
    ========================================================================== */
-
-:root {
-  /* ---- 墨阶 ---- */
-  --ink-000: #08090c;
-  --ink-050: #0b0d12;
-  --ink-100: #101319;
-  --ink-200: #161a22;
-  --ink-300: #1e232d;
-
-  /* ---- 发丝线 ---- */
-  --line: rgba(255, 255, 255, 0.07);
-  --line-strong: rgba(255, 255, 255, 0.13);
-
-  /* ---- 文字三级 ---- */
-  --text-hi: #e8edf5;
-  --text: #9aa7b8;
-  --text-lo: #5b6675;
-
-  /* ---- 蓝图底纹 ---- */
-  --grid-fine: rgba(120, 160, 220, 0.055);
-  --grid-coarse: rgba(120, 160, 220, 0.1);
-
-  /* ---- 信号色：全站唯一强调色 ---- */
-  --signal: #ff9d2e;
-  --signal-dim: rgba(255, 157, 46, 0.14);
-  --signal-line: rgba(255, 157, 46, 0.34);
-  --signal-glow: rgba(255, 157, 46, 0.3);
-
-  /* ---- 状态色 ---- */
-  /* 只留顶栏那个保存状态点用的绿：琥珀与红的原消费者是底部状态栏的
-     三态文字，那条状态栏已经去掉了 */
-  --ok: #4ade80;
-
-  --font-ui: 'PingFang SC', 'HarmonyOS Sans SC', 'Microsoft YaHei', system-ui, sans-serif;
-  --font-data: ui-monospace, 'Cascadia Mono', Consolas, 'Microsoft YaHei', monospace;
-
-  --h-header: 46px;
-  /*
-    左栏 = 内容区 210px + 导轨。写成 calc 而不是 250px，是为了把
-    「内容区仍是这个宽度、导轨是另外切出来的」这件事留在值里：
-    改 --w-rail 时左栏会自动跟着走，不会出现导轨变宽而内容被挤窄。
-  */
-  --w-left: calc(210px + var(--w-rail));
-  --w-right: 306px;
-  --w-rail: 40px;
-
-  --t-fast: 120ms;
-  --t: 200ms;
-  --ease: cubic-bezier(0.2, 0.7, 0.3, 1);
-}
 
 /* ==========================================================================
    基座
@@ -73,28 +28,28 @@ body,
 
 body {
   margin: 0;
-  background: var(--ink-000);
-  color: var(--text);
-  font-family: var(--font-ui);
+  background: var(--tdm-ink-000);
+  color: var(--tdm-text);
+  font-family: var(--tdm-font-ui);
   font-size: 13px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }
 
 /* 全局滚动条：细、无按钮、悬停才显形 */
-.ed-scroll {
+.tdm-scroll {
   overflow-y: auto;
   scrollbar-width: thin;
-  scrollbar-color: var(--line-strong) transparent;
+  scrollbar-color: var(--tdm-line-strong) transparent;
   &::-webkit-scrollbar {
     width: 8px;
   }
   &::-webkit-scrollbar-thumb {
-    background: var(--line-strong);
+    background: var(--tdm-line-strong);
     border: 2px solid transparent;
     background-clip: content-box;
     &:hover {
-      background: var(--signal-line);
+      background: var(--tdm-signal-line);
       background-clip: content-box;
     }
   }
@@ -104,21 +59,21 @@ body {
 }
 
 /* 微标签：所有分区标题、字段单位、状态键名都用它 */
-.ed-micro {
-  font-family: var(--font-data);
+.tdm-micro {
+  font-family: var(--tdm-font-data);
   font-size: 10px;
   letter-spacing: 0.08em;
-  color: var(--text-lo);
+  color: var(--tdm-text-lo);
   text-transform: uppercase;
 }
 
-.ed-mono {
-  font-family: var(--font-data);
+.tdm-mono {
+  font-family: var(--tdm-font-data);
   font-variant-numeric: tabular-nums;
 }
 
 /** 把同一行里后面的内容顶到最右（历史面板的撤销/重做那一行用它） */
-.ed-spacer {
+.tdm-spacer {
   margin-left: auto;
 }
 
@@ -126,44 +81,44 @@ body {
    骨架
    ========================================================================== */
 
-.ed-app {
+.tdm-app {
   overflow:hidden;
   display: grid;
-  grid-template-rows: var(--h-header) minmax(0, 1fr);
+  grid-template-rows: var(--tdm-h-header) minmax(0, 1fr);
   height: 100%;
-  background: var(--ink-000);
+  background: var(--tdm-ink-000);
 }
 
-.ed-body {
+.tdm-body {
   display: grid;
-  grid-template-columns: var(--w-left) minmax(0, 1fr) var(--w-right);
+  grid-template-columns: var(--tdm-w-left) minmax(0, 1fr) var(--tdm-w-right);
   min-height: 0;
 }
 
-.ed-col {
+.tdm-col {
   display: flex;
   flex-direction: column;
   min-height: 0;
   min-width: 0;
 }
 
-.ed-col--left {
-  border-right: 1px solid var(--line);
-  background: var(--ink-050);
+.tdm-col--left {
+  border-right: 1px solid var(--tdm-line);
+  background: var(--tdm-ink-050);
 }
 
-.ed-col--right {
-  border-left: 1px solid var(--line);
-  background: var(--ink-050);
+.tdm-col--right {
+  border-left: 1px solid var(--tdm-line);
+  background: var(--tdm-ink-050);
 }
 
 /*
   预览模式：视口**铺满整个屏幕**，编辑器的三块 chrome 被一层不透明的底衬完全盖住。
 
-  更早的两版都不是这样。第一版靠 `.ed-app--preview` 把顶栏与左右两栏 `display: none`
+  更早的两版都不是这样。第一版靠 `.tdm-app--preview` 把顶栏与左右两栏 `display: none`
   掉、再把网格压成一格，让视口顶上来占满整页——它读起来是「页面被换掉了」
   （用户的原话），点完之后不知道自己在哪儿、也不知道怎么回去。第二版把
-  `.ed-stage` 抬成浮层，但四周留了 14px 内边距去透出压暗的编辑器，本意是让它像
+  `.tdm-stage` 抬成浮层，但四周留了 14px 内边距去透出压暗的编辑器，本意是让它像
   一扇窗口；那圈内边距反过来把它做成了「局部预览」，而用户要的是**全屏弹窗**——
   画面四周不该有任何别的东西。
 
@@ -174,8 +129,8 @@ body {
   这一条与档位切换是**两道独立的闸**，都不能省：CSS 管的是编辑器自己的界面，
   库那侧的包围框与手柄由 `:pickable` / `:selection` / `:gizmo` 三个 prop 关掉。
 
-  选择器写成**两个类**（`.ed-stage.ed-stage--preview`），不是啰嗦：`.ed-stage`
-  的基础块定义在本文件靠后的位置，而它与 `.ed-stage--preview` 的特异性完全
+  选择器写成**两个类**（`.tdm-stage.tdm-stage--preview`），不是啰嗦：`.tdm-stage`
+  的基础块定义在本文件靠后的位置，而它与 `.tdm-stage--preview` 的特异性完全
   相同（都是 0,1,0）——同分就按源码顺序决胜负，后面那条会赢。于是下面这几条
   声明**一条都落不到元素上**：`position: fixed` 被基础的 `position: relative`
   顶掉、`padding: 0` 被 `padding: 14px` 顶掉、`background` 简写清掉的网格又被
@@ -183,13 +138,13 @@ body {
   只是编辑控件不见了」——两次「没有全屏」都是这一条造成的。
   多挂一个类把特异性抬到 0,2,0，无论两块谁前谁后都成立。
 */
-.ed-stage.ed-stage--preview {
+.tdm-stage.tdm-stage--preview {
   position: fixed;
   inset: 0;
   /* 与事件绑定弹窗同一个层级：弹窗还能盖在预览之上 */
   z-index: 100;
   /*
-    零内边距。`.ed-stage` 基础样式里那 14px 是给编辑态的视口用的；
+    零内边距。`.tdm-stage` 基础样式里那 14px 是给编辑态的视口用的；
     预览时留着它，视口就成了「居中的一块」而不是「满屏的那一块」——
     弹窗之所以是弹窗，靠的正是它铺满整屏。
   */
@@ -199,8 +154,8 @@ body {
     盖住（「弹窗」二字就落在这一条上），并清掉蓝图网格那几层 background-image
     ——那是编辑态的底纹，会在视口那圈 1px 边框外面透出来当噪点。
   */
-  background: var(--ink-000);
-  animation: ed-fade 140ms var(--ease);
+  background: var(--tdm-ink-000);
+  animation: tdm-fade 140ms var(--tdm-ease);
 }
 
 /*
@@ -219,7 +174,7 @@ body {
   而 inline-flex 的基线取自它的第一个弹性子项（那枚 svg，没有基线），
   按基线对齐会让按钮往下沉。
 */
-.ed-preview-bar {
+.tdm-preview-bar {
   position: absolute;
   top: 0;
   left: 0;
@@ -232,35 +187,35 @@ body {
   background: linear-gradient(to bottom, rgba(8, 9, 12, 0.86), rgba(8, 9, 12, 0));
 }
 
-.ed-preview-name {
-  font-family: var(--font-data);
+.tdm-preview-name {
+  font-family: var(--tdm-font-data);
   font-size: 12px;
   font-weight: 600;
-  color: var(--text-hi);
+  color: var(--tdm-text-hi);
 }
 
-.ed-preview-note {
+.tdm-preview-note {
   font-size: 11px;
-  color: var(--text-lo);
+  color: var(--tdm-text-lo);
 }
 
 /*
   窗口里藏掉的编辑控件。预览的原意是「隐藏全部编辑控件」，而视口 HUD 与四角
   角标可以留着——前者是只读读数、后者是装饰。
 
-  注意这里点名的是 .ed-viewport-actions（视口右下角的模型操作胶囊），
-  **不是**顶栏那组 .ed-actions。顶栏现在是被底衬盖住的、本来就看不见，
-  但这一条仍然不该去关它：`.ed-app--preview` 那一版就是这么干的，结果
+  注意这里点名的是 .tdm-viewport-actions（视口右下角的模型操作胶囊），
+  **不是**顶栏那组 .tdm-actions。顶栏现在是被底衬盖住的、本来就看不见，
+  但这一条仍然不该去关它：`.tdm-app--preview` 那一版就是这么干的，结果
   「导入配置 / 导出配置 / 保存」跟着一起消失——底衬的职责是盖住，不是让谁消失。
 
   手柄模式切换条与视角档位条的藏法与胶囊完全相同：它们也是编辑控件。
   视角档位尤其要藏——预览是只读的，连机位都不该由这枚按钮改。
 */
-.ed-stage--preview .ed-viewport-actions,
-.ed-stage--preview .ed-view,
-.ed-stage--preview .ed-gizmo,
-.ed-stage--preview .ed-draw,
-.ed-stage--preview .ed-draw-hint {
+.tdm-stage--preview .tdm-viewport-actions,
+.tdm-stage--preview .tdm-view,
+.tdm-stage--preview .tdm-gizmo,
+.tdm-stage--preview .tdm-draw,
+.tdm-stage--preview .tdm-draw-hint {
   display: none;
 }
 
@@ -268,7 +223,7 @@ body {
   满屏这一档，视口不要边框也不要圆角：两者都是「一块面板」的信号，而这里是整屏。
   圆角尤其要清——`inset: 0` 之下，四个圆角会露出底衬的直角，看起来像画面被啃掉了四块。
 */
-.ed-stage--preview .ed-viewport {
+.tdm-stage--preview .tdm-viewport {
   border: none;
   border-radius: 0;
 }
@@ -277,94 +232,94 @@ body {
    顶栏
    ========================================================================== */
 
-.ed-header {
+.tdm-header {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 16px;
   padding: 0 12px;
-  border-bottom: 1px solid var(--line-strong);
-  background: var(--ink-050);
+  border-bottom: 1px solid var(--tdm-line-strong);
+  background: var(--tdm-ink-050);
 }
 
-.ed-brand {
+.tdm-brand {
   display: flex;
   align-items: center;
   gap: 9px;
 }
 
 /* 轴测立方体标：三条棱用琥珀色，其余用发丝线，暗示「可建造」 */
-.ed-brand svg {
+.tdm-brand svg {
   display: block;
   width: 20px;
   height: 20px;
 }
 
-.ed-brand-name {
-  font-family: var(--font-data);
+.tdm-brand-name {
+  font-family: var(--tdm-font-data);
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.22em;
-  color: var(--text-hi);
+  color: var(--tdm-text-hi);
 }
 
-.ed-header-divider {
+.tdm-header-divider {
   width: 1px;
   height: 18px;
-  background: var(--line-strong);
+  background: var(--tdm-line-strong);
 }
 
-.ed-scene-name {
+.tdm-scene-name {
   display: flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
 }
 
-.ed-scene-name input {
+.tdm-scene-name input {
   width: 150px;
   padding: 2px 6px;
   border: 1px solid transparent;
   border-radius: 2px;
   background: transparent;
-  color: var(--text-hi);
-  font-family: var(--font-ui);
+  color: var(--tdm-text-hi);
+  font-family: var(--tdm-font-ui);
   font-size: 12px;
   outline: none;
-  transition: border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease);
+  transition: border-color var(--tdm-t-fast) var(--tdm-ease), background var(--tdm-t-fast) var(--tdm-ease);
   &:hover {
-    border-color: var(--line);
+    border-color: var(--tdm-line);
   }
   &:focus {
-    border-color: var(--signal-line);
-    background: var(--ink-000);
+    border-color: var(--tdm-signal-line);
+    background: var(--tdm-ink-000);
   }
 }
 
 /* 保存状态点：唯一的「有未保存改动」提示 */
-.ed-dot {
+.tdm-dot {
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: var(--text-lo);
-  transition: background var(--t) var(--ease), box-shadow var(--t) var(--ease);
+  background: var(--tdm-text-lo);
+  transition: background var(--tdm-t) var(--tdm-ease), box-shadow var(--tdm-t) var(--tdm-ease);
 }
-.ed-dot--dirty {
-  background: var(--signal);
-  box-shadow: 0 0 0 3px var(--signal-dim);
+.tdm-dot--dirty {
+  background: var(--tdm-signal);
+  box-shadow: 0 0 0 3px var(--tdm-signal-dim);
 }
-.ed-dot--saved {
-  background: var(--ok);
+.tdm-dot--saved {
+  background: var(--tdm-ok);
 }
 
-.ed-actions {
+.tdm-actions {
   display: flex;
   align-items: center;
   gap: 2px;
 }
 
 /* 顶栏按钮：默认无边框无底色，悬停才浮现发丝线 */
-.ed-btn {
+.tdm-btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -373,83 +328,83 @@ body {
   border: 1px solid transparent;
   border-radius: 2px;
   background: transparent;
-  color: var(--text);
-  font-family: var(--font-ui);
+  color: var(--tdm-text);
+  font-family: var(--tdm-font-ui);
   font-size: 12px;
   cursor: pointer;
   white-space: nowrap;
-  transition: color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease),
-    background var(--t-fast) var(--ease);
+  transition: color var(--tdm-t-fast) var(--tdm-ease), border-color var(--tdm-t-fast) var(--tdm-ease),
+    background var(--tdm-t-fast) var(--tdm-ease);
   &:hover:not(:disabled) {
-    border-color: var(--line-strong);
-    color: var(--text-hi);
+    border-color: var(--tdm-line-strong);
+    color: var(--tdm-text-hi);
   }
   &:active:not(:disabled) {
-    background: var(--ink-200);
+    background: var(--tdm-ink-200);
   }
   &:disabled {
-    color: var(--text-lo);
+    color: var(--tdm-text-lo);
     opacity: 0.45;
     cursor: not-allowed;
   }
 }
 
-.ed-btn svg {
+.tdm-btn svg {
   width: 13px;
   height: 13px;
   flex: none;
 }
 
 /* 小一号：弹窗页脚、历史面板那一排 */
-.ed-btn--sm {
+.tdm-btn--sm {
   height: 20px;
   font-size: 11px;
 }
 
 /* 主操作：左侧一道琥珀竖条，而不是填充色块——色块会把顶栏压得太重 */
-.ed-btn--primary {
-  border-color: var(--line-strong);
-  color: var(--text-hi);
+.tdm-btn--primary {
+  border-color: var(--tdm-line-strong);
+  color: var(--tdm-text-hi);
   &::before {
     content: '';
     width: 2px;
     height: 13px;
     margin-right: 1px;
-    background: var(--signal);
-    box-shadow: 0 0 6px var(--signal-glow);
+    background: var(--tdm-signal);
+    box-shadow: 0 0 6px var(--tdm-signal-glow);
   }
   &:hover:not(:disabled) {
-    border-color: var(--signal-line);
-    background: var(--signal-dim);
+    border-color: var(--tdm-signal-line);
+    background: var(--tdm-signal-dim);
   }
 }
 
 /* 键盘快捷键提示：只在顶栏按钮上出现，很小但可读 */
-.ed-kbd {
-  font-family: var(--font-data);
+.tdm-kbd {
+  font-family: var(--tdm-font-data);
   font-size: 9px;
-  color: var(--text-lo);
+  color: var(--tdm-text-lo);
 }
 
 /* ==========================================================================
    左栏：模型库
    ========================================================================== */
 
-.ed-list {
+.tdm-list {
   padding: 5px;
 }
 
 /* 撑满剩余高度的那一组列表，超出后自己滚动 */
-.ed-list--grow {
+.tdm-list--grow {
   flex: 1;
   min-height: 0;
 }
 
-.ed-list + .ed-list {
-  border-top: 1px solid var(--line);
+.tdm-list + .tdm-list {
+  border-top: 1px solid var(--tdm-line);
 }
 
-.ed-item {
+.tdm-item {
   position: relative;
   display: block;
   width: 100%;
@@ -457,16 +412,16 @@ body {
   border: 0;
   border-radius: 2px;
   background: transparent;
-  color: var(--text);
-  font-family: var(--font-ui);
+  color: var(--tdm-text);
+  font-family: var(--tdm-font-ui);
   font-size: 12px;
   text-align: left;
   cursor: pointer;
-  transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+  transition: background var(--tdm-t-fast) var(--tdm-ease), color var(--tdm-t-fast) var(--tdm-ease);
 }
 
 /* 选中指示：左侧一道短琥珀条，靠 scaleY 让它「长出来」 */
-.ed-item::before {
+.tdm-item::before {
   content: '';
   position: absolute;
   left: 3px;
@@ -474,31 +429,31 @@ body {
   width: 2px;
   height: 12px;
   margin-top: -6px;
-  background: var(--signal);
+  background: var(--tdm-signal);
   transform: scaleY(0);
   transform-origin: center;
-  transition: transform var(--t) var(--ease);
+  transition: transform var(--tdm-t) var(--tdm-ease);
 }
 
-.ed-item:hover {
-  background: var(--ink-200);
-  color: var(--text-hi);
+.tdm-item:hover {
+  background: var(--tdm-ink-200);
+  color: var(--tdm-text-hi);
 }
 
-.ed-item--active {
-  background: var(--ink-200);
-  color: var(--text-hi);
+.tdm-item--active {
+  background: var(--tdm-ink-200);
+  color: var(--tdm-text-hi);
   &::before {
     transform: scaleY(1);
   }
 }
 
-.ed-item-note {
+.tdm-item-note {
   display: block;
   margin-top: 1px;
-  font-family: var(--font-data);
+  font-family: var(--tdm-font-data);
   font-size: 10px;
-  color: var(--text-lo);
+  color: var(--tdm-text-lo);
 }
 
 /* ==========================================================================
@@ -507,14 +462,14 @@ body {
 
 /*
   这一块是下面 01/02/03 三节的主表：点这里选谁，下面那三节的字段就描述谁。
-  自己也带一道下边框，与 .ed-sec 的那道合起来看是同一套分隔语法。
+  自己也带一道下边框，与 .tdm-sec 的那道合起来看是同一套分隔语法。
 */
-.ed-models {
-  border-bottom: 1px solid var(--line);
+.tdm-models {
+  border-bottom: 1px solid var(--tdm-line);
 }
 
 /*
-  表头抄 .ed-sec-head 的排版（编号 + 标题 + 右端读数），但不可折叠。
+  表头抄 .tdm-sec-head 的排版（编号 + 标题 + 右端读数），但不可折叠。
   它是「谁」，下面三节是「那个谁长什么样」——折叠起来会让这四块
   看起来是并列的四节，而实际是主从关系。
 
@@ -529,14 +484,14 @@ body {
 
   这三份清单在**同一个**滚动容器里，于是那段会同时出现三条吸顶表头
   （预设那一页只有它一条，走的是同一条规则）。
-  它们不会互相盖住：每个表头的 containing block 是它自己那一节（`.ed-plan`），
+  它们不会互相盖住：每个表头的 containing block 是它自己那一节（`.tdm-plan`），
   于是呈现为「上一个被顶出去、下一个接手」的分节交接，几何上首尾相接、零重叠。
   反过来说，**分节那一层不能带内边距或成为定位容器**——一旦带，表头就不再满宽，
   滚上来的内容会从两侧的缝里透出来。
 */
-.ed-models-head,
-.ed-plan-head,
-.ed-preset-head {
+.tdm-models-head,
+.tdm-plan-head,
+.tdm-preset-head {
   position: sticky;
   top: 0;
   z-index: 1;
@@ -544,37 +499,37 @@ body {
   align-items: baseline;
   gap: 7px;
   padding: 9px 12px 6px;
-  background: var(--ink-050);
+  background: var(--tdm-ink-050);
 }
 
-.ed-models-count,
-.ed-plan-count {
+.tdm-models-count,
+.tdm-plan-count {
   margin-left: auto;
-  font-family: var(--font-data);
+  font-family: var(--tdm-font-data);
   font-size: 10px;
-  color: var(--text-lo);
+  color: var(--tdm-text-lo);
 }
 
 /* 表头右侧的追加入口。表头本身就是一条 30px 高的横带，按钮不能再撑高它 */
-.ed-models-add {
+.tdm-models-add {
   padding: 1px 5px;
   border: 1px solid transparent;
   border-radius: 2px;
   background: transparent;
-  color: var(--text-lo);
-  font-family: var(--font-ui);
+  color: var(--tdm-text-lo);
+  font-family: var(--tdm-font-ui);
   font-size: 10px;
   line-height: 1.5;
   cursor: pointer;
-  transition: color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease);
+  transition: color var(--tdm-t-fast) var(--tdm-ease), border-color var(--tdm-t-fast) var(--tdm-ease);
   &:hover {
-    border-color: var(--line-strong);
-    color: var(--signal);
+    border-color: var(--tdm-line-strong);
+    color: var(--tdm-signal);
   }
 }
 
-.ed-models .ed-list,
-.ed-preset .ed-list {
+.tdm-models .tdm-list,
+.tdm-preset .tdm-list {
   padding: 0 5px 5px;
 }
 
@@ -582,13 +537,13 @@ body {
   一行 = 主按钮 + 事件按钮 + 移除按钮，三个并排的兄弟。
   它们不能互相嵌套：按钮套按钮是非法 HTML，浏览器会把内层拆出去、点击区域随之错位。
 */
-.ed-models-row {
+.tdm-models-row {
   display: flex;
   align-items: center;
 }
 
-/* .ed-item 是 display:block / width:100%，这里要让它跟右侧两个按钮共处一行 */
-.ed-models-pick {
+/* .tdm-item 是 display:block / width:100%，这里要让它跟右侧两个按钮共处一行 */
+.tdm-models-pick {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -600,27 +555,27 @@ body {
 }
 
 /* 行首图标：内置几何体是立方体，外部地址的模型是文件 */
-.ed-models-icon {
+.tdm-models-icon {
   flex: none;
   width: 14px;
   height: 14px;
-  color: var(--text-lo);
-  transition: color var(--t-fast) var(--ease);
+  color: var(--tdm-text-lo);
+  transition: color var(--tdm-t-fast) var(--tdm-ease);
 }
-.ed-models-icon path {
+.tdm-models-icon path {
   stroke: currentColor;
   stroke-width: 1.4;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
 /* 选中/悬停时图标跟着提亮一档，免得它比文字还暗、看起来像禁用 */
-.ed-item:hover .ed-models-icon,
-.ed-item--active .ed-models-icon {
-  color: var(--text);
+.tdm-item:hover .tdm-models-icon,
+.tdm-item--active .tdm-models-icon {
+  color: var(--tdm-text);
 }
 
 /* 名称吃掉中间全部宽度；长地址派生出的名字靠它截断，不撑破行 */
-.ed-models-name {
+.tdm-models-name {
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -634,7 +589,7 @@ body {
   「哪一个会响应点击」是列表上唯一看不出来、又最需要一眼看到的信息，
   改一行之前由副标题承担，现在由这个读数接手。
 */
-.ed-models-evt {
+.tdm-models-evt {
   flex: none;
   display: flex;
   align-items: center;
@@ -644,30 +599,30 @@ body {
   border: 0;
   border-radius: 2px;
   background: transparent;
-  color: var(--text-lo);
-  font-family: var(--font-data);
+  color: var(--tdm-text-lo);
+  font-family: var(--tdm-font-data);
   font-size: 9px;
   line-height: 1;
   cursor: pointer;
-  transition: color var(--t-fast) var(--ease), background var(--t-fast) var(--ease);
+  transition: color var(--tdm-t-fast) var(--tdm-ease), background var(--tdm-t-fast) var(--tdm-ease);
 }
-.ed-models-evt svg {
+.tdm-models-evt svg {
   display: block;
   width: 13px;
   height: 13px;
 }
-.ed-models-evt path {
+.tdm-models-evt path {
   stroke: currentColor;
   stroke-width: 1.5;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-.ed-models-evt:hover {
-  background: var(--ink-300);
-  color: var(--text-hi);
+.tdm-models-evt:hover {
+  background: var(--tdm-ink-300);
+  color: var(--tdm-text-hi);
 }
-.ed-models-evt--on {
-  color: var(--signal);
+.tdm-models-evt--on {
+  color: var(--tdm-signal);
 }
 
 /*
@@ -679,8 +634,8 @@ body {
   平面图那三份清单（墙 / 门窗 / 房间）的每一行都是同一个按钮、同一条理由，
   共用选择器。
 */
-.ed-models-drop,
-.ed-plan-drop {
+.tdm-models-drop,
+.tdm-plan-drop {
   flex: none;
   width: 18px;
   height: 18px;
@@ -689,51 +644,51 @@ body {
   border: 0;
   border-radius: 2px;
   background: transparent;
-  color: var(--text-lo);
-  font-family: var(--font-data);
+  color: var(--tdm-text-lo);
+  font-family: var(--tdm-font-data);
   font-size: 13px;
   line-height: 1;
   cursor: pointer;
   opacity: 0;
-  transition: opacity var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+  transition: opacity var(--tdm-t-fast) var(--tdm-ease), color var(--tdm-t-fast) var(--tdm-ease);
 }
 /* 键盘用户看不到 hover，所以焦点态也要让它现身（下面那串里的 :focus-visible） */
-.ed-models-row:hover .ed-models-drop,
-.ed-models-row:focus-within .ed-models-drop,
-.ed-plan-row:hover .ed-plan-drop,
-.ed-plan-row:focus-within .ed-plan-drop,
-.ed-models-drop:focus-visible,
-.ed-plan-drop:focus-visible {
+.tdm-models-row:hover .tdm-models-drop,
+.tdm-models-row:focus-within .tdm-models-drop,
+.tdm-plan-row:hover .tdm-plan-drop,
+.tdm-plan-row:focus-within .tdm-plan-drop,
+.tdm-models-drop:focus-visible,
+.tdm-plan-drop:focus-visible {
   opacity: 1;
 }
-.ed-models-drop:hover,
-.ed-plan-drop:hover {
+.tdm-models-drop:hover,
+.tdm-plan-drop:hover {
   /*
     用琥珀而不是红：调色板里的红是跟着底部状态栏一起删掉的（见 :root 里那段注释），
     为这一个按钮把一种颜色引回来不值得。琥珀在这里读作「即将发生的事」。
   */
-  color: var(--signal);
+  color: var(--tdm-signal);
 }
 
 /*
-  空态用的还是 .ed-hint 那套外观（左侧一道竖线 + 极淡底色），
-  只是左右各让出 12px——.ed-inspector-body 自己没有横向内边距，
+  空态用的还是 .tdm-hint 那套外观（左侧一道竖线 + 极淡底色），
+  只是左右各让出 12px——.tdm-inspector-body 自己没有横向内边距，
   不给边距这条提示会贴着面板边缘，与下面几节的字段完全对不齐。
-  写成双类是为了压过 .ed-hint 自己的 margin（两者同为单类，靠顺序不可靠）。
+  写成双类是为了压过 .tdm-hint 自己的 margin（两者同为单类，靠顺序不可靠）。
 */
-.ed-hint.ed-models-empty,
-.ed-hint.ed-plan-empty {
+.tdm-hint.tdm-models-empty,
+.tdm-hint.tdm-plan-empty {
   margin: 0 12px 10px;
 }
 
 /*
   模型库里空分类的提示。
-  左右 5px 与宫格的内边距（.ed-list）同值，所以这句话与缩略图**左对齐**，
+  左右 5px 与宫格的内边距（.tdm-list）同值，所以这句话与缩略图**左对齐**，
   换成 12px 就会在缩略图左边多缩进一截、看起来像另一层级的说明；
   上下也各留 5px：上面现在直接顶着导轨那条竖发丝线，贴着写会像是被线压住。
-  写成双类是为了压过 .ed-hint 自己的 margin（两者同为单类，靠顺序不可靠）。
+  写成双类是为了压过 .tdm-hint 自己的 margin（两者同为单类，靠顺序不可靠）。
 */
-.ed-hint.ed-lib-empty {
+.tdm-hint.tdm-lib-empty {
   margin: 5px;
 }
 
@@ -742,24 +697,24 @@ body {
    ========================================================================== */
 
 /*
-  与 .ed-models 同一个位置的两块（`.ed-plan` 的清单、`.ed-preset` 的预设列表）：
+  与 .tdm-models 同一个位置的两块（`.tdm-plan` 的清单、`.tdm-preset` 的预设列表）：
   几节字段之后的一整块，靠上面这道发丝线起头。
-  表头（.ed-plan-head / .ed-preset-head）与移除按钮（.ed-plan-drop）已经在上面与
+  表头（.tdm-plan-head / .tdm-preset-head）与移除按钮（.tdm-plan-drop）已经在上面与
   模型列表共用选择器，这里只剩清单自己的几样东西。
 
   三条清单（墙 / 门窗 / 房间）共用这一整套：它们的行都是「一段文字 + 一个 ×」，
   房那行多一个色块。分开写三份迟早会漂——这正是表头与移除按钮当初并成一条的理由。
 */
-.ed-plan,
-.ed-preset {
-  border-top: 1px solid var(--line);
+.tdm-plan,
+.tdm-preset {
+  border-top: 1px solid var(--tdm-line);
 }
 
-.ed-plan-list {
+.tdm-plan-list {
   padding: 0 5px 5px;
 }
 
-.ed-plan-row {
+.tdm-plan-row {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -775,11 +730,11 @@ body {
 
   用 `font-data`（等宽）而不是 UI 字体，也是同一个理由。
 */
-.ed-plan-idx {
+.tdm-plan-idx {
   flex: none;
-  font-family: var(--font-data);
+  font-family: var(--tdm-font-data);
   font-size: 10px;
-  color: var(--text-lo);
+  color: var(--tdm-text-lo);
 }
 
 /*
@@ -787,16 +742,16 @@ body {
 
   它是这一行里唯一会长的那一格，所以要自己会收拾：`min-width: 0` 解除 flex 子项
   默认的 `min-width: auto`（不解除的话，导入配置里一个 `-12.345678` 这样的长坐标
-  就会把整行顶宽、把右边的 × 挤出面板——与 `.ed-plan-name` 是同一条理由），
+  就会把整行顶宽、把右边的 × 挤出面板——与 `.tdm-plan-name` 是同一条理由），
   再配 `overflow: hidden` + `text-overflow: ellipsis` 把装不下的部分收在省略号里。
   后两者要生效，这一格就不能换行，所以钉住 `white-space: nowrap`。
 */
-.ed-plan-meta {
+.tdm-plan-meta {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   font-size: 11px;
-  color: var(--text-hi);
+  color: var(--tdm-text-hi);
   white-space: nowrap;
   text-overflow: ellipsis;
 }
@@ -806,7 +761,7 @@ body {
   `min-width: 0` 不能省：flex 子项默认 `min-width: auto`，
   一个长名字会把它自己顶到行宽之外，把右边的色块和 × 挤出面板。
 */
-.ed-plan-name {
+.tdm-plan-name {
   flex: 1;
   min-width: 0;
 }
@@ -814,19 +769,19 @@ body {
 /*
   色块。
   `input[type=color]` 的默认外观是带内边距的圆角按钮，四个方向都要清掉，
-  再自己画一个 2px 圆角的方块——与 .ed-list 里那些行的圆角一致
+  再自己画一个 2px 圆角的方块——与 .tdm-list 里那些行的圆角一致
   （文件头那条「圆角不超过 3px」只管面板，这一层是面板内部的行）。
 
   `padding: 0` 与 `border: 0` 在 Firefox 上不够，还要清 `::-moz-color-swatch`
   的内描边；Chrome 那边靠 `::-webkit-color-swatch-wrapper` 的 padding 归零。
   两行都是必须的，少一个就会在对应浏览器里显示成一个带白边的方块。
 */
-.ed-plan-tint {
+.tdm-plan-tint {
   flex: none;
   width: 16px;
   height: 16px;
   padding: 0;
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--tdm-line-strong);
   border-radius: 2px;
   background: transparent;
   cursor: pointer;
@@ -842,7 +797,7 @@ body {
     border-radius: 1px;
   }
   &:hover {
-    border-color: var(--text-lo);
+    border-color: var(--tdm-text-lo);
   }
 }
 
@@ -850,76 +805,76 @@ body {
    中栏：视口
    ========================================================================== */
 
-.ed-stage {
+.tdm-stage {
   position: relative;
   display: flex;
   min-width: 0;
   min-height: 0;
   padding: 14px;
   /* 两级蓝图网格：8px 细纹打底，40px 粗纹给出尺度感 */
-  background-color: var(--ink-000);
+  background-color: var(--tdm-ink-000);
   background-image:
-    repeating-linear-gradient(to right, var(--grid-fine) 0 1px, transparent 1px 8px),
-    repeating-linear-gradient(to bottom, var(--grid-fine) 0 1px, transparent 1px 8px),
-    repeating-linear-gradient(to right, var(--grid-coarse) 0 1px, transparent 1px 40px),
-    repeating-linear-gradient(to bottom, var(--grid-coarse) 0 1px, transparent 1px 40px);
+    repeating-linear-gradient(to right, var(--tdm-grid-fine) 0 1px, transparent 1px 8px),
+    repeating-linear-gradient(to bottom, var(--tdm-grid-fine) 0 1px, transparent 1px 8px),
+    repeating-linear-gradient(to right, var(--tdm-grid-coarse) 0 1px, transparent 1px 40px),
+    repeating-linear-gradient(to bottom, var(--tdm-grid-coarse) 0 1px, transparent 1px 40px);
 }
 
-.ed-viewport {
+.tdm-viewport {
   position: relative;
   flex: 1;
   min-width: 0;
   min-height: 0;
-  border: 1px solid var(--line-strong);
-  background: var(--ink-000);
+  border: 1px solid var(--tdm-line-strong);
+  background: var(--tdm-ink-000);
   overflow: hidden;
 }
 
 /* SceneViewer 的根节点自己带 height 内联样式，这里只兜底宽度 */
-.ed-viewport > .tdm-root {
+.tdm-viewport > .tdm-root {
   width: 100%;
 }
 
 /* 视口四角定位角标：模型加载完成时短暂亮起，是「仪器正在工作」的唯一动效 */
-.ed-corner {
+.tdm-corner {
   position: absolute;
   width: 13px;
   height: 13px;
-  border: 0 solid var(--text-lo);
+  border: 0 solid var(--tdm-text-lo);
   pointer-events: none;
-  transition: border-color var(--t) var(--ease), filter var(--t) var(--ease);
+  transition: border-color var(--tdm-t) var(--tdm-ease), filter var(--tdm-t) var(--tdm-ease);
 }
-.ed-corner--tl {
+.tdm-corner--tl {
   top: -1px;
   left: -1px;
   border-top-width: 1px;
   border-left-width: 1px;
 }
-.ed-corner--tr {
+.tdm-corner--tr {
   top: -1px;
   right: -1px;
   border-top-width: 1px;
   border-right-width: 1px;
 }
-.ed-corner--bl {
+.tdm-corner--bl {
   bottom: -1px;
   left: -1px;
   border-bottom-width: 1px;
   border-left-width: 1px;
 }
-.ed-corner--br {
+.tdm-corner--br {
   bottom: -1px;
   right: -1px;
   border-bottom-width: 1px;
   border-right-width: 1px;
 }
-.ed-corner--lit {
-  border-color: var(--signal);
-  filter: drop-shadow(0 0 4px var(--signal-glow));
+.tdm-corner--lit {
+  border-color: var(--tdm-signal);
+  filter: drop-shadow(0 0 4px var(--tdm-signal-glow));
 }
 
 /* 拖放导入 glTF：整个视口是投放区，只在拖拽中显形 */
-.ed-dropzone {
+.tdm-dropzone {
   position: absolute;
   inset: 0;
   z-index: 30;
@@ -927,16 +882,16 @@ body {
   align-items: center;
   justify-content: center;
   background: rgba(8, 9, 12, 0.82);
-  color: var(--signal);
-  font-family: var(--font-data);
+  color: var(--tdm-signal);
+  font-family: var(--tdm-font-data);
   font-size: 11px;
   letter-spacing: 0.1em;
-  outline: 1px dashed var(--signal-line);
+  outline: 1px dashed var(--tdm-signal-line);
   outline-offset: -10px;
 }
 
 /* 视口左上角的参数读数：不做面板，直接浮在画布上 */
-.ed-hud {
+.tdm-hud {
   position: absolute;
   top: 8px;
   left: 10px;
@@ -946,14 +901,14 @@ body {
   gap: 2px;
   pointer-events: none;
 }
-.ed-hud-row {
-  font-family: var(--font-data);
+.tdm-hud-row {
+  font-family: var(--tdm-font-data);
   font-size: 10px;
-  color: var(--text-lo);
+  color: var(--tdm-text-lo);
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
 }
-.ed-hud-row b {
-  color: var(--text);
+.tdm-hud-row b {
+  color: var(--tdm-text);
   font-weight: 500;
 }
 
@@ -961,21 +916,21 @@ body {
   视口右下角的模型操作胶囊。只在选中模型时渲染（组件的 v-if），
   所以这里没有隐藏态的规则。
 
-  **根节点不能叫 .ed-actions**：顶栏那组「导入配置 / 导出配置 / 预览 / 保存」
+  **根节点不能叫 .tdm-actions**：顶栏那组「导入配置 / 导出配置 / 预览 / 保存」
   已经占了这个名字。同名的话下面这一整块会连带命中顶栏——`position: absolute`
-  把那行拽出网格流、`pointer-events: none` 让四个按钮全都点不动。这里改成 .ed-viewport-actions，
-  与同层的 .ed-hud 一样以宿主元素命名；里面单颗按钮仍叫 .ed-action，
+  把那行拽出网格流、`pointer-events: none` 让四个按钮全都点不动。这里改成 .tdm-viewport-actions，
+  与同层的 .tdm-hud 一样以宿主元素命名；里面单颗按钮仍叫 .tdm-action，
   「一个动作」与「装动作的容器」分开，也就没再撞上什么。
 
   圆角 999px 看着违反了文件头那条「圆角不超过 3px」，但那条管的是**面板**；
   画布浮层这一层本来就不完全服从它——库自带的 .tdm-toolbar 用的是 8px。
   胶囊是浮在画面上的东西，圆到底才是它该有的形状。
 
-  底衬沿用 .ed-modal 那一套（同一个墨色 + 同一个模糊值），只把不透明度提上去：
+  底衬沿用 .tdm-modal 那一套（同一个墨色 + 同一个模糊值），只把不透明度提上去：
   模态框背后是整页界面、模糊到能看出层次就够了，而胶囊背后是任意内容的 3D 画面，
   浅浅一层会被亮色模型穿过去。全站只有这一个模糊值，不再为此多开一档。
 */
-.ed-viewport-actions {
+.tdm-viewport-actions {
   position: absolute;
   /*
     内缩 14px：右下角那个角标在 right/bottom: -1px、13×13，
@@ -983,17 +938,17 @@ body {
   */
   right: 14px;
   bottom: 14px;
-  /* 与 .ed-hud 同层；拖文件进来时 .ed-dropzone(30) 要能盖住它 */
+  /* 与 .tdm-hud 同层；拖文件进来时 .tdm-dropzone(30) 要能盖住它 */
   z-index: 10;
   display: flex;
   align-items: center;
   gap: 1px;
   padding: 2px;
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--tdm-line-strong);
   border-radius: 999px;
   background: rgba(8, 9, 12, 0.82);
   backdrop-filter: blur(2px);
-  animation: ed-rise 160ms var(--ease);
+  animation: tdm-rise 160ms var(--tdm-ease);
   /*
     pointer-events 分三层，这一层是「放行」：胶囊底与按钮之间的缝隙不吞事件，
     在它们之间按下鼠标仍然能拖动旋转视角。
@@ -1002,14 +957,14 @@ body {
 }
 
 /* 破坏性动作之前的一道竖线：前五个都作用在物体本身，最后一个是删掉它 */
-.ed-viewport-actions-sep {
+.tdm-viewport-actions-sep {
   width: 1px;
   height: 14px;
   margin: 0 3px;
-  background: var(--line-strong);
+  background: var(--tdm-line-strong);
 }
 
-.ed-action {
+.tdm-action {
   /* 悬停提示的定位宿主 */
   position: relative;
   display: flex;
@@ -1019,7 +974,7 @@ body {
     26×26 的正圆，图标 15px 居中，四周各留 5.5px。
     padding 与 border 显式归零：全局那份 reset 确实已经把 button 的内边距
     抹平了，但那是 playground 的 main.ts 引的，不进库产物——这个文件里所有
-    控件都自己写一遍（见 .ed-item、.ed-toggle），照办。
+    控件都自己写一遍（见 .tdm-item、.tdm-toggle），照办。
   */
   width: 26px;
   height: 26px;
@@ -1027,14 +982,14 @@ body {
   border: 0;
   border-radius: 50%;
   background: transparent;
-  color: var(--text);
+  color: var(--tdm-text);
   cursor: pointer;
   user-select: none;
   pointer-events: auto;
-  transition: color var(--t-fast) var(--ease), background var(--t-fast) var(--ease);
+  transition: color var(--tdm-t-fast) var(--tdm-ease), background var(--tdm-t-fast) var(--tdm-ease);
   &:hover:not(:disabled) {
-    color: var(--signal);
-    background: var(--signal-dim);
+    color: var(--tdm-signal);
+    background: var(--tdm-signal-dim);
   }
 }
 /*
@@ -1042,21 +997,21 @@ body {
   唯一能用的反馈通道只是往控制台打日志，用户看不见，所以在这里把按钮变灰，
   而不是让它点下去静默失败。提示仍然会显示，说明这颗按钮是什么。
 */
-.ed-action:disabled {
-  color: var(--text-lo);
+.tdm-action:disabled {
+  color: var(--tdm-text-lo);
   cursor: default;
 }
 /* 眼睛那颗：模型被隐藏时压暗，提示文案同步变成「显示」 */
-.ed-action--off {
-  color: var(--text-lo);
+.tdm-action--off {
+  color: var(--tdm-text-lo);
 }
 
-.ed-action-icon {
+.tdm-action-icon {
   display: block;
   width: 15px;
   height: 15px;
 }
-.ed-action-icon path {
+.tdm-action-icon path {
   stroke: currentColor;
   /*
     24 单位的 viewBox 缩到 15px，1.7 落到约 1.06px——与导轨那排 18px / 1.5
@@ -1069,22 +1024,22 @@ body {
 
 /*
   悬停提示。挂在按钮里、朝上长——按钮自己就是定位宿主，
-  不需要 .ed-rail-tip 那套「挂在滚动容器外、坐标由组件算」的写法。
+  不需要 .tdm-rail-tip 那套「挂在滚动容器外、坐标由组件算」的写法。
 
-  文案**只能有两个字**：.ed-viewport 是 overflow: hidden，而这里居中展开，
+  文案**只能有两个字**：.tdm-viewport 是 overflow: hidden，而这里居中展开，
   可用宽度只有「按钮中心到视口右缘」的两倍——最右侧那颗删除键大约 52px。
   11px 字号下两个字连内边距约 36px，刚好放得下；多一个字就会两头一起被切掉，
   而且切得无声无息。
 */
-.ed-action-tip {
+.tdm-action-tip {
   position: absolute;
   left: 50%;
   bottom: calc(100% + 7px);
   padding: 3px 7px;
-  border: 1px solid var(--line-strong);
-  background: var(--ink-000);
-  color: var(--text-hi);
-  font-family: var(--font-ui);
+  border: 1px solid var(--tdm-line-strong);
+  background: var(--tdm-ink-000);
+  color: var(--tdm-text-hi);
+  font-family: var(--tdm-font-ui);
   font-size: 11px;
   line-height: 1.4;
   white-space: nowrap;
@@ -1096,30 +1051,30 @@ body {
     在那一带按下拖动就转不了视角。
   */
   pointer-events: none;
-  transition: opacity var(--t-fast) var(--ease);
+  transition: opacity var(--tdm-t-fast) var(--tdm-ease);
 }
 /* 键盘聚焦也要出提示，否则这一排对纯键盘用户就是六个没有名字的圆点 */
-.ed-action:hover .ed-action-tip,
-.ed-action:focus-visible .ed-action-tip {
+.tdm-action:hover .tdm-action-tip,
+.tdm-action:focus-visible .tdm-action-tip {
   opacity: 1;
 }
 
 /*
   视口顶边中部的变换手柄模式切换。
 
-  位置只能选这里：左上角被 .ed-hud 那四行读数占着，右下角是操作胶囊，
+  位置只能选这里：左上角被 .tdm-hud 那四行读数占着，右下角是操作胶囊，
   四个角还有角标。顶边中部是唯一一块既不压读数、也不压控件的空地。
 
   与本文件第 7 条（圆角不超过 3px）的关系和上面那支胶囊一样：那条管的是面板，
   画布浮层的形状不受它约束。底衬与胶囊取同一组数值（同一个墨色、同一个模糊），
   两件浮在画面上的东西各用各的深浅会显得像两个人做的。
 */
-.ed-gizmo {
+.tdm-gizmo {
   position: absolute;
   top: 10px;
   /*
     居中用 left/right + margin auto，**不用** `left: 50%` + `translateX(-50%)`：
-    下面那条 ed-rise 动画的结束态是 `transform: none`，会把这半格位移一并清掉，
+    下面那条 tdm-rise 动画的结束态是 `transform: none`，会把这半格位移一并清掉，
     于是每次出现都从正中偏右 50% 的位置飘回来。用外边距居中就没有这个问题，
     代价只是 width 得显式写成 fit-content（绝对定位下默认会被拉满整行）。
   */
@@ -1132,11 +1087,11 @@ body {
   align-items: center;
   gap: 1px;
   padding: 2px;
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--tdm-line-strong);
   border-radius: 999px;
   background: rgba(8, 9, 12, 0.82);
   backdrop-filter: blur(2px);
-  animation: ed-rise 160ms var(--ease);
+  animation: tdm-rise 160ms var(--tdm-ease);
   /* 与胶囊同一条：容器放行，只有按钮自己吃事件，免得挡掉 OrbitControls 的转视角 */
   pointer-events: none;
 }
@@ -1145,62 +1100,62 @@ body {
   按钮与手柄条**共用一条选择器**：三件浮在画面上的控件，形状、字号、
   悬停与选中色必须逐像素一致，分开写迟早漂移。只有 min-width 各写各的。
 */
-.ed-gizmo-btn,
-.ed-view-btn,
-.ed-draw-btn {
+.tdm-gizmo-btn,
+.tdm-view-btn,
+.tdm-draw-btn {
   min-width: 40px;
   padding: 3px 8px;
   border: 0;
   border-radius: 999px;
   background: transparent;
-  font-family: var(--font-ui);
+  font-family: var(--tdm-font-ui);
   font-size: 11px;
   line-height: 1.4;
-  color: var(--text-lo);
+  color: var(--tdm-text-lo);
   cursor: pointer;
   user-select: none;
   pointer-events: auto;
-  transition: color var(--t-fast) var(--ease), background var(--t-fast) var(--ease);
+  transition: color var(--tdm-t-fast) var(--tdm-ease), background var(--tdm-t-fast) var(--tdm-ease);
   &:hover {
-    color: var(--text);
+    color: var(--tdm-text);
   }
 }
 /*
   当前档：琥珀实底 + 墨色字。
 
   这是全站少数几处「实底强调」之一，用在这里是因为它是一个三选一的**状态**
-  而不是一次动作——胶囊那排按钮悬停时用的也只是琥珀描边（--signal-dim 底 + --signal 字），
+  而不是一次动作——胶囊那排按钮悬停时用的也只是琥珀描边（--tdm-signal-dim 底 + --tdm-signal 字），
   两者不该长成一样。
 */
-.ed-gizmo-btn--on,
-.ed-view-btn--on,
-.ed-draw-btn--on {
-  color: var(--ink-000);
-  background: var(--signal);
+.tdm-gizmo-btn--on,
+.tdm-view-btn--on,
+.tdm-draw-btn--on {
+  color: var(--tdm-ink-000);
+  background: var(--tdm-signal);
 }
 
 /* 「2D」「3D」两个字母比「移动 / 旋转 / 缩放」窄，同样的内边距下会显得虚胖 */
-.ed-view-btn {
+.tdm-view-btn {
   min-width: 34px;
 }
 
 /*
   平面图绘制工具条，竖排贴在视口左边缘中部。
 
-  位置：左上角是 .ed-hud 的四行读数（它下面一整段是空的），右上角是视角档位，
+  位置：左上角是 .tdm-hud 的四行读数（它下面一整段是空的），右上角是视角档位，
   右下角是操作胶囊，四周还有 13×13 的角标——左侧中部是唯一一块不压任何东西的地方。
   **不并进顶边那条手柄条**：那条只在有选中模型时才出现，而平面图工具要在空场景里
   就能用；两者也是两类东西（改一个物体的变换 vs. 造一个新物体）。
 
   纵向居中用 top/bottom + margin auto，**不用** `translateY(-50%)`：下面那条
-  ed-rise 动画的结束态是 `transform: none`，会把这半格位移一并清掉，
-  于是每次出现都从偏下 50% 的位置飘回来（`.ed-gizmo` 上面那段注释是同一件事）。
+  tdm-rise 动画的结束态是 `transform: none`，会把这半格位移一并清掉，
+  于是每次出现都从偏下 50% 的位置飘回来（`.tdm-gizmo` 上面那段注释是同一件事）。
   绝对定位下高度默认会被拉满，所以得显式写 fit-content。
 
-  与 .ed-gizmo / .ed-view 相比多一条：这里是**竖排**，所以 flex-direction 要改，
+  与 .tdm-gizmo / .tdm-view 相比多一条：这里是**竖排**，所以 flex-direction 要改，
   圆角也不能再用胶囊的 999px（竖过来会变成一个长椭圆）。
 */
-.ed-draw {
+.tdm-draw {
   position: absolute;
   left: 10px;
   top: 0;
@@ -1213,11 +1168,11 @@ body {
   align-items: stretch;
   gap: 1px;
   padding: 2px;
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--tdm-line-strong);
   border-radius: 8px;
   background: rgba(8, 9, 12, 0.82);
   backdrop-filter: blur(2px);
-  animation: ed-rise 160ms var(--ease);
+  animation: tdm-rise 160ms var(--tdm-ease);
   /* 与胶囊、手柄条同一条：容器放行，只有按钮自己吃事件，免得挡掉 OrbitControls */
   pointer-events: none;
 }
@@ -1227,7 +1182,7 @@ body {
   所以 min-width 收紧到 30px、由最长的那枚（「地基」「画墙」）撑出实际宽度，
   五个按钮随之等宽——横排时各写各的宽度，竖排时必须对齐。
 */
-.ed-draw-btn {
+.tdm-draw-btn {
   min-width: 30px;
   text-align: center;
 }
@@ -1238,7 +1193,7 @@ body {
   只在**真的能画**时才变成十字（`floorplanEnabled` 那三道闸都过了），
   而不是「选了工具就变」——被闸门挡下时画不出来，那时给十字光标是在骗人。
 */
-.ed-viewport--draw {
+.tdm-viewport--draw {
   cursor: crosshair;
 }
 
@@ -1248,10 +1203,10 @@ body {
   底部中间是空的（右下角那枚操作胶囊贴着右边），而「一行工具提示放在底部」
   是通用做法。横向居中同样用 left/right + margin auto。
 
-  它是 `.ed-hint` 那一套的同族，但**底色比它重**：这条浮在画面（可能是任意
-  明度的渲染结果）上，而 .ed-hint 铺在固定深浅的面板上。
+  它是 `.tdm-hint` 那一套的同族，但**底色比它重**：这条浮在画面（可能是任意
+  明度的渲染结果）上，而 .tdm-hint 铺在固定深浅的面板上。
 */
-.ed-draw-hint {
+.tdm-draw-hint {
   position: absolute;
   bottom: 14px;
   left: 0;
@@ -1261,13 +1216,13 @@ body {
   margin: 0 auto;
   z-index: 10;
   padding: 4px 10px;
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--tdm-line-strong);
   border-radius: 999px;
   background: rgba(8, 9, 12, 0.82);
   backdrop-filter: blur(2px);
   font-size: 11px;
   line-height: 1.5;
-  color: var(--text-lo);
+  color: var(--tdm-text-lo);
   text-align: center;
   /*
     与胶囊同一条：它是纯信息，不该吃掉指针事件。少了这一句，底部中间那条
@@ -1279,21 +1234,21 @@ body {
 /* 视角档位切换（2D / 3D），视口右上角。
   视角档位切换（2D / 3D），视口右上角。
 
-  位置：右上是视口里唯一还空着的角。左上被 .ed-hud 那四行读数占着，顶边中部是手柄条，
+  位置：右上是视口里唯一还空着的角。左上被 .tdm-hud 那四行读数占着，顶边中部是手柄条，
   右下是操作胶囊，四个角还有 13×13 的装饰角标——只剩这里。
 
-  右边为什么是 14px 而不是 0：与 .ed-viewport-actions 同一条理由，角标贴在视口
+  右边为什么是 14px 而不是 0：与 .tdm-viewport-actions 同一条理由，角标贴在视口
   边线上（-1px 处），贴边会把胶囊压在角标下面。上下左右四个浮层因此统一内缩 14px。
 
   窄视口下它可能与顶边中部那条手柄条相交：中间那一栏拿到的是
   `窗口宽 − 250px(左栏) − 306px(右栏)`，而手柄条是居中的、胶囊贴在右边，
   两者在视口窄于约 310px（也就是窗口窄于约 870px）时碰头。
-  不为此加媒体查询，是因为这条浮层带里**先撞上的不是它**——左上的 .ed-hud
+  不为此加媒体查询，是因为这条浮层带里**先撞上的不是它**——左上的 .tdm-hud
   有四行读数、宽度接近 200px，手柄条在视口窄于约 530px 时就已经压到它上面了，
   而这个元素要到 310px 才轮得到。同一个角落的浮层重排是另一次改动，
   在这里单独给一枚胶囊写断点，只是把已有的杂乱再切一刀。
 */
-.ed-view {
+.tdm-view {
   position: absolute;
   top: 10px;
   right: 14px;
@@ -1302,11 +1257,11 @@ body {
   align-items: center;
   gap: 1px;
   padding: 2px;
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--tdm-line-strong);
   border-radius: 999px;
   background: rgba(8, 9, 12, 0.82);
   backdrop-filter: blur(2px);
-  animation: ed-rise 160ms var(--ease);
+  animation: tdm-rise 160ms var(--tdm-ease);
   pointer-events: none;
 }
 
@@ -1314,15 +1269,15 @@ body {
    右栏：属性面板（图标导轨 + 内容）
    ========================================================================== */
 
-.ed-inspector {
+.tdm-inspector {
   position: relative;
   display: grid;
-  grid-template-columns: var(--w-rail) minmax(0, 1fr);
+  grid-template-columns: var(--tdm-w-rail) minmax(0, 1fr);
   flex: 1;
   min-height: 0;
 }
 
-.ed-rail {
+.tdm-rail {
   display: flex;
   flex-direction: column;
   /* 窗口很矮时图标放不下，让导轨自己能滚，别把面板顶出视口 */
@@ -1335,8 +1290,8 @@ body {
     6px 是没法和指示条完全对齐的前提下，把偏移压到最小的那个值。
   */
   scrollbar-width: thin;
-  border-right: 1px solid var(--line);
-  background: var(--ink-050);
+  border-right: 1px solid var(--tdm-line);
+  background: var(--tdm-ink-050);
   padding: 4px 0;
   &::-webkit-scrollbar {
     width: 6px;
@@ -1348,7 +1303,7 @@ body {
   7 个中文标签横排要 420px 以上、竖排又难扫读，所以导轨只放图标：
   40px 宽、24 格描边路径，名称交给悬停提示和 aria-label。
 */
-.ed-rail-item {
+.tdm-rail-item {
   position: relative;
   display: flex;
   align-items: center;
@@ -1356,20 +1311,20 @@ body {
   padding: 11px 0;
   border: 0;
   background: transparent;
-  color: var(--text-lo);
+  color: var(--tdm-text-lo);
   cursor: pointer;
-  transition: color var(--t-fast) var(--ease), background var(--t-fast) var(--ease);
+  transition: color var(--tdm-t-fast) var(--tdm-ease), background var(--tdm-t-fast) var(--tdm-ease);
   &:hover {
-    color: var(--text);
-    background: var(--ink-100);
+    color: var(--tdm-text);
+    background: var(--tdm-ink-100);
   }
 }
-.ed-rail-item--active {
-  color: var(--signal);
-  background: var(--signal-dim);
+.tdm-rail-item--active {
+  color: var(--tdm-signal);
+  background: var(--tdm-signal-dim);
 }
 /* 激活指示条贴在导轨外缘，和左栏列表项用同一套语言 */
-.ed-rail-item--active::before {
+.tdm-rail-item--active::before {
   content: '';
   position: absolute;
   left: 0;
@@ -1377,20 +1332,20 @@ body {
   width: 2px;
   height: 18px;
   margin-top: -9px;
-  background: var(--signal);
-  box-shadow: 0 0 6px var(--signal-glow);
+  background: var(--tdm-signal);
+  box-shadow: 0 0 6px var(--tdm-signal-glow);
 }
 
 /*
   描边参数写在 CSS，fill 由 path 的属性给出——两者控制的是不同属性，不会互相覆盖。
   currentColor 让激活/悬停态只改 color 就能带动整个图标。
 */
-.ed-rail-icon {
+.tdm-rail-icon {
   display: block;
   width: 18px;
   height: 18px;
 }
-.ed-rail-icon path {
+.tdm-rail-icon path {
   stroke: currentColor;
   stroke-width: 1.5;
   stroke-linecap: round;
@@ -1399,19 +1354,19 @@ body {
 
 /*
   悬停提示。
-  刻意做成 .ed-inspector 的绝对定位子元素而不是 .ed-rail 的子元素：
+  刻意做成 .tdm-inspector 的绝对定位子元素而不是 .tdm-rail 的子元素：
   导轨是滚动容器，提示挂在里面就要额外操心被裁剪，挂在外层则完全没这问题。
   top 由组件按图标的相对偏移写进来，这里只负责居中和外观。
 */
-.ed-rail-tip {
+.tdm-rail-tip {
   position: absolute;
-  left: calc(var(--w-rail) + 8px);
+  left: calc(var(--tdm-w-rail) + 8px);
   z-index: 20;
   padding: 3px 7px;
-  border: 1px solid var(--line-strong);
-  background: var(--ink-000);
-  color: var(--text-hi);
-  font-family: var(--font-ui);
+  border: 1px solid var(--tdm-line-strong);
+  background: var(--tdm-ink-000);
+  color: var(--tdm-text-hi);
+  font-family: var(--tdm-font-ui);
   font-size: 11px;
   line-height: 1.4;
   white-space: nowrap;
@@ -1419,7 +1374,7 @@ body {
   pointer-events: none;
 }
 
-.ed-inspector-body {
+.tdm-inspector-body {
   min-width: 0;
   /* grid 项默认 min-height:auto，会被内容撑高、滚动条永远不出现 */
   min-height: 0;
@@ -1433,11 +1388,11 @@ body {
   滚动权因此必须上交：这一层自己不滚，否则整页一起滚，那两块的固定比例就白分了。
   `min-height: 0` 同理——不写它 flex 项会被内容撑高，滚动条永远不出现。
 
-  overflow 写成双类是为了压过 .ed-scroll 的 overflow-y:auto：两者同为单类
-  （0,1,0），靠顺序不稳。这个元素同时挂着 .ed-scroll（要它的滚动条外观，
-  分栏时用不上，不分栏时那个类才真正起作用）。注意本规则要排在 .ed-scroll 之后。
+  overflow 写成双类是为了压过 .tdm-scroll 的 overflow-y:auto：两者同为单类
+  （0,1,0），靠顺序不稳。这个元素同时挂着 .tdm-scroll（要它的滚动条外观，
+  分栏时用不上，不分栏时那个类才真正起作用）。注意本规则要排在 .tdm-scroll 之后。
 */
-.ed-inspector-body.ed-inspector-body--split {
+.tdm-inspector-body.tdm-inspector-body--split {
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1448,14 +1403,14 @@ body {
   上块。min-height 兜住表头那一行的高度：窗口压到极矮时 2/5 会小于表头，
   份额再小也不该让「场景模型」四个字消失。
 */
-.ed-inspector-body--split .ed-models {
+.tdm-inspector-body--split .tdm-models {
   flex: 2 1 0;
   min-height: 34px;
   overflow-y: auto;
 }
 
-/* 下块。面板底部那 16px 留白本来在 .ed-inspector-body 上，滚动权上交后挪到这里 */
-.ed-models-detail {
+/* 下块。面板底部那 16px 留白本来在 .tdm-inspector-body 上，滚动权上交后挪到这里 */
+.tdm-models-detail {
   flex: 3 1 0;
   min-height: 0;
   padding-bottom: 16px;
@@ -1470,21 +1425,21 @@ body {
   两根导轨因此一起夹住视口，激活指示条也都朝向视口那一侧。
   列序直接用 DOM 顺序表达（内容在前、导轨在后），不额外写 grid-column。
 */
-.ed-nav {
+.tdm-nav {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--w-rail);
+  grid-template-columns: minmax(0, 1fr) var(--tdm-w-rail);
   flex: 1;
   min-height: 0;
 }
 
 /*
-  分隔线换到靠近内容的这一侧——.ed-rail 那条 border-right 的镜像。
-  .ed-col--left 自己那条 border-right 不动，于是这边同样是「线-导轨-线」。
+  分隔线换到靠近内容的这一侧——.tdm-rail 那条 border-right 的镜像。
+  .tdm-col--left 自己那条 border-right 不动，于是这边同样是「线-导轨-线」。
 */
-.ed-nav .ed-rail {
+.tdm-nav .tdm-rail {
   border-right: 0;
-  border-left: 1px solid var(--line);
+  border-left: 1px solid var(--tdm-line);
 }
 
 /*
@@ -1493,7 +1448,7 @@ body {
   LTR 下过约束时 right 会被忽略，只覆盖 right 的话指示条会留在左边。
   特异性 (0,2,0) 压过基础的 (0,1,0)，与源码顺序无关。
 */
-.ed-nav .ed-rail-item--active::before {
+.tdm-nav .tdm-rail-item--active::before {
   left: auto;
   right: 0;
 }
@@ -1518,31 +1473,31 @@ body {
   它天生可以出现在**两项**上：这条线说的是「一组从这里开始」，不是「第几项」。
   （内置那组今天不带了：它上面没有别的东西。）
 */
-.ed-rail-item--group-start::after {
+.tdm-rail-item--group-start::after {
   content: '';
   position: absolute;
   left: 8px;
   right: 8px;
   top: 0;
   height: 1px;
-  background: var(--line);
+  background: var(--tdm-line);
 }
 
 /*
   悬停提示往左展开（右栏那条是 left: calc(...)，这是它的镜像）。
-  与 .ed-rail-tip 同为单类 (0,1,0)，所以这条**必须排在 .ed-rail-tip 之后**。
+  与 .tdm-rail-tip 同为单类 (0,1,0)，所以这条**必须排在 .tdm-rail-tip 之后**。
 */
-.ed-rail-tip--start {
+.tdm-rail-tip--start {
   left: auto;
-  right: calc(var(--w-rail) + 8px);
+  right: calc(var(--tdm-w-rail) + 8px);
 }
 
 /*
-  左栏面板体。滚的是里面的列表、不是这一层——这一层不挂 .ed-scroll，
+  左栏面板体。滚的是里面的列表、不是这一层——这一层不挂 .tdm-scroll，
   所以也不必和它的 overflow-y:auto 抢特异性。
   不写 padding-bottom：留白交给列表自己的 5px。
 */
-.ed-side-body {
+.tdm-side-body {
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -1550,12 +1505,12 @@ body {
 }
 
 /*
-  模型库的宫格。2 列——.ed-list 的 200px 内容区里一格 94~98px、缩略图 84~88px
+  模型库的宫格。2 列——.tdm-list 的 200px 内容区里一格 94~98px、缩略图 84~88px
   （差的那 8px 是有没有滚动条），是这一栏宽度下「缩略图还看得清 +
   名字还读得全」的极限；再多分一列缩略图就退化成图标，
   中文名也会截到一个词都认不出。
 */
-.ed-lib-grid {
+.tdm-lib-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 4px;
@@ -1570,31 +1525,31 @@ body {
 
 /*
   一格一个模型：方形缩略图，名字常显在它下面。
-  沿用 .ed-item 的底（悬停底色、激活指示条、字体），只把布局从 block 改成
+  沿用 .tdm-item 的底（悬停底色、激活指示条、字体），只把布局从 block 改成
   竖向 flex。内边距 5px 不是随手写的：激活指示条占 left: 3px 起、宽 2px
-  （见 .ed-item::before），4px 就够，5px 与 .ed-list 的内边距同值，少记一个数。
+  （见 .tdm-item::before），4px 就够，5px 与 .tdm-list 的内边距同值，少记一个数。
 */
-.ed-lib-cell {
+.tdm-lib-cell {
   display: flex;
   flex-direction: column;
   /*
-    内边距 5px 是下限，不是留白：.ed-item::before 那条激活指示条占
+    内边距 5px 是下限，不是留白：.tdm-item::before 那条激活指示条占
     left: 3px 起、宽 2px（见上），再小指示条就会压到缩略图的边框上。
     align-items 不必写——流内那两个子元素（缩略图、名字条）都该占满整宽，
     默认的 stretch 正是这个意思。
   */
   padding: 5px;
-  /* 名字是居中的，而 .ed-item 把 text-align 设成了左对齐 */
+  /* 名字是居中的，而 .tdm-item 把 text-align 设成了左对齐 */
   text-align: center;
 }
 
-.ed-lib-thumb {
+.tdm-lib-thumb {
   width: 100%;
   /* 方形：缩略图比例不一，正方形是唯一不用逐张判断的框 */
   aspect-ratio: 1;
-  border: 1px solid var(--line);
+  border: 1px solid var(--tdm-line);
   border-radius: 2px;
-  background: var(--ink-000);
+  background: var(--tdm-ink-000);
   /* contain 而不是 cover：宁可有留白，也不能把模型裁掉一角 */
   object-fit: contain;
 }
@@ -1604,11 +1559,11 @@ body {
   缩到中间约 38px（27% × 2 的百分比内边距，按 border-box 扣），
   看起来才是「这里本该有张图」而不是「这个模型的图标就长这样」。
 */
-.ed-lib-thumb--glyph {
+.tdm-lib-thumb--glyph {
   padding: 27%;
-  color: var(--text-lo);
+  color: var(--tdm-text-lo);
 }
-.ed-lib-thumb--glyph path {
+.tdm-lib-thumb--glyph path {
   stroke: currentColor;
   /*
     描边不跟着缩放。上面那个百分比内边距把 24 单位的 viewBox 撑到约 38px，
@@ -1626,7 +1581,7 @@ body {
 
   **不复用 `--glyph`**：那个 27% 的百分比内边距是给 SVG 的（把一个 24 单位的
   viewBox 缩进盒子中间），套在字符上会把它挤成中间一小块；而且那一条还带
-  `color: var(--text-lo)`，对**彩色 emoji 无效**——emoji 的字形自带颜色，
+  `color: var(--tdm-text-lo)`，对**彩色 emoji 无效**——emoji 的字形自带颜色，
   不读 `currentColor`（这也是为什么这里不设 color：设了也只是让单色符号
   与彩色 emoji 各走各的，反而更不一致）。
 
@@ -1634,27 +1589,27 @@ body {
   Windows 的 Segoe UI Emoji 与 mac 的 Apple Color Emoji 上会差几个像素，
   flex 是唯一在两种字体下都居中的写法。字号照占位立方体那个约 38px 的观感配。
 
-  字体族**照抄一条链而不是直接用 --font-ui**：emoji 的字形来自这条链末尾那几个
-  系统 emoji 字体，而 --font-ui 里一个都没有。把 --font-ui 放在最后兜底，
+  字体族**照抄一条链而不是直接用 --tdm-font-ui**：emoji 的字形来自这条链末尾那几个
+  系统 emoji 字体，而 --tdm-font-ui 里一个都没有。把 --tdm-font-ui 放在最后兜底，
   于是「写了一个汉字、一个字母」也不会变成方框。
 
   `user-select: none`：格子是按钮，按住拖动时选中一个 emoji 再松手会出现选区，
   看着像拖坏了。与全站按钮的观感一致。
 */
-.ed-lib-thumb--glyph-text {
+.tdm-lib-thumb--glyph-text {
   display: flex;
   align-items: center;
   justify-content: center;
   /* 与 --glyph 的观感对齐：立方体轮廓约 38px，emoji 的字面高度也差不多 */
   font-size: 34px;
   line-height: 1;
-  font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', var(--font-ui);
+  font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', var(--tdm-font-ui);
   user-select: none;
 }
 
 /*
-  选用态的琥珀边框照旧生效：上面那条 `.ed-lib-cell--picked .ed-lib-thumb`
-  是按类选的，文本图标也带着 `.ed-lib-thumb`，所以「这一块会被拿来铺装」
+  选用态的琥珀边框照旧生效：上面那条 `.tdm-lib-cell--picked .tdm-lib-thumb`
+  是按类选的，文本图标也带着 `.tdm-lib-thumb`，所以「这一块会被拿来铺装」
   这个反馈在格子换成一个 emoji 之后没有丢。不必为它再写一条。
 */
 
@@ -1666,7 +1621,7 @@ body {
   名字进出都不参与布局，格子高度与行距在悬停前后一个像素都不动。
 
   改成常显之后那条取舍反了过来，绝对定位只剩下副作用：一条约 21px 高的墨黑
-  带子**永远**盖着图的下缘（名字条底色与缩略图底色同为 --ink-000，看着像图被裁掉
+  带子**永远**盖着图的下缘（名字条底色与缩略图底色同为 --tdm-ink-000，看着像图被裁掉
   一块）。名字不再进出，也就不需要「不参与布局」这件事了，所以让它进流。
 
   **格子因此变高了**：缩略图那约 88px 之外，多出 margin-top 4px 与名字那一行
@@ -1676,11 +1631,11 @@ body {
   margin-top 4px 而不是接着写 padding：上面那张图有自己的 1px 边框，名字与它之间
   要的是间距、不是又一条线（原先那条 border-top 是给浮层与图分界的，图进了流就不需要了）。
 
-  **字色刻意不写，交给 .ed-item 那条链**（常态 --text、悬停与激活 --text-hi）：
-  原先写死 --text-hi 是因为底色写死了墨黑、而键盘聚焦不经过悬停那条规则，
+  **字色刻意不写，交给 .tdm-item 那条链**（常态 --tdm-text、悬停与激活 --tdm-text-hi）：
+  原先写死 --tdm-text-hi 是因为底色写死了墨黑、而键盘聚焦不经过悬停那条规则，
   不写就会比底色还暗。名字不在图上了，这个理由随之不存在。
 */
-.ed-lib-name {
+.tdm-lib-name {
   margin-top: 4px;
   font-size: 11px;
   /* 三个一起才是省略号，缺一个都会变成硬截断 */
@@ -1692,7 +1647,7 @@ body {
 /*
   选用态：这一格的模型会被铺到地基上，而不是追加进场景。
 
-  **刻意不复用 .ed-item--active**（上面那条琥珀左条）：那条说的是「场景里已经有它了」
+  **刻意不复用 .tdm-item--active**（上面那条琥珀左条）：那条说的是「场景里已经有它了」
   （来自 sceneUrls 的集合），而这一圈说的是「这一块会拿来铺地基」。两件事可以同时成立——
   同一块地板完全可能既在场景里、又被选来铺装——挤同一个通道就会互相盖住，
   表现是点下去什么都没变（本来就已经亮着了）。
@@ -1702,20 +1657,20 @@ body {
   有洞口被选中（见 ModelLibrary.vue 的 `cellIntent`）——所以仍然是一条通道一件事。
   它读的是**配置**而不是那次点击的记忆，撤销一步会自己跟上。
 
-  落点选缩略图的**边框**，因为这一格里另外两样已经有主了：左条归 .ed-item--active、
-  背景归 .ed-item:hover / --active。缩略图是唯一还没人用的面，也正是眼睛看的那一处。
+  落点选缩略图的**边框**，因为这一格里另外两样已经有主了：左条归 .tdm-item--active、
+  背景归 .tdm-item:hover / --active。缩略图是唯一还没人用的面，也正是眼睛看的那一处。
   1px 琥珀加上一层内描边——发丝线的粗细是这一版的规矩，靠色相而非粗细说话。
 */
-.ed-lib-cell--picked .ed-lib-thumb {
-  border-color: var(--signal);
-  box-shadow: inset 0 0 0 1px var(--signal-dim);
+.tdm-lib-cell--picked .tdm-lib-thumb {
+  border-color: var(--tdm-signal);
+  box-shadow: inset 0 0 0 1px var(--tdm-signal-dim);
 }
 
-.ed-sec {
-  border-bottom: 1px solid var(--line);
+.tdm-sec {
+  border-bottom: 1px solid var(--tdm-line);
 }
 
-.ed-sec-head {
+.tdm-sec-head {
   display: flex;
   align-items: baseline;
   gap: 7px;
@@ -1727,47 +1682,47 @@ body {
   text-align: left;
 }
 
-.ed-sec-idx {
-  font-family: var(--font-data);
+.tdm-sec-idx {
+  font-family: var(--tdm-font-data);
   font-size: 9px;
-  color: var(--signal);
+  color: var(--tdm-signal);
   opacity: 0.75;
 }
 
-.ed-sec-title {
+.tdm-sec-title {
   font-size: 11px;
   letter-spacing: 0.06em;
-  color: var(--text);
-  transition: color var(--t-fast) var(--ease);
+  color: var(--tdm-text);
+  transition: color var(--tdm-t-fast) var(--tdm-ease);
 }
-.ed-sec-head:hover .ed-sec-title {
-  color: var(--text-hi);
+.tdm-sec-head:hover .tdm-sec-title {
+  color: var(--tdm-text-hi);
 }
 
-.ed-sec-caret {
+.tdm-sec-caret {
   margin-left: auto;
   width: 6px;
   height: 6px;
-  border-right: 1px solid var(--text-lo);
-  border-bottom: 1px solid var(--text-lo);
+  border-right: 1px solid var(--tdm-text-lo);
+  border-bottom: 1px solid var(--tdm-text-lo);
   transform: rotate(45deg) translateY(-2px);
-  transition: transform var(--t) var(--ease);
+  transition: transform var(--tdm-t) var(--tdm-ease);
 }
-.ed-sec--closed .ed-sec-caret {
+.tdm-sec--closed .tdm-sec-caret {
   transform: rotate(-45deg) translateX(-2px);
 }
 
-.ed-sec-body {
+.tdm-sec-body {
   padding: 2px 12px 10px;
-  animation: ed-fade var(--t) var(--ease);
+  animation: tdm-fade var(--tdm-t) var(--tdm-ease);
 }
-.ed-sec--closed .ed-sec-body {
+.tdm-sec--closed .tdm-sec-body {
   display: none;
 }
 
 /* ---- 字段行 ---- */
 
-.ed-field {
+.tdm-field {
   display: grid;
   grid-template-columns: 62px minmax(0, 1fr) auto;
   align-items: center;
@@ -1775,39 +1730,39 @@ body {
   min-height: 26px;
   padding: 1px 2px;
   border-radius: 2px;
-  transition: background var(--t) var(--ease);
+  transition: background var(--tdm-t) var(--tdm-ease);
 }
 /* 数值改动时整行短暂亮一下，让「面板确实写进场景了」可见 */
-.ed-field--pulse {
-  background: var(--signal-dim);
+.tdm-field--pulse {
+  background: var(--tdm-signal-dim);
 }
-.ed-field--dim {
+.tdm-field--dim {
   opacity: 0.4;
   pointer-events: none;
 }
 
-.ed-field-label {
+.tdm-field-label {
   font-size: 11px;
-  color: var(--text);
+  color: var(--tdm-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.ed-field-value {
+.tdm-field-value {
   min-width: 42px;
   text-align: right;
-  font-family: var(--font-data);
+  font-family: var(--tdm-font-data);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
-  color: var(--text-hi);
+  color: var(--tdm-text-hi);
 }
 
-.ed-field-unit {
+.tdm-field-unit {
   margin-left: 3px;
-  font-family: var(--font-data);
+  font-family: var(--tdm-font-data);
   font-size: 10px;
-  color: var(--text-lo);
+  color: var(--tdm-text-lo);
 }
 
 /*
@@ -1815,61 +1770,61 @@ body {
   滑块的轨道只占第 2 列，数值直接可编辑放在第 3 列，
   拖完想微调最后一位就不必再去够滑块。
 */
-.ed-field-tail {
+.tdm-field-tail {
   display: flex;
   align-items: center;
 }
-.ed-field-tail .ed-num {
+.tdm-field-tail .tdm-num {
   width: 46px;
 }
 
 /* ---- 数值输入 ---- */
 
-.ed-num {
+.tdm-num {
   width: 100%;
   height: 22px;
   padding: 0 6px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--tdm-line);
   border-radius: 2px;
-  background: var(--ink-000);
-  color: var(--text-hi);
-  font-family: var(--font-data);
+  background: var(--tdm-ink-000);
+  color: var(--tdm-text-hi);
+  font-family: var(--tdm-font-data);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   text-align: right;
   outline: none;
-  transition: border-color var(--t-fast) var(--ease);
+  transition: border-color var(--tdm-t-fast) var(--tdm-ease);
   &:hover {
-    border-color: var(--line-strong);
+    border-color: var(--tdm-line-strong);
   }
   &:focus {
-    border-color: var(--signal-line);
-    background: var(--ink-050);
+    border-color: var(--tdm-signal-line);
+    background: var(--tdm-ink-050);
   }
 }
 
-/* 文本输入：与 .ed-num 同一套外观，只是左对齐、不做数值解析 */
-.ed-text {
+/* 文本输入：与 .tdm-num 同一套外观，只是左对齐、不做数值解析 */
+.tdm-text {
   width: 100%;
   height: 22px;
   padding: 0 6px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--tdm-line);
   border-radius: 2px;
-  background: var(--ink-000);
-  color: var(--text-hi);
-  font-family: var(--font-data);
+  background: var(--tdm-ink-000);
+  color: var(--tdm-text-hi);
+  font-family: var(--tdm-font-data);
   font-size: 11px;
   outline: none;
-  transition: border-color var(--t-fast) var(--ease);
+  transition: border-color var(--tdm-t-fast) var(--tdm-ease);
   &:hover {
-    border-color: var(--line-strong);
+    border-color: var(--tdm-line-strong);
   }
   &:focus {
-    border-color: var(--signal-line);
-    background: var(--ink-050);
+    border-color: var(--tdm-signal-line);
+    background: var(--tdm-ink-050);
   }
   &::placeholder {
-    color: var(--text-lo);
+    color: var(--tdm-text-lo);
   }
 }
 
@@ -1881,22 +1836,22 @@ body {
   截断省略号是给模型 ID 那种长值准备的：uuid 有 36 位，
   面板宽度放不下，宁可截断也不要让它把网格撑破——完整值仍可选中复制。
 */
-.ed-text[readonly] {
+.tdm-text[readonly] {
   border-color: transparent;
   background: transparent;
-  color: var(--text);
+  color: var(--tdm-text);
   cursor: text;
   text-overflow: ellipsis;
 }
-.ed-text[readonly]:hover,
-.ed-text[readonly]:focus {
+.tdm-text[readonly]:hover,
+.tdm-text[readonly]:focus {
   border-color: transparent;
   background: transparent;
 }
 
 /* ---- 滑块 ---- */
 
-.ed-slider {
+.tdm-slider {
   position: relative;
   display: flex;
   align-items: center;
@@ -1905,49 +1860,49 @@ body {
   touch-action: none;
 }
 
-.ed-slider-track {
+.tdm-slider-track {
   position: relative;
   width: 100%;
   height: 2px;
-  background: var(--ink-300);
+  background: var(--tdm-ink-300);
 }
 
-.ed-slider-fill {
+.tdm-slider-fill {
   position: absolute;
   left: 0;
   top: 0;
   height: 100%;
-  background: var(--signal);
+  background: var(--tdm-signal);
 }
 
 /* 拇指做成一道竖条而不是圆点：更接近推子，也比圆点更好瞄准 */
-.ed-slider-thumb {
+.tdm-slider-thumb {
   position: absolute;
   top: 50%;
   width: 3px;
   height: 12px;
   margin: -6px 0 0 -1.5px;
-  background: var(--text-hi);
-  transition: background var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease);
+  background: var(--tdm-text-hi);
+  transition: background var(--tdm-t-fast) var(--tdm-ease), box-shadow var(--tdm-t-fast) var(--tdm-ease);
 }
-.ed-slider:hover .ed-slider-thumb,
-.ed-slider--active .ed-slider-thumb {
-  background: var(--signal);
-  box-shadow: 0 0 6px var(--signal-glow);
+.tdm-slider:hover .tdm-slider-thumb,
+.tdm-slider--active .tdm-slider-thumb {
+  background: var(--tdm-signal);
+  box-shadow: 0 0 6px var(--tdm-signal-glow);
 }
 
 /* ---- 开关 ---- */
 
-.ed-toggle {
+.tdm-toggle {
   position: relative;
   width: 28px;
   height: 14px;
   padding: 0;
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--tdm-line-strong);
   border-radius: 7px;
-  background: var(--ink-000);
+  background: var(--tdm-ink-000);
   cursor: pointer;
-  transition: border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease);
+  transition: border-color var(--tdm-t-fast) var(--tdm-ease), background var(--tdm-t-fast) var(--tdm-ease);
   &::after {
     content: '';
     position: absolute;
@@ -1956,66 +1911,66 @@ body {
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: var(--text-lo);
-    transition: transform var(--t) var(--ease), background var(--t) var(--ease);
+    background: var(--tdm-text-lo);
+    transition: transform var(--tdm-t) var(--tdm-ease), background var(--tdm-t) var(--tdm-ease);
   }
 }
-.ed-toggle--on {
-  border-color: var(--signal-line);
-  background: var(--signal-dim);
+.tdm-toggle--on {
+  border-color: var(--tdm-signal-line);
+  background: var(--tdm-signal-dim);
   &::after {
     transform: translateX(14px);
-    background: var(--signal);
-    box-shadow: 0 0 5px var(--signal-glow);
+    background: var(--tdm-signal);
+    box-shadow: 0 0 5px var(--tdm-signal-glow);
   }
 }
 
 /* ---- 下拉 ---- */
 
-.ed-select {
+.tdm-select {
   width: 100%;
   height: 22px;
   padding: 0 20px 0 6px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--tdm-line);
   border-radius: 2px;
-  background-color: var(--ink-000);
-  color: var(--text-hi);
-  font-family: var(--font-ui);
+  background-color: var(--tdm-ink-000);
+  color: var(--tdm-text-hi);
+  font-family: var(--tdm-font-ui);
   font-size: 11px;
   outline: none;
   appearance: none;
   cursor: pointer;
   /* 自绘下拉箭头，保证在深色下和发丝线是同一套语言 */
-  background-image: linear-gradient(45deg, transparent 50%, var(--text-lo) 50%),
-    linear-gradient(135deg, var(--text-lo) 50%, transparent 50%);
+  background-image: linear-gradient(45deg, transparent 50%, var(--tdm-text-lo) 50%),
+    linear-gradient(135deg, var(--tdm-text-lo) 50%, transparent 50%);
   background-position: calc(100% - 11px) 9px, calc(100% - 7px) 9px;
   background-size: 4px 4px, 4px 4px;
   background-repeat: no-repeat;
-  transition: border-color var(--t-fast) var(--ease);
+  transition: border-color var(--tdm-t-fast) var(--tdm-ease);
   &:hover {
-    border-color: var(--line-strong);
+    border-color: var(--tdm-line-strong);
   }
   &:focus {
-    border-color: var(--signal-line);
+    border-color: var(--tdm-signal-line);
   }
 }
-.ed-select option {
-  background: var(--ink-100);
-  color: var(--text-hi);
+.tdm-select option {
+  background: var(--tdm-ink-100);
+  color: var(--tdm-text-hi);
 }
 
 /* ---- 颜色 ---- */
 
-.ed-color {
+.tdm-color {
   display: flex;
   align-items: center;
   gap: 6px;
 }
-.ed-color input[type='color'] {
+.tdm-color input[type='color'] {
   width: 24px;
   height: 18px;
   padding: 0;
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--tdm-line-strong);
   border-radius: 2px;
   background: transparent;
   cursor: pointer;
@@ -2028,93 +1983,93 @@ body {
     border-radius: 1px;
   }
 }
-.ed-color input[type='text'] {
+.tdm-color input[type='text'] {
   width: 100%;
   height: 22px;
   padding: 0 6px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--tdm-line);
   border-radius: 2px;
-  background: var(--ink-000);
-  color: var(--text-hi);
-  font-family: var(--font-data);
+  background: var(--tdm-ink-000);
+  color: var(--tdm-text-hi);
+  font-family: var(--tdm-font-data);
   font-size: 11px;
   text-transform: uppercase;
   outline: none;
   &:focus {
-    border-color: var(--signal-line);
+    border-color: var(--tdm-signal-line);
   }
 }
 
 /* ---- 向量 ---- */
 
-.ed-vector {
+.tdm-vector {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 4px;
 }
-.ed-vector-cell {
+.tdm-vector-cell {
   position: relative;
 }
-.ed-vector-axis {
+.tdm-vector-axis {
   position: absolute;
   left: 4px;
   top: 50%;
   margin-top: -6px;
-  font-family: var(--font-data);
+  font-family: var(--tdm-font-data);
   font-size: 9px;
-  color: var(--text-lo);
+  color: var(--tdm-text-lo);
   pointer-events: none;
 }
-.ed-vector .ed-num {
+.tdm-vector .tdm-num {
   padding-left: 13px;
 }
 
 /* ---- 提示条 ---- */
 
-.ed-hint {
+.tdm-hint {
   margin: 6px 0 0;
   padding: 6px 8px;
-  border-left: 2px solid var(--signal-line);
+  border-left: 2px solid var(--tdm-signal-line);
   background: rgba(255, 157, 46, 0.05);
   font-size: 11px;
   line-height: 1.55;
-  color: var(--text);
+  color: var(--tdm-text);
 }
-.ed-hint--quiet {
-  border-left-color: var(--line-strong);
-  background: var(--ink-100);
-  color: var(--text-lo);
+.tdm-hint--quiet {
+  border-left-color: var(--tdm-line-strong);
+  background: var(--tdm-ink-100);
+  color: var(--tdm-text-lo);
 }
 
 /* ---- 面板底部动作 ---- */
 
-.ed-actions-row {
+.tdm-actions-row {
   display: flex;
   gap: 6px;
   padding: 8px 12px 0;
 }
 
-.ed-btn--block {
+.tdm-btn--block {
   flex: 1;
   justify-content: center;
-  border-color: var(--line);
+  border-color: var(--tdm-line);
 }
 
 /* ---- 历史列表 ---- */
 
-.ed-history {
+.tdm-history {
   padding: 4px 6px;
 }
 
 /* 撤销 / 重做 / 步数：与面板里的字段行同宽，视觉上属于同一个列表 */
-.ed-history-bar {
+.tdm-history-bar {
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 2px 0 8px;
 }
 
-.ed-history-item {
+.tdm-history-item {
   position: relative;
   display: grid;
   grid-template-columns: 16px minmax(0, 1fr) auto;
@@ -2125,39 +2080,39 @@ body {
   border: 0;
   border-radius: 2px;
   background: transparent;
-  color: var(--text);
-  font-family: var(--font-ui);
+  color: var(--tdm-text);
+  font-family: var(--tdm-font-ui);
   font-size: 11px;
   text-align: left;
   cursor: pointer;
-  transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+  transition: background var(--tdm-t-fast) var(--tdm-ease), color var(--tdm-t-fast) var(--tdm-ease);
   &:hover {
-    background: var(--ink-200);
-    color: var(--text-hi);
+    background: var(--tdm-ink-200);
+    color: var(--tdm-text-hi);
   }
 }
-.ed-history-item--active {
-  background: var(--signal-dim);
-  color: var(--text-hi);
+.tdm-history-item--active {
+  background: var(--tdm-signal-dim);
+  color: var(--tdm-text-hi);
 }
 
 /* 序号列：等宽，给列表一条整齐的轴线 */
-.ed-history-idx {
-  font-family: var(--font-data);
+.tdm-history-idx {
+  font-family: var(--tdm-font-data);
   font-size: 9px;
-  color: var(--text-lo);
+  color: var(--tdm-text-lo);
 }
-.ed-history-item--active .ed-history-idx {
-  color: var(--signal);
+.tdm-history-item--active .tdm-history-idx {
+  color: var(--tdm-signal);
 }
 
-.ed-history-time {
-  font-family: var(--font-data);
+.tdm-history-time {
+  font-family: var(--tdm-font-data);
   font-size: 10px;
-  color: var(--text-lo);
+  color: var(--tdm-text-lo);
 }
 
-.ed-history-label {
+.tdm-history-label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2167,7 +2122,7 @@ body {
    动效
    ========================================================================== */
 
-@keyframes ed-rise {
+@keyframes tdm-rise {
   from {
     opacity: 0;
     transform: translateY(6px);
@@ -2178,7 +2133,7 @@ body {
   }
 }
 
-@keyframes ed-fade {
+@keyframes tdm-fade {
   from {
     opacity: 0;
   }
@@ -2189,13 +2144,13 @@ body {
 
 /*
   首屏入场：顶栏 → 工作区，各差 55ms，只做一次。
-  .ed-app 现在只有这两个直接子元素（底部的事件控制台与状态栏已去掉，见 DESIGN.md），
-  所以错峰到第 2 个子元素就结束——再往下的视觉层次由 .ed-body 内部自己安排。
-  三栏不再单独错开——.ed-body 已经整体升起，内部再动一层会让位移叠加，
+  .tdm-app 现在只有这两个直接子元素（底部的事件控制台与状态栏已去掉，见 DESIGN.md），
+  所以错峰到第 2 个子元素就结束——再往下的视觉层次由 .tdm-body 内部自己安排。
+  三栏不再单独错开——.tdm-body 已经整体升起，内部再动一层会让位移叠加，
   看起来像没对齐而不是有层次。
 */
-.ed-entrance > * {
-  animation: ed-rise 380ms var(--ease) backwards;
+.tdm-entrance > * {
+  animation: tdm-rise 380ms var(--tdm-ease) backwards;
   &:nth-child(1) {
     animation-delay: 0ms;
   }
@@ -2205,23 +2160,23 @@ body {
 }
 
 /* tab 内容切换：轻微上移 + 淡入，让「换了一组参数」这件事被看见 */
-.ed-tabpanel {
-  animation: ed-rise 200ms var(--ease);
+.tdm-tabpanel {
+  animation: tdm-rise 200ms var(--tdm-ease);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ed-entrance > *,
-  .ed-tabpanel,
-  .ed-sec-body,
-  .ed-modal,
-  .ed-modal-panel,
+  .tdm-entrance > *,
+  .tdm-tabpanel,
+  .tdm-sec-body,
+  .tdm-modal,
+  .tdm-modal-panel,
   /* 两个类的写法与预览块本身一致：那一处的 `animation` 特异性是 0,2,0，
      这里只写一个类（0,1,0）就压不住它，淡入动画会在这条通道上活下来 */
-  .ed-stage.ed-stage--preview,
-  .ed-viewport-actions,
-  .ed-view,
-  .ed-gizmo,
-  .ed-draw {
+  .tdm-stage.tdm-stage--preview,
+  .tdm-viewport-actions,
+  .tdm-view,
+  .tdm-gizmo,
+  .tdm-draw {
     animation: none;
   }
 }
@@ -2235,19 +2190,19 @@ body {
    ========================================================================== */
 
 @media (max-width: 1280px) {
-  .ed-kbd {
+  .tdm-kbd {
     display: none;
   }
 }
 
 @media (max-width: 1100px) {
-  .ed-header-divider {
+  .tdm-header-divider {
     display: none;
   }
-  .ed-scene-name input {
+  .tdm-scene-name input {
     width: 96px;
   }
-  .ed-actions .ed-btn {
+  .tdm-actions .tdm-btn {
     padding: 0 8px;
   }
 }
@@ -2255,7 +2210,7 @@ body {
 /* ==========================================================================
    事件绑定弹窗
    --------------------------------------------------------------------------
-   全站唯一的模态层。层级刻意取 100：现有最高的 .ed-dropzone 是 30，
+   全站唯一的模态层。层级刻意取 100：现有最高的 .tdm-dropzone 是 30，
    模态必须压在所有东西之上——它是 Teleport 到 body 的，
    但 3D 视口里的角标与 HUD 都是定位元素，不给出显式数值就压不住。
 
@@ -2263,7 +2218,7 @@ body {
    没有阴影，靠一层足够暗的遮罩把背景推远。
    ========================================================================== */
 
-.ed-modal {
+.tdm-modal {
   position: fixed;
   inset: 0;
   z-index: 100;
@@ -2273,45 +2228,45 @@ body {
   padding: 24px;
   background: rgba(8, 9, 12, 0.72);
   backdrop-filter: blur(2px);
-  animation: ed-fade 140ms var(--ease);
+  animation: tdm-fade 140ms var(--tdm-ease);
 }
 
-.ed-modal-panel {
+.tdm-modal-panel {
   display: flex;
   flex-direction: column;
   width: 100%;
   max-width: 620px;
   height: 100%;
   max-height: 460px;
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--tdm-line-strong);
   border-radius: 2px;
-  background: var(--ink-100);
+  background: var(--tdm-ink-100);
   outline: none;
-  animation: ed-rise 180ms var(--ease);
+  animation: tdm-rise 180ms var(--tdm-ease);
 }
 
 /* ---- 头 ---- */
 
-.ed-modal-head {
+.tdm-modal-head {
   display: flex;
   align-items: baseline;
   gap: 10px;
   padding: 10px 12px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--tdm-line);
 }
 
-.ed-modal-title {
+.tdm-modal-title {
   margin: 0;
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.08em;
-  color: var(--text-hi);
+  color: var(--tdm-text-hi);
 }
 
-.ed-modal-sub {
+.tdm-modal-sub {
   flex: 1;
   font-size: 11px;
-  color: var(--text-lo);
+  color: var(--tdm-text-lo);
 }
 
 /*
@@ -2319,31 +2274,31 @@ body {
   多模型之后「事件绑定」四个字已经不足以定位这个弹窗在改谁了，
   所以名字要显眼到能一眼看见，而不是混在那行灰说明文字里。
 */
-.ed-modal-target {
-  font-family: var(--font-data);
+.tdm-modal-target {
+  font-family: var(--tdm-font-data);
   font-weight: 400;
-  color: var(--text-hi);
+  color: var(--tdm-text-hi);
 }
 
 /* ---- 主体：左列表 + 右代码区 ---- */
 
-.ed-modal-body {
+.tdm-modal-body {
   display: grid;
   grid-template-columns: 132px minmax(0, 1fr);
   flex: 1;
   min-height: 0;
 }
 
-.ed-evt-list {
+.tdm-evt-list {
   margin: 0;
   padding: 6px;
-  border-right: 1px solid var(--line);
+  border-right: 1px solid var(--tdm-line);
   list-style: none;
   overflow-y: auto;
 }
 
-/* 与场景预设列表 .ed-item 同一套语言：无边框、悬停浮出发丝底色、选中左侧一道琥珀 */
-.ed-evt-item {
+/* 与场景预设列表 .tdm-item 同一套语言：无边框、悬停浮出发丝底色、选中左侧一道琥珀 */
+.tdm-evt-item {
   position: relative;
   display: flex;
   align-items: center;
@@ -2353,12 +2308,12 @@ body {
   border: 0;
   border-radius: 2px;
   background: transparent;
-  color: var(--text);
-  font-family: var(--font-ui);
+  color: var(--tdm-text);
+  font-family: var(--tdm-font-ui);
   font-size: 12px;
   text-align: left;
   cursor: pointer;
-  transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+  transition: background var(--tdm-t-fast) var(--tdm-ease), color var(--tdm-t-fast) var(--tdm-ease);
   &::before {
     content: '';
     position: absolute;
@@ -2367,50 +2322,50 @@ body {
     width: 2px;
     height: 12px;
     margin-top: -6px;
-    background: var(--signal);
+    background: var(--tdm-signal);
     transform: scaleY(0);
     transform-origin: center;
-    transition: transform var(--t) var(--ease);
+    transition: transform var(--tdm-t) var(--tdm-ease);
   }
   &:hover {
-    background: var(--ink-200);
-    color: var(--text-hi);
+    background: var(--tdm-ink-200);
+    color: var(--tdm-text-hi);
   }
 }
-.ed-evt-item--on {
-  background: var(--ink-200);
-  color: var(--text-hi);
+.tdm-evt-item--on {
+  background: var(--tdm-ink-200);
+  color: var(--tdm-text-hi);
   &::before {
     transform: scaleY(1);
   }
 }
 
 /* 启用指示点：实心琥珀 = 这一类真的挂着监听器 */
-.ed-evt-dot {
+.tdm-evt-dot {
   flex: none;
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: var(--ink-300);
-  box-shadow: inset 0 0 0 1px var(--line-strong);
+  background: var(--tdm-ink-300);
+  box-shadow: inset 0 0 0 1px var(--tdm-line-strong);
 }
-.ed-evt-dot--on {
-  background: var(--signal);
-  box-shadow: 0 0 5px var(--signal-glow);
+.tdm-evt-dot--on {
+  background: var(--tdm-signal);
+  box-shadow: 0 0 5px var(--tdm-signal-glow);
 }
 
-.ed-evt-name {
+.tdm-evt-name {
   flex: 1;
 }
 
 /* 「有没有写过代码」用等宽的小字标出来，扫一眼就知道哪几类是有内容的 */
-.ed-evt-badge {
-  font-family: var(--font-data);
+.tdm-evt-badge {
+  font-family: var(--tdm-font-data);
   font-size: 10px;
-  color: var(--text-lo);
+  color: var(--tdm-text-lo);
 }
 
-.ed-modal-detail {
+.tdm-modal-detail {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -2418,12 +2373,12 @@ body {
   padding: 10px 12px;
 }
 
-.ed-evt-toggle {
+.tdm-evt-toggle {
   display: flex;
   align-items: center;
   gap: 8px;
   font-size: 12px;
-  color: var(--text-hi);
+  color: var(--tdm-text-hi);
 }
 
 /*
@@ -2433,46 +2388,46 @@ body {
   padding: 0、font-size: 100%、font-family: inherit、resize: vertical），
   不写回来它就和旁边的中文标签长得一模一样，且右下角多个拖动角。
 */
-.ed-code {
+.tdm-code {
   flex: 1;
   min-height: 0;
   padding: 8px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--tdm-line);
   border-radius: 2px;
-  background: var(--ink-000);
-  color: var(--text-hi);
-  font-family: var(--font-data);
+  background: var(--tdm-ink-000);
+  color: var(--tdm-text-hi);
+  font-family: var(--tdm-font-data);
   font-size: 11px;
   line-height: 1.6;
   resize: none;
   outline: none;
   tab-size: 2;
-  transition: border-color var(--t-fast) var(--ease);
+  transition: border-color var(--tdm-t-fast) var(--tdm-ease);
   &:focus {
-    border-color: var(--signal-line);
+    border-color: var(--tdm-signal-line);
   }
   &::placeholder {
-    color: var(--text-lo);
+    color: var(--tdm-text-lo);
   }
 }
 
 /* 提示里的行内变量名：与代码框同族，读起来是「代码」而不是「正文」 */
-.ed-modal-detail .ed-hint code {
-  font-family: var(--font-data);
+.tdm-modal-detail .tdm-hint code {
+  font-family: var(--tdm-font-data);
   font-size: 11px;
-  color: var(--text-hi);
+  color: var(--tdm-text-hi);
 }
 
 /* ---- 脚 ---- */
 
-.ed-modal-foot {
+.tdm-modal-foot {
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 8px 12px;
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--tdm-line);
 }
-.ed-modal-foot .ed-hint {
+.tdm-modal-foot .tdm-hint {
   flex: 1;
   margin: 0;
   padding: 0;

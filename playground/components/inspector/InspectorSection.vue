@@ -31,14 +31,14 @@ const open = ref(props.section.open ?? true)
 </script>
 
 <template>
-  <section v-if="visible" class="ed-sec" :class="{ 'ed-sec--closed': !open }">
-    <button type="button" class="ed-sec-head" :aria-expanded="open" @click="open = !open">
-      <span class="ed-sec-idx">{{ section.index }}</span>
-      <span class="ed-sec-title">{{ section.title }}</span>
-      <span class="ed-sec-caret" />
+  <section v-if="visible" class="tdm-sec" :class="{ 'tdm-sec--closed': !open }">
+    <button type="button" class="tdm-sec-head" :aria-expanded="open" @click="open = !open">
+      <span class="tdm-sec-idx">{{ section.index }}</span>
+      <span class="tdm-sec-title">{{ section.title }}</span>
+      <span class="tdm-sec-caret" />
     </button>
 
-    <div class="ed-sec-body">
+    <div class="tdm-sec-body">
       <InspectorField v-for="field in section.fields" :key="field.key" :field="field" />
     </div>
   </section>

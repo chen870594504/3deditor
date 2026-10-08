@@ -40,7 +40,7 @@ function onBlur() {
 </script>
 
 <template>
-  <div class="ed-color">
+  <div class="tdm-color">
     <input
       type="color"
       :value="swatch"

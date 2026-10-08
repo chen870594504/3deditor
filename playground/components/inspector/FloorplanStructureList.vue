@@ -109,32 +109,32 @@ function dropOpening(opening: FloorplanOpening): void {
 </script>
 
 <template>
-  <div class="ed-plan">
+  <div class="tdm-plan">
     <!--
       表头沿用 01/02 两节的排版（编号 + 标题 + 右端读数），不可折叠：
       它是「有哪些」，上面两节是「户型长什么样」，折叠起来会让这几块看起来并列。
     -->
-    <div class="ed-plan-head">
-      <span class="ed-sec-idx">03</span>
-      <span class="ed-sec-title">墙</span>
-      <span class="ed-plan-count">{{ scene.config.floorplan.walls.length }}</span>
+    <div class="tdm-plan-head">
+      <span class="tdm-sec-idx">03</span>
+      <span class="tdm-sec-title">墙</span>
+      <span class="tdm-plan-count">{{ scene.config.floorplan.walls.length }}</span>
     </div>
 
-    <div v-if="scene.config.floorplan.walls.length" class="ed-plan-list">
+    <div v-if="scene.config.floorplan.walls.length" class="tdm-plan-list">
       <!--
         用 wall.id 做 key 而不是下标——与房间清单同一条理由：删除中间一行时，
         下标会让后面每一行的序号错位一格。序号是**算出来的**（下标 + 1），
         所以它跟着行一起移动，不会留下「墙 3 不见了但下面还有墙 3」这种状态。
       -->
-      <div v-for="(wall, index) in scene.config.floorplan.walls" :key="wall.id" class="ed-plan-row">
-        <span class="ed-plan-idx">墙 {{ index + 1 }}</span>
-        <span class="ed-plan-meta" :title="wallTitle(wall, index)">
+      <div v-for="(wall, index) in scene.config.floorplan.walls" :key="wall.id" class="tdm-plan-row">
+        <span class="tdm-plan-idx">墙 {{ index + 1 }}</span>
+        <span class="tdm-plan-meta" :title="wallTitle(wall, index)">
           中点 ({{ midpointOf(wall) }}) · {{ num(wallLength(wall)) }} 米
         </span>
 
         <button
           type="button"
-          class="ed-plan-drop"
+          class="tdm-plan-drop"
           :title="`删除 墙 ${index + 1}（连带它上面的门窗）`"
           :aria-label="`删除 墙 ${index + 1}`"
           @click="dropWall(wall)"
@@ -144,32 +144,32 @@ function dropOpening(opening: FloorplanOpening): void {
       </div>
     </div>
 
-    <p v-else class="ed-hint ed-hint--quiet ed-plan-empty">
+    <p v-else class="tdm-hint tdm-hint--quiet tdm-plan-empty">
       还没有墙。用视口左侧的「画墙」工具逐点点击落墙，点回起点闭合。
     </p>
   </div>
 
-  <div class="ed-plan">
-    <div class="ed-plan-head">
-      <span class="ed-sec-idx">04</span>
-      <span class="ed-sec-title">门窗</span>
-      <span class="ed-plan-count">{{ scene.config.floorplan.openings.length }}</span>
+  <div class="tdm-plan">
+    <div class="tdm-plan-head">
+      <span class="tdm-sec-idx">04</span>
+      <span class="tdm-sec-title">门窗</span>
+      <span class="tdm-plan-count">{{ scene.config.floorplan.openings.length }}</span>
     </div>
 
-    <div v-if="scene.config.floorplan.openings.length" class="ed-plan-list">
+    <div v-if="scene.config.floorplan.openings.length" class="tdm-plan-list">
       <!--
         这里按**配置顺序**排，与墙清单一致（都是数组顺序），刻意不按墙分组重排：
         一重排，行首那个位置说明里的「墙 N」就与上面那份清单里的行号对不上了。
       -->
-      <div v-for="opening in scene.config.floorplan.openings" :key="opening.id" class="ed-plan-row">
-        <span class="ed-plan-idx">{{ OPENING_LABELS[opening.kind] }}</span>
-        <span class="ed-plan-meta" :title="openingTitle(opening)">
+      <div v-for="opening in scene.config.floorplan.openings" :key="opening.id" class="tdm-plan-row">
+        <span class="tdm-plan-idx">{{ OPENING_LABELS[opening.kind] }}</span>
+        <span class="tdm-plan-meta" :title="openingTitle(opening)">
           {{ hostLabel(opening) }} · 沿墙 {{ num(opening.offset) }} 米
         </span>
 
         <button
           type="button"
-          class="ed-plan-drop"
+          class="tdm-plan-drop"
           :title="`删除这个${OPENING_LABELS[opening.kind]}`"
           :aria-label="`删除这个${OPENING_LABELS[opening.kind]}`"
           @click="dropOpening(opening)"
@@ -179,7 +179,7 @@ function dropOpening(opening: FloorplanOpening): void {
       </div>
     </div>
 
-    <p v-else class="ed-hint ed-hint--quiet ed-plan-empty">
+    <p v-else class="tdm-hint tdm-hint--quiet tdm-plan-empty">
       还没有门窗。用视口左侧的「门」或「窗」工具点一下墙面，就放下一个洞口。
     </p>
   </div>

@@ -40,17 +40,17 @@ const z = makeCell(2)
 </script>
 
 <template>
-  <div class="ed-vector">
-    <div class="ed-vector-cell">
-      <span class="ed-vector-axis">X</span>
+  <div class="tdm-vector">
+    <div class="tdm-vector-cell">
+      <span class="tdm-vector-axis">X</span>
       <NumberControl v-model="x" :step="step" :precision="precision" :disabled="disabled" />
     </div>
-    <div class="ed-vector-cell">
-      <span class="ed-vector-axis">Y</span>
+    <div class="tdm-vector-cell">
+      <span class="tdm-vector-axis">Y</span>
       <NumberControl v-model="y" :step="step" :precision="precision" :disabled="disabled" />
     </div>
-    <div class="ed-vector-cell">
-      <span class="ed-vector-axis">Z</span>
+    <div class="tdm-vector-cell">
+      <span class="tdm-vector-axis">Z</span>
       <NumberControl v-model="z" :step="step" :precision="precision" :disabled="disabled" />
     </div>
   </div>

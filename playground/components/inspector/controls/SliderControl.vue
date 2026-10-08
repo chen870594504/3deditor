@@ -78,17 +78,17 @@ function onDblclick() {
 <template>
   <div
     ref="root"
-    class="ed-slider"
-    :class="{ 'ed-slider--active': dragging }"
+    class="tdm-slider"
+    :class="{ 'tdm-slider--active': dragging }"
     @pointerdown="onPointerdown"
     @pointermove="onPointermove"
     @pointerup="onPointerup"
     @pointercancel="onPointerup"
     @dblclick="onDblclick"
   >
-    <div class="ed-slider-track">
-      <div class="ed-slider-fill" :style="{ width: percent }" />
-      <div class="ed-slider-thumb" :style="{ left: percent }" />
+    <div class="tdm-slider-track">
+      <div class="tdm-slider-fill" :style="{ width: percent }" />
+      <div class="tdm-slider-thumb" :style="{ left: percent }" />
     </div>
   </div>
 </template>

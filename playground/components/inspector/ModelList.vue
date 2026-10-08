@@ -80,41 +80,41 @@ function bindEvents(index: number) {
 
 <template>
   <!--
-    自己带 ed-scroll：展开成上下两块之后这里是个固定高度的滚动容器，
+    自己带 tdm-scroll：展开成上下两块之后这里是个固定高度的滚动容器，
     列表长了在框内滚，不去顶下面那三节。
   -->
-  <div class="ed-models ed-scroll">
+  <div class="tdm-models tdm-scroll">
     <!--
       表头沿用下面三节的排版（编号 + 标题 + 右侧读数），只是不可折叠：
       它描述的是「谁」，而下面 01/02/03 描述的是「那个谁长什么样」，
       折叠起来会让上下两块看起来是并列的四个节，而它们是主从关系。
       滚动时钉在顶上，否则列表一长就分不清表头属于谁。
     -->
-    <div class="ed-models-head">
-      <span class="ed-sec-idx">00</span>
-      <span class="ed-sec-title">场景模型</span>
-      <span class="ed-models-count">{{ scene.models.length }}</span>
+    <div class="tdm-models-head">
+      <span class="tdm-sec-idx">00</span>
+      <span class="tdm-sec-title">场景模型</span>
+      <span class="tdm-models-count">{{ scene.models.length }}</span>
       <!-- 与左栏模型库的分类是同一件事的两个入口：一个挑资源，一个只想再摆一个内置几何体 -->
-      <button type="button" class="ed-models-add" title="追加内置示例几何体" @click="scene.addModel()">
+      <button type="button" class="tdm-models-add" title="追加内置示例几何体" @click="scene.addModel()">
         ＋ 追加
       </button>
     </div>
 
-    <div v-if="scene.models.length" class="ed-list">
+    <div v-if="scene.models.length" class="tdm-list">
       <!--
         每行是三个并排的兄弟：主按钮（图标 + 名称）、事件按钮、悬停浮现的移除按钮。
         它们不能互相嵌套：按钮套按钮是非法 HTML，浏览器会把内层拆出去，点击区域随之错位。
       -->
-      <div v-for="(model, index) in scene.models" :key="model.id" class="ed-models-row">
+      <div v-for="(model, index) in scene.models" :key="model.id" class="tdm-models-row">
         <button
           type="button"
-          class="ed-item ed-models-pick"
-          :class="{ 'ed-item--active': index === scene.selectedIndex }"
+          class="tdm-item tdm-models-pick"
+          :class="{ 'tdm-item--active': index === scene.selectedIndex }"
           :aria-current="index === scene.selectedIndex"
           :title="tipOf(model)"
           @click="scene.selectModel(index)"
         >
-          <svg class="ed-models-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <svg class="tdm-models-icon" viewBox="0 0 24 24" aria-hidden="true">
             <path
               v-for="(part, i) in iconOf(model)"
               :key="i"
@@ -122,13 +122,13 @@ function bindEvents(index: number) {
               :fill="part.fill ? 'currentColor' : 'none'"
             />
           </svg>
-          <span class="ed-models-name">{{ labelOf(model) }}</span>
+          <span class="tdm-models-name">{{ labelOf(model) }}</span>
         </button>
 
         <button
           type="button"
-          class="ed-models-evt"
-          :class="{ 'ed-models-evt--on': boundCount(model) > 0 }"
+          class="tdm-models-evt"
+          :class="{ 'tdm-models-evt--on': boundCount(model) > 0 }"
           :title="`绑定「${labelOf(model)}」的事件`"
           :aria-label="`绑定「${labelOf(model)}」的事件，已绑 ${boundCount(model)} 类`"
           @click="bindEvents(index)"
@@ -136,12 +136,12 @@ function bindEvents(index: number) {
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" />
           </svg>
-          <span v-if="boundCount(model) > 0" class="ed-models-evt-n">{{ boundCount(model) }}</span>
+          <span v-if="boundCount(model) > 0" class="tdm-models-evt-n">{{ boundCount(model) }}</span>
         </button>
 
         <button
           type="button"
-          class="ed-models-drop"
+          class="tdm-models-drop"
           :title="`移除「${labelOf(model)}」`"
           :aria-label="`移除「${labelOf(model)}」`"
           @click="scene.removeModel(index)"
@@ -151,7 +151,7 @@ function bindEvents(index: number) {
       </div>
     </div>
 
-    <p v-else class="ed-hint ed-hint--quiet ed-models-empty">
+    <p v-else class="tdm-hint tdm-hint--quiet tdm-models-empty">
       场景里还没有模型。从左栏挑一个模型，或者拖一个 .glb 进视口。
     </p>
   </div>

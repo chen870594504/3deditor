@@ -67,21 +67,21 @@ const { tip, showTip, hideTip } = useRailTip(() => inspectorRef.value)
 </script>
 
 <template>
-  <aside class="ed-col ed-col--right">
-    <nav ref="inspector" class="ed-inspector">
+  <aside class="tdm-col tdm-col--right">
+    <nav ref="inspector" class="tdm-inspector">
       <!--
         图标导轨。
         7 个中文标签横排要 420px 以上，右栏总共才 306px，
         所以导轨只占 40px、固定用图标表示；名称由悬停提示和 aria-label 补上。
         图标路径本身在 useInspectorSchema 的 NAV_ICONS 里声明。
       -->
-      <div class="ed-rail" @mouseleave="hideTip">
+      <div class="tdm-rail" @mouseleave="hideTip">
         <button
           v-for="tab in tabs"
           :key="tab.key"
           type="button"
-          class="ed-rail-item"
-          :class="{ 'ed-rail-item--active': tab.key === activeTab }"
+          class="tdm-rail-item"
+          :class="{ 'tdm-rail-item--active': tab.key === activeTab }"
           :aria-label="tab.label"
           :aria-current="tab.key === activeTab"
           @click="activeTab = tab.key"
@@ -90,7 +90,7 @@ const { tip, showTip, hideTip } = useRailTip(() => inspectorRef.value)
           @blur="hideTip"
         >
           <!-- 描边粗细/端点交给 CSS，fill 由属性决定：两者控制不同的属性，不会互相覆盖 -->
-          <svg class="ed-rail-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <svg class="tdm-rail-icon" viewBox="0 0 24 24" aria-hidden="true">
             <path
               v-for="(part, i) in tab.icon"
               :key="i"
@@ -102,16 +102,16 @@ const { tip, showTip, hideTip } = useRailTip(() => inspectorRef.value)
       </div>
 
       <!--
-        提示挂在 .ed-inspector 下、导轨之外：导轨是滚动容器，
+        提示挂在 .tdm-inspector 下、导轨之外：导轨是滚动容器，
         提示放在里面就可能被它的裁剪范围吃掉。
       -->
-      <span v-if="tip" class="ed-rail-tip" :style="{ top: `${tip.top}px` }">{{ tip.label }}</span>
+      <span v-if="tip" class="tdm-rail-tip" :style="{ top: `${tip.top}px` }">{{ tip.label }}</span>
 
       <!-- key 绑 tab：切 tab 时整块重建，让 tabpanel 的淡入动画每次都能重放 -->
       <div
         :key="current.key"
-        class="ed-inspector-body ed-scroll ed-tabpanel"
-        :class="{ 'ed-inspector-body--split': isModelTab && hasModels }"
+        class="tdm-inspector-body tdm-scroll tdm-tabpanel"
+        :class="{ 'tdm-inspector-body--split': isModelTab && hasModels }"
       >
         <HistoryPanel v-if="current.key === 'history'" />
         <template v-else-if="isModelTab">
@@ -122,9 +122,9 @@ const { tip, showTip, hideTip } = useRailTip(() => inspectorRef.value)
           <ModelList />
           <!--
             两块各自滚动：模型多到装不下时列表自己在框内滚，不动下面的字段；
-            字段长到装不下时也不把列表顶走。比例写在 .ed-inspector-body--split 里。
+            字段长到装不下时也不把列表顶走。比例写在 .tdm-inspector-body--split 里。
           -->
-          <div v-if="hasModels" class="ed-models-detail ed-scroll">
+          <div v-if="hasModels" class="tdm-models-detail tdm-scroll">
             <InspectorSection
               v-for="section in current.sections"
               :key="section.index"

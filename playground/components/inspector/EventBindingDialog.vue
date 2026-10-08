@@ -252,55 +252,55 @@ const codeSummary = computed(() => {
 
 <template>
   <Teleport to="body">
-    <div v-if="eventDialogOpen" class="ed-modal" @click="close">
+    <div v-if="eventDialogOpen" class="tdm-modal" @click="close">
       <!--
         .stop 是必须的：作用是「点遮罩关闭」，没有它连面板内部的每一次点击
         都会冒泡到遮罩上、把弹窗关掉，等于整个弹窗点哪儿都没了。
       -->
       <div
         ref="panelRef"
-        class="ed-modal-panel"
+        class="tdm-modal-panel"
         role="dialog"
         aria-modal="true"
-        aria-labelledby="ed-evt-title"
+        aria-labelledby="tdm-evt-title"
         tabindex="-1"
         @click.stop
       >
-        <header class="ed-modal-head">
-          <h2 id="ed-evt-title" class="ed-modal-title">事件绑定</h2>
-          <span class="ed-modal-sub">
-            <b class="ed-modal-target">{{ targetLabel }}</b> · 库只负责发事件，代码由编辑器执行
+        <header class="tdm-modal-head">
+          <h2 id="tdm-evt-title" class="tdm-modal-title">事件绑定</h2>
+          <span class="tdm-modal-sub">
+            <b class="tdm-modal-target">{{ targetLabel }}</b> · 库只负责发事件，代码由编辑器执行
           </span>
-          <button type="button" class="ed-btn ed-btn--sm" @click="clearAll">清空全部</button>
+          <button type="button" class="tdm-btn tdm-btn--sm" @click="clearAll">清空全部</button>
         </header>
 
-        <div class="ed-modal-body">
-          <ul class="ed-evt-list">
+        <div class="tdm-modal-body">
+          <ul class="tdm-evt-list">
             <li v-for="type in MODEL_EVENT_TYPES" :key="type">
               <button
                 type="button"
-                class="ed-evt-item"
-                :class="{ 'ed-evt-item--on': type === current }"
+                class="tdm-evt-item"
+                :class="{ 'tdm-evt-item--on': type === current }"
                 @click="current = type"
               >
-                <span class="ed-evt-dot" :class="{ 'ed-evt-dot--on': isEnabled(type) }" />
-                <span class="ed-evt-name">{{ MODEL_EVENT_LABELS[type] }}</span>
-                <span class="ed-evt-badge">{{ handlerFor(type).code.trim() ? 'JS' : '—' }}</span>
+                <span class="tdm-evt-dot" :class="{ 'tdm-evt-dot--on': isEnabled(type) }" />
+                <span class="tdm-evt-name">{{ MODEL_EVENT_LABELS[type] }}</span>
+                <span class="tdm-evt-badge">{{ handlerFor(type).code.trim() ? 'JS' : '—' }}</span>
               </button>
             </li>
           </ul>
 
-          <div class="ed-modal-detail">
+          <div class="tdm-modal-detail">
             <!--
-              复用面板上的 .ed-toggle 开关，而不是原生 checkbox：
+              复用面板上的 .tdm-toggle 开关，而不是原生 checkbox：
               原生勾选框在深色下怎么调都像外来物，而这个是全站统一的「开关」语义。
               它是个按钮，所以要自己算取反后的值，不能像 checkbox 那样读 checked。
             -->
-            <div class="ed-evt-toggle">
+            <div class="tdm-evt-toggle">
               <button
                 type="button"
-                class="ed-toggle"
-                :class="{ 'ed-toggle--on': isEnabled(current) }"
+                class="tdm-toggle"
+                :class="{ 'tdm-toggle--on': isEnabled(current) }"
                 role="switch"
                 :aria-checked="isEnabled(current)"
                 :aria-label="`启用${MODEL_EVENT_LABELS[current]}`"
@@ -310,7 +310,7 @@ const codeSummary = computed(() => {
             </div>
 
             <textarea
-              class="ed-code"
+              class="tdm-code"
               spellcheck="false"
               autocapitalize="off"
               autocomplete="off"
@@ -322,18 +322,18 @@ const codeSummary = computed(() => {
               @keydown="onCodeKeydown"
             />
 
-            <p class="ed-hint">
+            <p class="tdm-hint">
               可用变量：<code>event</code>（指针载荷：type / name / point / distance / object）与
               <code>model</code>（配置快照，改它不影响场景）。失焦时保存，{{ codeSummary }}
             </p>
           </div>
         </div>
 
-        <footer class="ed-modal-foot">
-          <span class="ed-hint ed-hint--quiet">
+        <footer class="tdm-modal-foot">
+          <span class="tdm-hint tdm-hint--quiet">
             关闭后点击模型即可看到效果，代码的输出与报错都在浏览器控制台（F12）
           </span>
-          <button type="button" class="ed-btn ed-btn--primary" @click="close">完成</button>
+          <button type="button" class="tdm-btn tdm-btn--primary" @click="close">完成</button>
         </footer>
       </div>
     </div>

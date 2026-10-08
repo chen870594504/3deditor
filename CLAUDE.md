@@ -113,11 +113,11 @@ pnpm preview      # 预览构建产物
    `DEV_ASSET_PREFIX` 一致——只改一边的表现是列表里的地址代理不到，清一色加载失败。
    那台服务器不发 CORS 头而 `GLTFLoader` 走 `fetch`，所以必须靠这个同源代理。
 7. `.gitignore` 只排除 `.env.local` / `.env.*.local`，**不排除 `.env` 本身**。
-8. **`playground/styles/editor.scss` 里有一处靠源码顺序决胜负的地方**：`.ed-view-btn` 与 `.ed-draw-btn`
+8. **`playground/styles/editor.scss` 里有一处靠源码顺序决胜负的地方**：`.tdm-view-btn` 与 `.tdm-draw-btn`
    先并入三选择器组（`min-width: 40px`），之后各自再单独收窄（34px / 30px）。特异性同为 (0,1,0)，
    所以是**后面的赢**。重排或拆分这几条会静默改变按钮宽度。
-   要拆成 partial，先把这类顺序依赖改成靠特异性表达（`.ed-stage--preview` 那处就是范例：
-   它写成两个类 `.ed-stage.ed-stage--preview`，DESIGN.md 里记着为什么）。
+   要拆成 partial，先把这类顺序依赖改成靠特异性表达（`.tdm-stage--preview` 那处就是范例：
+   它写成两个类 `.tdm-stage.tdm-stage--preview`，DESIGN.md 里记着为什么）。
 9. **不要嵌套 `@media`**。它们全部排在文件末尾、靠「排在后面」取胜，而 SCSS 会把嵌套的 `@media`
    提升到父规则的位置、也就是大幅前移；另外 `prefers-reduced-motion` 那条跨 10 个父选择器、
    `1100px` 那条跨 3 个，结构上根本嵌不进单一父规则。

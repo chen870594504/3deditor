@@ -49,34 +49,34 @@ function applyPreset(key: string) {
 </script>
 
 <template>
-  <div class="ed-preset">
-    <div class="ed-preset-head">
-      <span class="ed-sec-idx">03</span>
-      <span class="ed-sec-title">场景预设</span>
+  <div class="tdm-preset">
+    <div class="tdm-preset-head">
+      <span class="tdm-sec-idx">03</span>
+      <span class="tdm-sec-title">场景预设</span>
     </div>
 
-    <div class="ed-list">
+    <div class="tdm-list">
       <!--
-        用 .ed-item / .ed-item-note：这四个按钮的观感与左栏那些分类项一模一样
+        用 .tdm-item / .tdm-item-note：这四个按钮的观感与左栏那些分类项一模一样
         （整行点击、悬停变亮、左侧一道琥珀条标出当前命中哪个），换一套样式
-        只会让「同一类东西长得不一样」。它不是 .ed-item--active 的既有语义吗？
+        只会让「同一类东西长得不一样」。它不是 .tdm-item--active 的既有语义吗？
         是——所以这里连 hover 与激活态都不用重写。
       -->
       <button
         v-for="preset in SCENE_PRESETS"
         :key="preset.key"
         type="button"
-        class="ed-item"
-        :class="{ 'ed-item--active': preset.key === activePreset }"
+        class="tdm-item"
+        :class="{ 'tdm-item--active': preset.key === activePreset }"
         :title="`应用预设「${preset.label}」`"
         @click="applyPreset(preset.key)"
       >
         {{ preset.label }}
-        <span class="ed-item-note">{{ preset.note }}</span>
+        <span class="tdm-item-note">{{ preset.note }}</span>
       </button>
 
       <!--
-        脚注写在列表**里面**（不是外面），因此白拿 `.ed-list` 那 5px 内边距，
+        脚注写在列表**里面**（不是外面），因此白拿 `.tdm-list` 那 5px 内边距，
         与上面四个按钮**左对齐**；换成 12px 会多缩进一截，看起来像另一层级的说明。
 
         **它是这一页唯一说清「预设管到哪」的地方，不能省。** 预设曾经连相机、
@@ -85,7 +85,7 @@ function applyPreset(key: string) {
         **例外**：累积阴影那一组参数一改就要重烘 40 帧，所以预设一个字都不写它，
         不说的话，用累积阴影的人会以为预设对影子失效了。
       -->
-      <p class="ed-hint ed-hint--quiet">
+      <p class="tdm-hint tdm-hint--quiet">
         预设只改光照与光影——主光的角度、三盏灯的强弱、接触阴影的浓淡与柔度。相机、地面、底色、天空盒都原样不动（各有各的地方：本栏「阴影」「地面」两页，左栏「地板」「天空盒」两类），切换因此是瞬时的。用累积阴影时只有光会变：那一组参数改一次要重烘 40 帧，所以预设不碰。
       </p>
     </div>

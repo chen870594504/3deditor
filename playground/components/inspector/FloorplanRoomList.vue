@@ -79,26 +79,26 @@ function removeRoom(room: FloorplanRoom): void {
 </script>
 
 <template>
-  <div class="ed-plan">
+  <div class="tdm-plan">
     <!--
       表头沿用 01/02 两节的排版（编号 + 标题 + 右端读数），不可折叠：
       它是「有哪些」，上面几节是「户型长什么样」，折叠起来会让几块看起来并列。
     -->
-    <div class="ed-plan-head">
-      <span class="ed-sec-idx">05</span>
-      <span class="ed-sec-title">房间</span>
-      <span class="ed-plan-count">{{ scene.config.floorplan.rooms.length }}</span>
+    <div class="tdm-plan-head">
+      <span class="tdm-sec-idx">05</span>
+      <span class="tdm-sec-title">房间</span>
+      <span class="tdm-plan-count">{{ scene.config.floorplan.rooms.length }}</span>
     </div>
 
-    <div v-if="scene.config.floorplan.rooms.length" class="ed-plan-list">
+    <div v-if="scene.config.floorplan.rooms.length" class="tdm-plan-list">
       <!--
         一行是三个并列的兄弟：名称输入框、色块、删除按钮。
         房间用 id 做 key 而不是下标——删除中间一行时，下标会让后面每一行的
         输入框都跟着错位一格（Vue 会复用 DOM，正在编辑的那个框会突然换到别人身上）。
       -->
-      <div v-for="(room, index) in scene.config.floorplan.rooms" :key="room.id" class="ed-plan-row">
+      <div v-for="(room, index) in scene.config.floorplan.rooms" :key="room.id" class="tdm-plan-row">
         <TextControl
-          class="ed-plan-name"
+          class="tdm-plan-name"
           :model-value="room.name"
           placeholder="房间名称"
           @update:model-value="rename(room, $event)"
@@ -116,7 +116,7 @@ function removeRoom(room: FloorplanRoom): void {
         -->
         <input
           type="color"
-          class="ed-plan-tint"
+          class="tdm-plan-tint"
           :value="room.color"
           :title="room.color"
           :aria-label="`「${room.name}」的颜色`"
@@ -125,7 +125,7 @@ function removeRoom(room: FloorplanRoom): void {
 
         <button
           type="button"
-          class="ed-plan-drop"
+          class="tdm-plan-drop"
           :title="`删除「${room.name}」`"
           :aria-label="`删除「${room.name}」`"
           @click="removeRoom(room)"
@@ -135,7 +135,7 @@ function removeRoom(room: FloorplanRoom): void {
       </div>
     </div>
 
-    <p v-else class="ed-hint ed-hint--quiet ed-plan-empty">
+    <p v-else class="tdm-hint tdm-hint--quiet tdm-plan-empty">
       还没有房间。用视口左侧的「房间」工具点墙体围出的区域内部，识别成一个房间。
     </p>
   </div>

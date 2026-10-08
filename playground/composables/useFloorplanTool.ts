@@ -956,7 +956,7 @@ let openingDrag: {
  *
  * 必须抓，否则拖到视口外面松手时 `pointerup` 落在别的地方（可能压根不在这个
  * 元素上），这一次拖动就永远收不了尾——表现是**松开之后洞口还跟着鼠标走**。
- * 抓住之后事件一律派发到 `.ed-viewport` 那一层（也就是 `event.currentTarget`），
+ * 抓住之后事件一律派发到 `.tdm-viewport` 那一层（也就是 `event.currentTarget`），
  * `pointerup` / `pointercancel` 一定到得了下面那两个处理函数。
  *
  * 抢不着别的手势：`Shift + 左键`在按下那一刻就被上面那道守卫退让了（2D 下它是平移），

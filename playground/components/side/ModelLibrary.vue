@@ -647,9 +647,9 @@ function toggleSkybox(entry: LibraryEntry) {
     读屏用户没法悬停，数量只放提示里就等于对他们不存在。
 
     切换的反馈是**刻意不对称**的：预设 ↔ 库是页面级切换，面板体
-    （`.ed-side-body`，它自己就是 `.ed-tabpanel`）整块重建并淡入；
+    （`.tdm-side-body`，它自己就是 `.tdm-tabpanel`）整块重建并淡入；
     库内切分类不重建组件，靠「内容瞬换 + 导轨上琥珀高亮移动 + 滚动归零」给反馈。
-    给宫格补一个 `.ed-tabpanel` 去要淡入**恰恰不行**：`ed-rise` 是 translateY(6px)，
+    给宫格补一个 `.tdm-tabpanel` 去要淡入**恰恰不行**：`tdm-rise` 是 translateY(6px)，
     两层同帧叠加会变成 12px 的错位（editor.scss 里那条注释点名批评过这个形态）。
 
     一格一个模型：一张方形缩略图，下面一行**常显**的名字。
@@ -658,7 +658,7 @@ function toggleSkybox(entry: LibraryEntry) {
     再分细缩略图就只剩图标大小，名字条也塞不下几个字。
     名字常显是拿版面换来的：格子比只放缩略图时高约一行、一屏少看一行，
     换来的是「哪一格叫什么」不必悬停就能读（原先名字是悬停才浮出来的浮层，
-    见 editor.scss 里 `.ed-lib-name` 那段）。
+    见 editor.scss 里 `.tdm-lib-name` 那段）。
 
     格子本身就是按钮，不做「先选中再确定」两步——而它**有三种意思**：
     追加到场景、给某个工具当铺装、或者换掉背景的天空盒（「空盒子」那一格是
@@ -682,7 +682,7 @@ function toggleSkybox(entry: LibraryEntry) {
     这一类怎么画，那一类的空态该怎么说话就是宿主的事，编辑器不替它显示
     「这一类暂时还没有模型。」。
 
-    接管之后连**滚动容器**也是宿主的（宫格那套 `ed-list ed-list--grow ed-scroll`
+    接管之后连**滚动容器**也是宿主的（宫格那套 `tdm-list tdm-list--grow tdm-scroll`
     在下面那支里，这里不代劳）——DESIGN.md 里那段示例照抄了这几个类名。
 
     作用域给出的就是当前分类本身（`section`，含 `entries`），也就是
@@ -696,8 +696,8 @@ function toggleSkybox(entry: LibraryEntry) {
   <slot v-if="isExtraSection && !!$slots.list" name="list" :section="section" />
 
   <!--
-    宫格**自己就是那个滚动口**（.ed-list--grow + .ed-scroll），是左栏唯一的滚动列表，
-    5px 内边距来自 `.ed-list` 本身（右栏那几份清单也一样，见 editor.scss 里的分节）。
+    宫格**自己就是那个滚动口**（.tdm-list--grow + .tdm-scroll），是左栏唯一的滚动列表，
+    5px 内边距来自 `.tdm-list` 本身（右栏那几份清单也一样，见 editor.scss 里的分节）。
 
     `:key="section.key"` 是**功能必需，不是为了动画**：不加它，这个 div 在分类
     之间是同一个元素，`scrollTop` 会被留下来——从一条长列表切到另一条仍溢出的
@@ -710,15 +710,15 @@ function toggleSkybox(entry: LibraryEntry) {
     key 落在**这个元素**上，不能上提到 `<ModelLibrary :key>`：Vue 的 key 只改这
     一个 vnode 的身份，重挂的是元素、不是组件实例，于是 `broken` 与已经加载好的
     `<img>` 都活着（上提到组件上就会退化成脚本里那段注释点名的那条回归）。
-    也不能挪到面板体 `.ed-side-body`——那里原先绑的是左栏的页面 key（已随那个页面
+    也不能挪到面板体 `.tdm-side-body`——那里原先绑的是左栏的页面 key（已随那个页面
     一起删掉），两个 key 各管各的语义，混用就回到了上面那条回归。
 
     `v-if` 那一族分支当根是合法的（先例 InspectorField.vue），这里没有
-    attrs 要透传；父级 `.ed-side-body` 是 flex 列，所以撑满 / 贴顶的行为与改造前一致。
+    attrs 要透传；父级 `.tdm-side-body` 是 flex 列，所以撑满 / 贴顶的行为与改造前一致。
   -->
-  <div v-else-if="section.entries.length" :key="section.key" class="ed-list ed-list--grow ed-scroll ed-lib-grid">
-    <button v-for="entry in section.entries" :key="entry.key" type="button" class="ed-item ed-lib-cell"
-      :class="{ 'ed-item--active': isInScene(entry), 'ed-lib-cell--picked': isPicked(entry) }"
+  <div v-else-if="section.entries.length" :key="section.key" class="tdm-list tdm-list--grow tdm-scroll tdm-lib-grid">
+    <button v-for="entry in section.entries" :key="entry.key" type="button" class="tdm-item tdm-lib-cell"
+      :class="{ 'tdm-item--active': isInScene(entry), 'tdm-lib-cell--picked': isPicked(entry) }"
       :aria-label="describeEntry(entry)" @click="add(entry)">
       <!--
         格子的图，**三支**，顺序是有讲究的：
@@ -737,16 +737,16 @@ function toggleSkybox(entry: LibraryEntry) {
         `alt` 留空、`aria-hidden` 都在同一件事上：按钮的名字由 `aria-label` 给，
         图与名字条都只是视觉。
       -->
-      <span v-if="entry.icon" class="ed-lib-thumb ed-lib-thumb--glyph-text" aria-hidden="true">{{
+      <span v-if="entry.icon" class="tdm-lib-thumb tdm-lib-thumb--glyph-text" aria-hidden="true">{{
         entry.icon }}</span>
-      <img v-else-if="entry.thumb && !broken.has(entry.key)" class="ed-lib-thumb" :src="entry.thumb" alt=""
+      <img v-else-if="entry.thumb && !broken.has(entry.key)" class="tdm-lib-thumb" :src="entry.thumb" alt=""
         loading="lazy" @error="markBroken(entry.key)" />
-      <svg v-else class="ed-lib-thumb ed-lib-thumb--glyph" viewBox="0 0 24 24" aria-hidden="true">
+      <svg v-else class="tdm-lib-thumb tdm-lib-thumb--glyph" viewBox="0 0 24 24" aria-hidden="true">
         <path v-for="(part, i) in ICON_NO_PREVIEW" :key="i" :d="part.d"
           :fill="part.fill ? 'currentColor' : 'none'" />
       </svg>
 
-      <span class="ed-lib-name">{{ entry.label }}</span>
+      <span class="tdm-lib-name">{{ entry.label }}</span>
     </button>
   </div>
 
@@ -757,7 +757,7 @@ function toggleSkybox(entry: LibraryEntry) {
     追加分类本来就点不到任何工具），指了就是撒谎。
     （左栏另一页的空态没有这条约束：那里的每一处都对应一个真在的功能。）
   -->
-  <p v-else class="ed-hint ed-hint--quiet ed-lib-empty">这一类暂时还没有模型。</p>
+  <p v-else class="tdm-hint tdm-hint--quiet tdm-lib-empty">这一类暂时还没有模型。</p>
 
   <!--
     量尺寸的探针：选中一件洞口资产之后，把它的 glb 拉下来量一次包围盒，

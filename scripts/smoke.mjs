@@ -326,21 +326,60 @@ check('未泄漏全局 reset（preflight 必须关闭）', () => {
   return '无 html / body / * 全局选择器'
 })
 
-check('未混入 playground 样式', () => {
-  const leaked = [
-    // 历史上 playground 用过的原子类。库现在不用任何原子 CSS 引擎了，
-    // 这三条留着是廉价的保险：万一将来又引入一个，产物会立刻暴露。
-    'min-w-80',
-    'slate-950',
-    'font-mono',
-    // playground 的编辑器视觉令牌（editor.scss 里的琥珀信号色与墨阶）
-    '--signal',
-    '#ff9d2e',
-    '--ink-300',
-  ]
+/*
+  这一条在样式合一之前是把编辑器令牌当「不该出现的东西」查的——那时候编辑器整个
+  留在 playground，`--signal` / `#ff9d2e` 出现在产物里就等于它漏进了库。
+
+  样式搬进来之后方向反了：那几十个令牌**本来就该在产物里**（现在是
+  `--tdm-` 前缀那一份），所以下面单立了两条查它们「在不在、带没带前缀」。
+  这一条只剩原子类那一半：库不用任何原子 CSS 引擎，这三条留着是廉价的保险——
+  将来万一又引入一个，产物会立刻暴露。
+*/
+check('未混入 playground 的原子类', () => {
+  const leaked = ['min-w-80', 'slate-950', 'font-mono']
   const hit = leaked.filter((name) => css.includes(name))
   assert(hit.length === 0, `混入了开发期样式：${hit.join(', ')}`)
-  return '产物中只有 src 的样式'
+  return '无原子 CSS 引擎的类名'
+})
+
+/*
+  令牌「进来了」与「带前缀了」是两件事，分开查：
+  只查进来（`--tdm-signal` 在不在）的话，一个漏改前缀的 `--signal` 会被
+  `--tdm-signal` 的存在盖住；只查前缀的话，令牌整块没进来也看不出来。
+*/
+check('编辑器视觉令牌已进库产物', () => {
+  const needed = ['--tdm-ink-300:', '--tdm-signal:', '--tdm-font-ui:', '--tdm-w-rail:']
+  const missing = needed.filter((name) => !css.includes(name))
+  assert(missing.length === 0, `缺少令牌：${missing.join(', ')}`)
+  return `${needed.length} 个令牌齐全`
+})
+
+check('令牌一律带 --tdm- 前缀', () => {
+  /*
+    库里定义的每一个自定义属性都必须带 `--tdm-` 前缀。
+    漏一个的后果很具体：宿主在 `:root` 上写一个同名的 `--signal`，会顺着继承
+    走进编辑器把它顶掉，而 CSS 一声不响——表现是「换了主题，某一块颜色不对」。
+
+    只认**声明位置**（前面是 `{` 或 `;`）：`.tdm-item--active:hover` 这类 BEM
+    修饰符上的伪类也是 `--x:` 的形状，不把它挡掉就会误报。
+  */
+  const defs = [...css.matchAll(/(?:^|[;{]\s*)--([\w-]+)\s*:/g)].map((m) => m[1])
+  assert(defs.length > 0, '产物里一个自定义属性都没有——令牌整块没进产物')
+  const bad = [...new Set(defs.filter((name) => !name.startsWith('tdm-')))].join(', ')
+  assert(!bad, `发现不带前缀的令牌：${bad}——宿主同名变量会把它顶掉且不报错`)
+  return `${defs.length} 个自定义属性全部带前缀`
+})
+
+check('产物里没有裸的 .ed- 选择器', () => {
+  /*
+    样式合一之后类名统一是 `tdm-`。漏改一处（组件 class 改了、SCSS 选择器没改，
+    或反过来）**不报错**，表现只是那一块 UI 静默丢掉样式——靠肉眼在一万行 CSS 里
+    逐条比是对不出来的，所以钉成断言。
+    只认选择器起始位置上的 `.ed-`：`prefers-reduced-motion` 这类词里也有 `ed-`。
+  */
+  const hit = css.match(/(^|[\s,>+~(])\.ed-[a-z]/m)
+  assert(!hit, `发现未改名的 .ed- 选择器：${hit && hit[0].trim()}——那一块会静默丢样式`)
+  return '无裸 .ed- 选择器'
 })
 
 // ---------- 5. 配置模型与历史栈 ----------

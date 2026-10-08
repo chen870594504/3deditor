@@ -81,7 +81,7 @@ function onKeydown(event: KeyboardEvent) {
 
 <template>
   <input
-    class="ed-num"
+    class="tdm-num"
     type="text"
     inputmode="decimal"
     spellcheck="false"

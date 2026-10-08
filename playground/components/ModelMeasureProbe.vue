@@ -170,7 +170,7 @@ watch(
     一个**纯逻辑组件**，不画任何东西，所以这里渲染的是一个注释节点、**不是一个元素**。
 
     这一条不能改成 `<span />`：父级 `ModelLibrary.vue` 的根要么是宫格
-    （`display: grid`，多一个子元素会挤出一格空白）要么是 `.ed-side-body` 那个
+    （`display: grid`，多一个子元素会挤出一格空白）要么是 `.tdm-side-body` 那个
     flex 列（多一个子元素会多一条 `gap`），两种都会让版面凭空空出一块。
     `<span v-if="false" />` 编译成 `createCommentVNode`（已核对编译产物），
     元素一个都不建。

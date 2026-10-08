@@ -157,11 +157,11 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <!-- ed-entrance 让两块 chrome 依次淡入，落差 55ms -->
-  <div class="ed-app ed-entrance">
+  <!-- tdm-entrance 让两块 chrome 依次淡入，落差 55ms -->
+  <div class="tdm-app tdm-entrance">
     <AppHeader />
 
-    <div class="ed-body">
+    <div class="tdm-body">
       <SidePanel />
       <SceneStage />
       <InspectorPanel />

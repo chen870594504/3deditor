@@ -24,7 +24,7 @@ function onChange(event: Event) {
 </script>
 
 <template>
-  <select class="ed-select" :disabled="disabled" :value="String(modelValue)" @change="onChange">
+  <select class="tdm-select" :disabled="disabled" :value="String(modelValue)" @change="onChange">
     <option v-for="option in options" :key="String(option.value)" :value="String(option.value)">
       {{ option.label }}
     </option>

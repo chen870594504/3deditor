@@ -23,18 +23,18 @@ defineOptions({ name: 'FloorplanTools' })
  * 提示行也会说清「绘制只在 2D 俯视角下可用」。
  *
  * `title` 直接挂该工具的常驻说明：这些规则在画面上别处没有落点，
- * 悬停能读到比没有好（真正常显的那一份在视口底部的 `.ed-draw-hint`）。
+ * 悬停能读到比没有好（真正常显的那一份在视口底部的 `.tdm-draw-hint`）。
  */
 </script>
 
 <template>
-  <div v-if="planView" class="ed-draw" role="group" aria-label="平面图绘制工具">
+  <div v-if="planView" class="tdm-draw" role="group" aria-label="平面图绘制工具">
     <button
       v-for="item in FLOORPLAN_TOOLS"
       :key="item.tool"
       type="button"
-      class="ed-draw-btn"
-      :class="{ 'ed-draw-btn--on': floorplanTool === item.tool }"
+      class="tdm-draw-btn"
+      :class="{ 'tdm-draw-btn--on': floorplanTool === item.tool }"
       :aria-pressed="floorplanTool === item.tool"
       :title="item.hint"
       @click="setFloorplanTool(item.tool)"

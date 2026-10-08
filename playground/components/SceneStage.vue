@@ -43,7 +43,7 @@ const viewerRef = useTemplateRef<{
 /**
  * 视口元素本身。
  *
- * 唯一需要它的地方是 `.ed-viewport-actions` 的聚焦：算距离要知道「画面有多宽」，
+ * 唯一需要它的地方是 `.tdm-viewport-actions` 的聚焦：算距离要知道「画面有多宽」，
  * 而 `camera.fov` 只管垂直方向。TresCanvas 的 canvas 元素尺寸与它一致，
  * 但那个元素在插件内部、拿不到，也没必要为此扩库的 API。
  */
@@ -324,8 +324,8 @@ const viewMode = computed(() => viewModeOf(scene.config.camera))
 
 <template>
   <div
-    class="ed-stage"
-    :class="{ 'ed-stage--preview': previewMode }"
+    class="tdm-stage"
+    :class="{ 'tdm-stage--preview': previewMode }"
     @dragover="onDragOver"
     @dragleave="onDragLeave"
     @drop="onDrop"
@@ -341,8 +341,8 @@ const viewMode = computed(() => viewModeOf(scene.config.camera))
 
     <div
       ref="viewport"
-      class="ed-viewport"
-      :class="{ 'ed-viewport--draw': floorplanEnabled }"
+      class="tdm-viewport"
+      :class="{ 'tdm-viewport--draw': floorplanEnabled }"
       @pointerdown="onFloorplanPointerDown"
       @pointermove="onFloorplanPointerMove"
       @pointerup="onFloorplanPointerUp"
@@ -394,40 +394,40 @@ const viewMode = computed(() => viewModeOf(scene.config.camera))
         </template>
       </SceneViewer>
 
-      <span class="ed-corner ed-corner--tl" :class="{ 'ed-corner--lit': lit }" />
-      <span class="ed-corner ed-corner--tr" :class="{ 'ed-corner--lit': lit }" />
-      <span class="ed-corner ed-corner--bl" :class="{ 'ed-corner--lit': lit }" />
-      <span class="ed-corner ed-corner--br" :class="{ 'ed-corner--lit': lit }" />
+      <span class="tdm-corner tdm-corner--tl" :class="{ 'tdm-corner--lit': lit }" />
+      <span class="tdm-corner tdm-corner--tr" :class="{ 'tdm-corner--lit': lit }" />
+      <span class="tdm-corner tdm-corner--bl" :class="{ 'tdm-corner--lit': lit }" />
+      <span class="tdm-corner tdm-corner--br" :class="{ 'tdm-corner--lit': lit }" />
 
-      <div class="ed-hud">
-        <div class="ed-hud-row">CAM <b>{{ cameraLabel }}</b></div>
-        <div class="ed-hud-row">
+      <div class="tdm-hud">
+        <div class="tdm-hud-row">CAM <b>{{ cameraLabel }}</b></div>
+        <div class="tdm-hud-row">
           FOV <b>{{ scene.config.camera.fov }}°</b> · TRI <b>{{ triangleLabel }}</b> · CALL
           <b>{{ stats.drawCalls }}</b> · FPS <b>{{ stats.fps }}</b>
         </div>
-        <div class="ed-hud-row">
+        <div class="tdm-hud-row">
           {{ scene.config.sun.showSky ? 'SKY ON' : 'SKY OFF' }} · {{ shadowLabel }}
         </div>
-        <div class="ed-hud-row">
+        <div class="tdm-hud-row">
           MDL <b>{{ modelCount }}</b> · ID <b :title="selected?.id ?? ''">{{ modelIdShort }}</b> · EVT
           <b>{{ eventCount }}/5</b>
         </div>
       </div>
 
       <!--
-        手柄模式切换。放在顶边中部：左上角被 .ed-hud 那四行读数占着，
+        手柄模式切换。放在顶边中部：左上角被 .tdm-hud 那四行读数占着，
         右边与底部要留给操作胶囊与四角角标。
 
         它是**编辑控件**而不是读数，所以预览模式下跟胶囊一起消失（CSS 里同一条规则），
         没有选中模型时也整块不渲染——没有手柄就没有模式可言。
       -->
-      <div v-if="gizmoVisible" class="ed-gizmo" role="group" aria-label="变换手柄模式">
+      <div v-if="gizmoVisible" class="tdm-gizmo" role="group" aria-label="变换手柄模式">
         <button
           v-for="item in TRANSFORM_MODES"
           :key="item.mode"
           type="button"
-          class="ed-gizmo-btn"
-          :class="{ 'ed-gizmo-btn--on': gizmoMode === item.mode }"
+          class="tdm-gizmo-btn"
+          :class="{ 'tdm-gizmo-btn--on': gizmoMode === item.mode }"
           :aria-pressed="gizmoMode === item.mode"
           :title="`${item.label}（快捷键 ${item.key}）`"
           @click="setGizmoMode(item.mode)"
@@ -437,19 +437,19 @@ const viewMode = computed(() => viewModeOf(scene.config.camera))
       </div>
 
       <!--
-        视角档位切换。放在右上角：这里是视口里唯一还空着的角——左上被 .ed-hud 的四行读数
+        视角档位切换。放在右上角：这里是视口里唯一还空着的角——左上被 .tdm-hud 的四行读数
         占着，顶边中部是手柄条，右下是操作胶囊，四个角还有 13×13 的装饰角标。
 
         与手柄条不同，它**没有 v-if**：它管的是相机而不是模型，空场景（MDL 0）时
         同样有意义。预览模式下跟着其余编辑控件一起由 CSS 关掉。
       -->
-      <div class="ed-view" role="group" aria-label="视角模式">
+      <div class="tdm-view" role="group" aria-label="视角模式">
         <button
           v-for="item in VIEW_MODES"
           :key="item.mode"
           type="button"
-          class="ed-view-btn"
-          :class="{ 'ed-view-btn--on': viewMode === item.mode }"
+          class="tdm-view-btn"
+          :class="{ 'tdm-view-btn--on': viewMode === item.mode }"
           :aria-pressed="viewMode === item.mode"
           :title="item.title"
           @click="setViewMode(item.mode)"
@@ -459,7 +459,7 @@ const viewMode = computed(() => viewModeOf(scene.config.camera))
       </div>
 
       <!--
-        选中某个模型时才出现的操作胶囊。放在 .ed-dropzone 之前只是因为
+        选中某个模型时才出现的操作胶囊。放在 .tdm-dropzone 之前只是因为
         阅读顺序上它属于视口内容，实际由 z-index 决定谁在上面（30 > 10）。
       -->
       <ModelActions />
@@ -471,7 +471,7 @@ const viewMode = computed(() => viewModeOf(scene.config.camera))
         （`gizmoVisible`），而平面图工具要在空场景里就能用；而且「手柄模式」
         与「绘制工具」是两类东西，混在一条上会让「这条到底管什么」变模糊。
 
-        为什么在左侧中部：左上角是 .ed-hud 的四行读数（下面一整段是空的），
+        为什么在左侧中部：左上角是 .tdm-hud 的四行读数（下面一整段是空的），
         右上角是视角档位、右下角是操作胶囊、四周还有角标——只剩这里。
 
         **摆不摆由组件自己按 `planView` 决定**（3D、「允许旋转」开着、预览，
@@ -489,9 +489,9 @@ const viewMode = computed(() => viewModeOf(scene.config.camera))
         而「斜着点不落点」这类**拒绝**如果没有一句话说明，表现出来就是
         「点了没反应」——编辑器没有 toast 体系，只有这里能说。
       -->
-      <p v-if="floorplanHint" class="ed-draw-hint">{{ floorplanHint }}</p>
+      <p v-if="floorplanHint" class="tdm-draw-hint">{{ floorplanHint }}</p>
 
-      <div v-if="dropping" class="ed-dropzone">释放以载入 glTF / GLB</div>
+      <div v-if="dropping" class="tdm-dropzone">释放以载入 glTF / GLB</div>
     </div>
   </div>
 </template>

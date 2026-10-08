@@ -52,7 +52,7 @@ const sections = computed<MergedLibrarySection[]>(() => [
 /**
  * 导轨图标的共用约定（与右栏 `NAV_ICONS` 同一套，完整版在 `useInspectorSchema.ts`）：
  * 画在 24 格里、只用描边、只吃 `currentColor`（描边粗细与端点在 CSS 里，
- * 见 `.ed-rail-icon`）、留白压在 3 格以上——18px 渲染下再多占一格就会贴边。
+ * 见 `.tdm-rail-icon`）、留白压在 3 格以上——18px 渲染下再多占一格就会贴边。
  *
  * 这一栏另有一条：**同屏的每个字形只能指一件事**。已经占掉的形状有右栏 7 个
  * （立方体 / 相机 / 带门洞缺口的方框+隔墙 / 等轴测菱形网格 / 太阳 / 球与影 /
@@ -384,26 +384,26 @@ function activate(item: RailItem) {
 
     导轨贴在这一栏的**右缘**（紧邻视口）而不是外缘：这样左右两根导轨一起把视口
     夹在中间，激活指示条也都朝向视口那一侧。行的顺序因此是「内容在前、导轨在后」，
-    列序直接用 DOM 顺序表达（.ed-nav 的 grid 模板就是按这个顺序写的）。
+    列序直接用 DOM 顺序表达（.tdm-nav 的 grid 模板就是按这个顺序写的）。
 
     代价是 Tab 键会先走完内容再走到导轨，与右栏相反——可接受的小差异。
 
-    根类仍是 ed-col--left，所以预览模式那条 display:none 自动生效。
+    根类仍是 tdm-col--left，所以预览模式那条 display:none 自动生效。
   -->
-  <aside class="ed-col ed-col--left">
-    <nav ref="nav" class="ed-nav">
+  <aside class="tdm-col tdm-col--left">
+    <nav ref="nav" class="tdm-nav">
       <!--
         这一层原先绑着 `:key="leftTab"`：切面板时整块重建，让 tabpanel 的淡入动画
         每次都能重放。左栏只剩模型库一页之后，那个 key 的取值集合只剩一个值，
         这把 key 什么都没在管了，连同左栏的页面状态（`useEditorState` 的
-        `leftTab`）一起删掉。`ed-tabpanel` 这个类留着：首屏挂载时仍然淡入一次，
+        `leftTab`）一起删掉。`tdm-tabpanel` 这个类留着：首屏挂载时仍然淡入一次，
         与右栏的观感一致。
 
         「场景预设」原先就挂在这一层的 `v-if` 上，现在它搬去了右栏「日照环境」的
         03 节（`PresetList.vue`）——预设改的就是那一页的字段，隔半个屏幕点它、
         再回头看数字变化，本来就不顺手。
       -->
-      <div class="ed-side-body ed-tabpanel">
+      <div class="tdm-side-body tdm-tabpanel">
         <!--
           合并表（内置五类 + 宿主追加的）从这里进去：宫格与导轨读的是**同一个
           `sections`**，所以两边不可能对不上。
@@ -429,10 +429,10 @@ function activate(item: RailItem) {
       </div>
 
       <!--
-        提示挂在 .ed-nav 下、导轨之外：导轨是滚动容器，
+        提示挂在 .tdm-nav 下、导轨之外：导轨是滚动容器，
         提示放在里面就可能被它的裁剪范围吃掉。
       -->
-      <span v-if="tip" class="ed-rail-tip ed-rail-tip--start" :style="{ top: `${tip.top}px` }">
+      <span v-if="tip" class="tdm-rail-tip tdm-rail-tip--start" :style="{ top: `${tip.top}px` }">
         {{ tip.label }}
       </span>
 
@@ -449,7 +449,7 @@ function activate(item: RailItem) {
         `getBoundingClientRect` 算出来的快照，而滚轮不会触发 mouseleave，
         项多了以后「悬停中滚导轨」会把提示留在旧位置上。
       -->
-      <div class="ed-rail" @mouseleave="hideTip" @scroll="hideTip">
+      <div class="tdm-rail" @mouseleave="hideTip" @scroll="hideTip">
         <!--
           待画的项由 `railButtons` 算：宿主写了 `#rail` 就只剩内置那五项
           （追加项改由插槽给出），没写就连追加的一起代画。
@@ -459,10 +459,10 @@ function activate(item: RailItem) {
           v-for="item in railButtons(!!$slots.rail)"
           :key="item.key"
           type="button"
-          class="ed-rail-item"
+          class="tdm-rail-item"
           :class="{
-            'ed-rail-item--active': item.key === activeRailKey,
-            'ed-rail-item--group-start': item.groupStart,
+            'tdm-rail-item--active': item.key === activeRailKey,
+            'tdm-rail-item--group-start': item.groupStart,
           }"
           :aria-label="item.tip"
           :aria-current="item.key === activeRailKey"
@@ -472,7 +472,7 @@ function activate(item: RailItem) {
           @blur="hideTip"
         >
           <!-- 描边粗细/端点交给 CSS，fill 由属性决定：两者控制不同的属性，不会互相覆盖 -->
-          <svg class="ed-rail-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <svg class="tdm-rail-icon" viewBox="0 0 24 24" aria-hidden="true">
             <path
               v-for="(part, i) in item.icon"
               :key="i"
