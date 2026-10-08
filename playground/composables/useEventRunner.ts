@@ -1,6 +1,6 @@
 import { MODEL_EVENT_LABELS, useSceneStore } from '../../src'
 import type { ModelEventPayload, ModelEventType, ModelConfig } from '../../src'
-import { pushEvent } from './useEditorState'
+import { pushEvent } from '../../src/editor/composables/useEditorState'
 
 /**
  * 模型事件脚本的执行者。

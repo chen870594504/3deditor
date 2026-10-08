@@ -1,12 +1,6 @@
-import { useSceneStore } from '../../src'
-import type {
-  ModelBounds,
-  ModelConfig,
-  ModelPickPayload,
-  ModelTransformPayload,
-  TransformMode,
-} from '../../src'
-import { createModelConfig } from '../../src/utils/config'
+import { useSceneStore } from '../../stores/scene'
+import type { ModelBounds, ModelConfig, ModelPickPayload, ModelTransformPayload, TransformMode } from '../../types'
+import { createModelConfig } from '../../utils/config'
 import { canvasApi, pushEvent } from './useEditorState'
 import type { PickedAsset } from './useEditorState'
 import { labelOf } from '../utils/modelLabel'

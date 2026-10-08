@@ -1,4 +1,4 @@
-import type { SceneConfig, ShadowConfig, SunConfig } from '../../src'
+import type { SceneConfig, ShadowConfig, SunConfig } from '../../types'
 
 /**
  * 场景预设：**几个时间点的光照与光影**。

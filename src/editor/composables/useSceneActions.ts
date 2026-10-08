@@ -1,4 +1,4 @@
-import { useSceneStore } from '../../src'
+import { useSceneStore } from '../../stores/scene'
 import { previewMode, pushEvent } from './useEditorState'
 import { cancelFloorplanTool, clearSelection } from './useFloorplanTool'
 

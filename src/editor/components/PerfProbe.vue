@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useLoop } from '@tresjs/core'
 import type { WebGLRenderer } from 'three'
-import type { SceneStats } from '../../src'
+import type { SceneStats } from '../../types'
 
 defineOptions({ name: 'PerfProbe' })
 

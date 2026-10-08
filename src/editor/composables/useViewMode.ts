@@ -1,6 +1,9 @@
 import { nextTick } from 'vue'
-import { DEFAULT_SCENE_CONFIG, useSceneStore, viewModeOf } from '../../src'
-import type { CameraConfig, ViewMode } from '../../src'
+import { DEFAULT_SCENE_CONFIG } from '../../utils/config'
+import { useSceneStore } from '../../stores/scene'
+import { viewModeOf } from '../../utils/viewMode'
+import type { CameraConfig } from '../../types'
+import type { ViewMode } from '../../utils/viewMode'
 import { pushEvent } from './useEditorState'
 
 /**

@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { useSceneStore } from '../../../src'
-import type { SkyboxFaces } from '../../../src'
-import { parseModelParts } from '../../../src'
+import { useSceneStore } from '../../../stores/scene'
+import type { SkyboxFaces } from '../../../types'
+import { parseModelParts } from '../../../utils/modelParts'
 import {
   BUILTIN_KEYS,
   resolveLibrarySection,

@@ -3,7 +3,7 @@ import { computed, watch } from 'vue'
 import { useGLTF } from '@tresjs/cientos'
 import { Box3, Vector3 } from 'three'
 import type { Mesh } from 'three'
-import { wallFaceIsSheet } from '../../src'
+import { wallFaceIsSheet } from '../../utils/wallFace'
 
 defineOptions({ name: 'ModelMeasureProbe' })
 

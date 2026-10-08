@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, useTemplateRef } from 'vue'
-import { useSceneStore } from '../../../src'
+import { useSceneStore } from '../../../stores/scene'
 import { activeTab } from '../../composables/useEditorState'
 import { createInspectorTabs } from '../../composables/useInspectorSchema'
 import { useRailTip } from '../../composables/useRailTip'

@@ -1,7 +1,7 @@
 import { computed, ref } from 'vue'
 import { activeEventTypes, migrateConfig, useSceneStore } from '../../src'
 import type { DeepPartial, SceneConfig } from '../../src'
-import { canvasApi, pushEvent, sceneName } from './useEditorState'
+import { canvasApi, pushEvent, sceneName } from '../../src/editor/composables/useEditorState'
 
 /** 配置文件的格式版本，用于将来做向后兼容 */
 const CONFIG_VERSION = 1

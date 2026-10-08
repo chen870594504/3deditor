@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { useSceneStore } from '../../../src'
-import type { FloorplanOpening, FloorplanWall } from '../../../src'
-import { cloneFloorplanPatch, removeWall, wallLength } from '../../../src'
+import { useSceneStore } from '../../../stores/scene'
+import type { FloorplanOpening, FloorplanWall } from '../../../types'
+import { cloneFloorplanPatch } from '../../../utils/config'
+import { removeWall, wallLength } from '../../../utils/floorplan'
 import { pushEvent } from '../../composables/useEditorState'
 
 defineOptions({ name: 'FloorplanStructureList' })

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { DoubleSide, Euler, Vector3 } from 'three'
-import type { FloorplanPoint } from '../../src'
+import type { FloorplanPoint } from '../../types'
 import { foundationDrag, hoverPoint, selectionHighlight, wallChain } from '../composables/useFloorplanTool'
 
 defineOptions({ name: 'SceneFloorplanDraft' })

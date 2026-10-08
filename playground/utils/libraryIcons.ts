@@ -1,4 +1,4 @@
-import type { LibraryIconPath } from '../composables/useModelLibrary'
+import type { LibraryIconPath } from '../../src/editor/composables/useModelLibrary'
 
 /**
  * 「家具」「设备」两个分类的导轨图标。

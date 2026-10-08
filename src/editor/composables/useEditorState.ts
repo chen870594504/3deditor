@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import type { ModelBounds, SceneConfig, SceneStats, TransformMode } from '../../src'
+import type { ModelBounds, SceneConfig, SceneStats, TransformMode } from '../../types'
 
 /**
  * 编辑器自身的 UI 状态。
@@ -30,7 +30,7 @@ export const activeTab = ref<InspectorTab>('model')
  *
  * **左栏只有这一页了。**「场景预设」曾经是左栏第二个页面（`LeftTab = 'preset'
  * | 'library'`），点了整个面板换掉；它搬到右栏「日照环境」的 03 节之后
- * （`playground/components/inspector/PresetList.vue`），左栏的页面状态没有了对象，
+ * （`src/editor/components/inspector/PresetList.vue`），左栏的页面状态没有了对象，
  * 那个 ref 与它的类型一起删掉。
  *
  * 删掉之后顺带少了一件事：面板体上那个 `:key="leftTab"` 是为「切页面时整块重建、

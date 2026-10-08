@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { useSceneStore, activeEventTypes } from '../../../src'
-import type { ModelConfig } from '../../../src'
+import { useSceneStore } from '../../../stores/scene'
+import { activeEventTypes } from '../../../utils/eventCode'
+import type { ModelConfig } from '../../../types'
 import { labelOf } from '../../utils/modelLabel'
 import { eventDialogOpen } from '../../composables/useEditorState'
 import type { IconPath } from '../../composables/useInspectorSchema'

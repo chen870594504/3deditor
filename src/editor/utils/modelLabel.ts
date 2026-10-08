@@ -1,5 +1,5 @@
-import { deriveModelId } from '../../src'
-import type { ModelConfig } from '../../src'
+import { deriveModelId } from '../../utils/modelId'
+import type { ModelConfig } from '../../types'
 
 /**
  * 模型列表主行显示的名字。

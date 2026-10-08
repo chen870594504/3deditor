@@ -2,18 +2,18 @@
 import { computed, onUnmounted, ref, useTemplateRef, watch } from 'vue'
 import { SceneViewer, activeEventTypes, useSceneStore } from '../../src'
 import type { ModelBounds, ModelTransformPayload, SceneConfig, SceneStats, TransformMode } from '../../src'
-import PerfProbe from './PerfProbe.vue'
-import ModelActions from './ModelActions.vue'
-import FloorplanTools from './FloorplanTools.vue'
-import PreviewBar from './PreviewBar.vue'
-import SceneFloorplanDraft from './SceneFloorplanDraft.vue'
+import PerfProbe from '../../src/editor/components/PerfProbe.vue'
+import ModelActions from '../../src/editor/components/ModelActions.vue'
+import FloorplanTools from '../../src/editor/components/FloorplanTools.vue'
+import PreviewBar from '../../src/editor/components/PreviewBar.vue'
+import SceneFloorplanDraft from '../../src/editor/components/SceneFloorplanDraft.vue'
 import {
   canvasApi,
   gizmoMode,
   previewMode,
   pushEvent,
   stats,
-} from '../composables/useEditorState'
+} from '../../src/editor/composables/useEditorState'
 import {
   floorplanEnabled,
   floorplanHint,
@@ -23,11 +23,11 @@ import {
   onFloorplanPointerLeave,
   onFloorplanPointerMove,
   onFloorplanPointerUp,
-} from '../composables/useFloorplanTool'
-import { commitTransform, selectPickedModel } from '../composables/useModelActions'
+} from '../../src/editor/composables/useFloorplanTool'
+import { commitTransform, selectPickedModel } from '../../src/editor/composables/useModelActions'
 import { runModelEvent } from '../composables/useEventRunner'
-import { setViewMode, viewModeOf } from '../composables/useViewMode'
-import type { ViewMode } from '../composables/useViewMode'
+import { setViewMode, viewModeOf } from '../../src/editor/composables/useViewMode'
+import type { ViewMode } from '../../src/editor/composables/useViewMode'
 
 defineOptions({ name: 'SceneStage' })
 

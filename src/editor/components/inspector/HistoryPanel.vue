@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useSceneStore } from '../../../src'
+import { useSceneStore } from '../../../stores/scene'
 
 defineOptions({ name: 'HistoryPanel' })
 

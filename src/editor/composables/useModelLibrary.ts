@@ -1,6 +1,8 @@
 import { computed, type ComputedRef } from 'vue'
-import { useEditorAssets, useSceneStore } from '../../src'
-import type { EditorAssetEntry, SkyboxFaces } from '../../src'
+import { useEditorAssets } from '../assets'
+import { useSceneStore } from '../../stores/scene'
+import type { EditorAssetEntry } from '../assets'
+import type { SkyboxFaces } from '../../types'
 
 /**
  * 模型库。

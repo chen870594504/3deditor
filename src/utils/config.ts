@@ -163,7 +163,7 @@ export const DEFAULT_SCENE_CONFIG: SceneConfig = {
      * 为什么是 120 / 150）：退到 110 上下，整块地平面就都在取景里了。
      *
      * 这个数还有一个下游：编辑器的 2D 俯视档进来时站的高度是 110
-     * （`playground/composables/useViewMode.ts` 的 `TOP_DISTANCE`）。它必须**高于**
+     * （`src/editor/composables/useViewMode.ts` 的 `TOP_DISTANCE`）。它必须**高于**
      * 那个高度——低于就会被 OrbitControls 悄悄夹回来（按下去像是没生效），
      * 持平则俯视里只能往里缩、往外一滚就顶在上限上不动。150 留出 40 的余量，
      * 刚好够滚到「整块 120 见方的地都进画面」（那需要 145）。两个数是一对，

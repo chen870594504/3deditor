@@ -2,8 +2,8 @@
 import { computed, ref } from 'vue'
 import { useSceneStore } from '../../src'
 import { useConfigIO } from '../composables/useConfigIO'
-import { sceneName } from '../composables/useEditorState'
-import { redo, togglePreview, undo } from '../composables/useSceneActions'
+import { sceneName } from '../../src/editor/composables/useEditorState'
+import { redo, togglePreview, undo } from '../../src/editor/composables/useSceneActions'
 
 defineOptions({ name: 'AppHeader' })
 

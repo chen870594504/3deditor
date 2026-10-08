@@ -143,7 +143,7 @@ export interface ModelConfig {
    *
    * 这个字段引入之前，`url === ''` 只有两种意思：「内置示例几何体」与「不是模型
    * （天空盒条目）」。现在多了第三种：**这一件由 `partsJson` 生成**。
-   * 于是 `playground/composables/useModelLibrary.ts` 的 `sceneUrls`（一个
+   * 于是 `src/editor/composables/useModelLibrary.ts` 的 `sceneUrls`（一个
    * `Set<url>`）**不能**再回答「这一格在不在场景里」——场景里只要有一个程序生成的
    * 模型，所有空 `url` 的条目会一起亮起来。那边为此另起了一个 `scenePartsJsons`，
    * 与天空盒那次事故是同一个坑。

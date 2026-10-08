@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref } from 'vue'
-import { useSceneStore } from '../../../src'
+import { useSceneStore } from '../../../stores/scene'
 import { getPath, setPath } from '../../utils/path'
 import { defaultFor, INSPECTOR_ACTIONS, resolvePath } from '../../composables/useInspectorSchema'
 import type { FieldDef } from '../../composables/useInspectorSchema'

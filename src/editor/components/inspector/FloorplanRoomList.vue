@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { useSceneStore } from '../../../src'
-import type { FloorplanRoom } from '../../../src'
-import { cloneFloorplanPatch } from '../../../src'
+import { useSceneStore } from '../../../stores/scene'
+import type { FloorplanRoom } from '../../../types'
+import { cloneFloorplanPatch } from '../../../utils/config'
 import { setPath } from '../../utils/path'
 import TextControl from './controls/TextControl.vue'
 

@@ -1,13 +1,9 @@
 import { MathUtils } from 'three'
-import {
-  DEFAULT_SCENE_CONFIG,
-  DEFAULT_WALL_HEIGHT,
-  DEFAULT_WALL_THICKNESS,
-  activeEventTypes,
-  cloneFloorplanPatch,
-  useSceneStore,
-} from '../../src'
-import type { SceneConfig } from '../../src'
+import { DEFAULT_SCENE_CONFIG, cloneFloorplanPatch } from '../../utils/config'
+import { DEFAULT_WALL_HEIGHT, DEFAULT_WALL_THICKNESS } from '../../utils/floorplan'
+import { activeEventTypes } from '../../utils/eventCode'
+import { useSceneStore } from '../../stores/scene'
+import type { SceneConfig } from '../../types'
 /**
  * 工厂从 `src/utils/config` 直接引入，不走 `'../../src'` 那个入口。
  *
@@ -16,7 +12,7 @@ import type { SceneConfig } from '../../src'
  * 这一层没做成公开导出：宿主想要一份新模型，`addModel()` 就是那个入口，
  * 再开一个具名导出只是为了让这个面板少写一行 import。
  */
-import { createModelConfig } from '../../src/utils/config'
+import { createModelConfig } from '../../utils/config'
 import { getPath, setPath } from '../utils/path'
 import { canvasApi, eventDialogOpen, uniformScale } from './useEditorState'
 import type { InspectorTab } from './useEditorState'

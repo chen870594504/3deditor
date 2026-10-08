@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted } from 'vue'
 import AppHeader from './components/AppHeader.vue'
-import EventBindingDialog from './components/inspector/EventBindingDialog.vue'
-import InspectorPanel from './components/inspector/InspectorPanel.vue'
+import EventBindingDialog from '../src/editor/components/inspector/EventBindingDialog.vue'
+import InspectorPanel from '../src/editor/components/inspector/InspectorPanel.vue'
 import SceneStage from './components/SceneStage.vue'
-import SidePanel from './components/side/SidePanel.vue'
+import SidePanel from '../src/editor/components/side/SidePanel.vue'
 import { useConfigIO } from './composables/useConfigIO'
-import { eventDialogOpen, gizmoMode, previewMode, pushEvent } from './composables/useEditorState'
-import { cancelFloorplanTool, clearSelection, floorplanTool, selectedOpening, selectedWall } from './composables/useFloorplanTool'
-import { exitPreview, redo, undo } from './composables/useSceneActions'
+import { eventDialogOpen, gizmoMode, previewMode, pushEvent } from '../src/editor/composables/useEditorState'
+import { cancelFloorplanTool, clearSelection, floorplanTool, selectedOpening, selectedWall } from '../src/editor/composables/useFloorplanTool'
+import { exitPreview, redo, undo } from '../src/editor/composables/useSceneActions'
 import type { TransformMode } from '../src'
 
 defineOptions({ name: 'App' })

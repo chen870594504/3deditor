@@ -1,4 +1,4 @@
-import type { DeepPartial, SceneConfig } from '../../src'
+import type { DeepPartial, SceneConfig } from '../../types'
 
 /**
  * 按 'camera.fov' 这样的路径读写嵌套对象。

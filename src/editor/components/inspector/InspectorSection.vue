@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { useSceneStore } from '../../../src'
+import { useSceneStore } from '../../../stores/scene'
 import type { SectionDef } from '../../composables/useInspectorSchema'
 import InspectorField from './InspectorField.vue'
 

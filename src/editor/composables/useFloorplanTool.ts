@@ -1,40 +1,9 @@
 import { computed, ref } from 'vue'
-import { useSceneStore } from '../../src'
-import type {
-  DeepPartial,
-  FloorplanConfig,
-  FloorplanOpening,
-  FloorplanOpeningKind,
-  FloorplanPoint,
-  FloorplanWall,
-  OpeningGap,
-  OpeningRejectReason,
-} from '../../src'
-import {
-  CELL_SIZE,
-  DEFAULT_WALL_HEIGHT,
-  DEFAULT_WALL_THICKNESS,
-  DOOR_HEIGHT,
-  DOOR_WIDTH,
-  WINDOW_HEIGHT,
-  WINDOW_SILL,
-  WINDOW_WIDTH,
-  cloneFloorplanPatch,
-  createFloorplanId,
-  findEnclosedArea,
-  findNearestWall,
-  openingFreeGap,
-  openingMagnetOffset,
-  openingRejectReason,
-  pickRoomColor,
-  pointAlongWall,
-  pointInPolygon,
-  removeWall,
-  resolveOpeningDrag,
-  wallLength,
-  wallPieces,
-  wallRotationY,
-} from '../../src'
+import { useSceneStore } from '../../stores/scene'
+import type { DeepPartial, FloorplanConfig, FloorplanOpening, FloorplanOpeningKind, FloorplanPoint, FloorplanWall } from '../../types'
+import type { OpeningGap, OpeningRejectReason } from '../../utils/floorplan'
+import { CELL_SIZE, DEFAULT_WALL_HEIGHT, DEFAULT_WALL_THICKNESS, DOOR_HEIGHT, DOOR_WIDTH, WINDOW_HEIGHT, WINDOW_SILL, WINDOW_WIDTH, createFloorplanId, findEnclosedArea, findNearestWall, openingFreeGap, openingMagnetOffset, openingRejectReason, pickRoomColor, pointAlongWall, pointInPolygon, removeWall, resolveOpeningDrag, wallLength, wallPieces, wallRotationY } from '../../utils/floorplan'
+import { cloneFloorplanPatch } from '../../utils/config'
 /**
  * 「算不算一次点击」的判据从 `src/utils/pointerClick.ts` 直接引入，不走 `'../../src'` 入口。
  *
@@ -42,8 +11,8 @@ import {
  * 另写一套阈值的话，拖着转视角就会顺手落下一个点，与「拖着转视角顺手选中了模型」
  * 是同一类 bug。`useInspectorSchema.ts` 引 `createModelConfig` 是同一个先例。
  */
-import { CLICK_MAX_DRIFT, isClickGesture, trackPress } from '../../src/utils/pointerClick'
-import type { PressRecord } from '../../src/utils/pointerClick'
+import { CLICK_MAX_DRIFT, isClickGesture, trackPress } from '../../utils/pointerClick'
+import type { PressRecord } from '../../utils/pointerClick'
 import { applyMeasuredAssetSize, canvasApi, openLibrarySection, pickedAssetOf, previewMode, pushEvent, setAssetPick, toggleAssetPick } from './useEditorState'
 import type { PickedAsset } from './useEditorState'
 import type { LibrarySectionKey } from './useModelLibrary'

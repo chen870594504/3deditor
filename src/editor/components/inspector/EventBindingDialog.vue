@@ -1,17 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, useTemplateRef, watch } from 'vue'
-import {
-  MODEL_EVENT_LABELS,
-  MODEL_EVENT_TYPES,
-  defaultEventCode,
-  deriveModelId,
-  useSceneStore,
-} from '../../../src'
-import type {
-  DeepPartial,
-  ModelEventHandler,
-  ModelEventType,
-} from '../../../src'
+import { MODEL_EVENT_LABELS, MODEL_EVENT_TYPES, defaultEventCode } from '../../../utils/eventCode'
+import { deriveModelId } from '../../../utils/modelId'
+import { useSceneStore } from '../../../stores/scene'
+import type { DeepPartial, ModelEventHandler, ModelEventType } from '../../../types'
 import { eventDialogOpen } from '../../composables/useEditorState'
 
 defineOptions({ name: 'EventBindingDialog' })
