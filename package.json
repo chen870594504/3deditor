@@ -4,6 +4,9 @@
   "description": "基于 Vue3 + TresJS 的可嵌入 3D 场景插件",
   "type": "module",
   "license": "MIT",
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
   "author": "陈盛君 <870594504@qq.com>",
   "repository": {
     "type": "git",
