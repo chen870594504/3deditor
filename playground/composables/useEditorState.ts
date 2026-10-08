@@ -1,6 +1,5 @@
 import { ref } from 'vue'
 import type { ModelBounds, SceneConfig, SceneStats, TransformMode } from '../../src'
-import { DEFAULT_LIBRARY_SECTION_KEY } from './useModelLibrary'
 
 /**
  * 编辑器自身的 UI 状态。
@@ -48,8 +47,14 @@ export const activeTab = ref<InspectorTab>('model')
  * 是运行时的。代价是这里写错一个内置 key 不再是编译错误——那道守卫留在了它真正
  * 管得住的地方：`SECTION_ICONS satisfies SafeIcons`（漏图标）与 `TOOL_ASSET_RULES`
  * （工具绑到不存在的分类），两处都仍然只认那个字面量联合。
+ *
+ * **初值是空串，不是某个分类的 key。** 原先它取「第一个有货的内置分类」
+ * （`useModelLibrary.ts` 里一个由清单推出来的常量），而清单改成宿主注入之后
+ * 那条链就断了：这份 ref 在模块求值时就要有一个值，那时 `inject` 还拿不到东西。
+ * 空串由 `resolveLibrarySection` 兜住——它取不到就把「第一个有货的分类」顶上来，
+ * 于是行为与改造前一致，而「默认落在哪一类」这条规则也重新只存在于一个地方。
  */
-export const librarySection = ref<string>(DEFAULT_LIBRARY_SECTION_KEY)
+export const librarySection = ref<string>('')
 
 /**
  * 切到模型库的某个分类。
@@ -74,19 +79,19 @@ export interface PickedAsset {
   url: string
   label: string
   /**
-   * 「这张贴图一个 uv 重复铺几米见方」，来自模型清单（`LibraryFile.span`）。
+   * 「这张贴图一个 uv 重复铺几米见方」，来自模型清单（`EditorAssetEntry.span`）。
    *
    * **可选，因为不是每一种料都需要**：眼下只有地板用它（`layFloorModel` 拿它算
    * 出 `ModelConfig.repeat`，图案的实物尺寸才不会随区域大小变），墙那条链铺的是
    * 一整块面、没有可平铺的格子，自然不带。
    *
    * 它是**资产的属性**，一路从清单原样搬到这里，中间谁都不解释它——解释在
-   * `useModelLibrary.ts` 的 `LibraryFile.span` 上。
+   * `useModelLibrary.ts` 的 `EditorAssetEntry.span` 上。
    */
   span?: number
   /**
    * 这件资产要在墙上**占一个多大的洞口**（米），与 `span` 同一性质、同一来路
-   * （`LibraryFile.width` / `height` 上有完整解释），可选、只对门有意义。
+   * （`EditorAssetEntry.width` / `height` 上有完整解释），可选、只对门有意义。
    *
    * 不写就退回 `DOOR_WIDTH` / `DOOR_HEIGHT`，也就是「照 0.9 × 2.1 开洞」那条
    * 改造前的老路径。**用 `??` 读，不按真假判**——理由与 `span` 一字不差。
@@ -209,7 +214,7 @@ const SIZE_WARNED = new Set<string>()
  * ——用一个 bug 换掉另一个 bug。
  *
  * 根子上，这两个数**本来就不是一回事**：清单里那个是「**洞口**要开多大」，
- * 是一件设计决定（`LibraryFile.width` 那段写着「带门套的资产量出来会比门扇宽一圈，
+ * 是一件设计决定（`EditorAssetEntry.width` 那段写着「带门套的资产量出来会比门扇宽一圈，
  * 写哪个取决于想让墙上的洞开多大」）；量出来的是**资产的外廓**，是一件事实。
  * 拿事实覆盖决定，只在那个决定本来就不存在（清单没写）时才成立。
  *

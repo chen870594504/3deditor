@@ -4,10 +4,11 @@ import { useSceneStore } from '../../../src'
 import type { SkyboxFaces } from '../../../src'
 import { parseModelParts } from '../../../src'
 import {
-  LIBRARY_SECTIONS,
+  BUILTIN_KEYS,
   resolveLibrarySection,
   scenePartsJsons,
   sceneUrls,
+  useLibrarySections,
 } from '../../composables/useModelLibrary'
 import type { LibraryEntry, MergedLibrarySection } from '../../composables/useModelLibrary'
 import { librarySection, pushEvent } from '../../composables/useEditorState'
@@ -27,22 +28,29 @@ import ModelMeasureProbe from '../ModelMeasureProbe.vue'
 defineOptions({ name: 'ModelLibrary' })
 const scene = useSceneStore()
 
-const props = withDefaults(
-  defineProps<{
-    /**
-     * 左栏那张**合并表**：内置五类 + 宿主追加的那些（`SidePanel.vue` 建的表）。
-     *
-     * 不传就是内置五类本身，于是这个组件单独用时与改造前完全一样——
-     * 它自己**不造表**，只是把拿到的表当「有哪些分类」用。
-     *
-     * 表的来路只有 `SidePanel` 一个，所以导轨高亮与这里的宫格读的是同一个
-     * `resolveLibrarySection`、同一张表（那条老约束：两边各写各的时，一个对不上的
-     * key 会让导轨亮着这一类而面板里是另一类，两边都不报错）。
-     */
-    sections?: MergedLibrarySection[]
-  }>(),
-  { sections: () => LIBRARY_SECTIONS },
-)
+const props = defineProps<{
+  /**
+   * 左栏那张**合并表**：内置五类 + 宿主追加的那些（`SidePanel.vue` 建的表）。
+   *
+   * 不传就是内置五类本身，于是这个组件单独用时与改造前完全一样——
+   * 它自己**不造表**，只是把拿到的表当「有哪些分类」用。
+   *
+   * 表的来路只有 `SidePanel` 一个，所以导轨高亮与这里的宫格读的是同一个
+   * `resolveLibrarySection`、同一张表（那条老约束：两边各写各的时，一个对不上的
+   * key 会让导轨亮着这一类而面板里是另一类，两边都不报错）。
+   *
+   * 没有 `withDefaults` 的默认值：内置那五类现在是 `useLibrarySections()` 算出来的
+   * （条目来自宿主注入的素材），拿不到一个能写在 prop 默认值里的常量。
+   * 兜底改成下面那个 `table`。
+   */
+  sections?: MergedLibrarySection[]
+}>()
+
+/** 内置五类，条目来自宿主注入的素材。只在这个组件没拿到合并表时用 */
+const builtinSections = useLibrarySections()
+
+/** 这一栏真正读的那张表：宿主给的表优先，没给就用内置五类 */
+const table = computed<MergedLibrarySection[]>(() => props.sections ?? builtinSections.value)
 
 /**
  * 当前分类。
@@ -55,30 +63,28 @@ const props = withDefaults(
  * 「页面」的集合，并进去就意味着每切一次分类都重建整个组件，`broken` 连同已经加载好的
  * 缩略图全部作废，表现是来回切分类时图闪白、失败的图重发请求。左栏只剩这一页之后
  * 那个 key 没有了（见 `useEditorState.ts` 里 `librarySection` 的注释），
- * 但分类与面板仍然是两层，宫格那个 `:key="librarySection"` 管的是滚动位置（见模板里那段）。
+ * 但分类与面板仍然是两层，宫格那个 `:key="section.key"` 管的是滚动位置（见模板里那段）。
  *
  * 默认落在**第一个有模型的分类**上——规则跟着数据走，所以它现在指到的是「地板」
- * （两条），而不是按语义排在最前的那一条，也不是写死的第一条。定义在
- * `useModelLibrary.ts` 的 `DEFAULT_LIBRARY_SECTION_KEY` 里。
+ * （两条），而不是按语义排在最前的那一条，也不是写死的第一条。这条规则只写在
+ * `resolveLibrarySection` 一处（`useModelLibrary.ts`），初始值那个空串由它兜住。
  *
  * 兜底也不省：取不到就退回第一条，宫格整块消失比退回第一条糟得多。
  * 与导轨的高亮共用 `resolveLibrarySection` 同一个函数、同一张表，两边不会不一致。
  * 宿主把一个追加分类从表里撤掉、而左栏正停在它上面时，退回的正是内置第一条。
  */
-const section = computed(() => resolveLibrarySection(librarySection.value, props.sections))
+const section = computed(() => resolveLibrarySection(librarySection.value, table.value))
 
 /**
  * 当前这一类是不是**宿主追加**的（不在内置五类里）。
  *
- * 判据是「在不在 `LIBRARY_SECTIONS` 里」，不新造常量、也不看这个 prop 是谁给的：
+ * 判据是「在不在 `BUILTIN_KEYS` 里」，不新造常量、也不看这个 prop 是谁给的：
  * 合并表恒是「内置五类 + 追加的那些」的拼接，所以对任意一张传进来的表这句话都成立。
  *
  * 它的用处只有一个——决定 `#list` 插槽管不管得着这一类（见模板）。**内置分类
  * 永远走内置宫格**，插槽管不到：那是「插槽只用于追加、不作为覆盖」这条约定的落点。
  */
-const isExtraSection = computed(
-  () => !LIBRARY_SECTIONS.some((builtin) => builtin.key === section.value.key),
-)
+const isExtraSection = computed(() => !BUILTIN_KEYS.includes(section.value.key))
 
 /**
  * 这一栏里点的格子，现在是「选来当料用」还是「替换一个已选中的东西」。
@@ -348,7 +354,7 @@ function applyMeasured(size: { url: string; width: number; height: number }) {
 /**
  * 缩略图加载失败的条目。
  *
- * 只存在组件里，**不写回 LIBRARY_SECTIONS**：后者是「服务器上有什么」这份数据，
+ * 只存在组件里，**不写回素材表**：后者是「宿主给了什么」这份数据（`EditorAssets`），
  * 这里是「这一次渲染有没有拿到图」，两者混在一起之后，刷新列表也没法让它复原。
  *
  * 记在组件级而不是随分类重建：同一张图挂在两个分类里时两边都该回退占位图，
@@ -457,7 +463,7 @@ function add(entry: LibraryEntry) {
   if (intent?.mode === 'pick' && entry.url) {
     /*
       `span` / `width` / `height` 原样搬过去：它们是这件资产的属性，
-      不是这个组件能解释的东西（解释在 `useModelLibrary.ts` 的 `LibraryFile` 上）。
+      不是这个组件能解释的东西（解释在 `EditorAssetEntry` 类型上）。
       **三个都整份带上，不按分类挑**——今天只有门与窗写了后两个、只有地板写第一个，
       而「哪一类有哪个数」是清单的事，这里多写一句判断就等于在界面上再抄一遍那张表。
     */
@@ -693,9 +699,13 @@ function toggleSkybox(entry: LibraryEntry) {
     宫格**自己就是那个滚动口**（.ed-list--grow + .ed-scroll），是左栏唯一的滚动列表，
     5px 内边距来自 `.ed-list` 本身（右栏那几份清单也一样，见 editor.scss 里的分节）。
 
-    `:key="librarySection"` 是**功能必需，不是为了动画**：不加它，这个 div 在分类
+    `:key="section.key"` 是**功能必需，不是为了动画**：不加它，这个 div 在分类
     之间是同一个元素，`scrollTop` 会被留下来——从一条长列表切到另一条仍溢出的
     列表时，一进新分类就落在半中间甚至掉到底部。换 key 让它重新挂载，位置自然归零。
+
+    取**解出来的** `section.key` 而不是 `librarySection` 本身：后者初值是空串
+    （见 `useEditorState.ts`），拿它当 key 会让宫格在「用户第一次点分类」时
+    白重挂一次；而兜底落回的那一类本来就与当前显示的是同一类，不该重挂。
 
     key 落在**这个元素**上，不能上提到 `<ModelLibrary :key>`：Vue 的 key 只改这
     一个 vnode 的身份，重挂的是元素、不是组件实例，于是 `broken` 与已经加载好的
@@ -706,7 +716,7 @@ function toggleSkybox(entry: LibraryEntry) {
     `v-if` 那一族分支当根是合法的（先例 InspectorField.vue），这里没有
     attrs 要透传；父级 `.ed-side-body` 是 flex 列，所以撑满 / 贴顶的行为与改造前一致。
   -->
-  <div v-else-if="section.entries.length" :key="librarySection" class="ed-list ed-list--grow ed-scroll ed-lib-grid">
+  <div v-else-if="section.entries.length" :key="section.key" class="ed-list ed-list--grow ed-scroll ed-lib-grid">
     <button v-for="entry in section.entries" :key="entry.key" type="button" class="ed-item ed-lib-cell"
       :class="{ 'ed-item--active': isInScene(entry), 'ed-lib-cell--picked': isPicked(entry) }"
       :aria-label="describeEntry(entry)" @click="add(entry)">

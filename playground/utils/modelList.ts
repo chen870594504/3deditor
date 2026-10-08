@@ -1,24 +1,31 @@
+import type { EditorAssetEntry } from '../../src'
+
 /**
- * 模型的清单。
+ * 模型的清单——**这是宿主那一侧的数据**。
+ *
+ * 库只认「一份宿主传进来的表」（`createThreeDMaker({ assets })`），本文件就是
+ * playground 作为宿主传进去的那一份。搬到 `src/` 之前它连着素材根地址一起写在
+ * 编辑器里，而根地址读 `import.meta.env`、库构建会把它**内联进产物**——
+ * 于是每一家宿主的 `dist/index.js` 里都会带上本仓库那台服务器。拆开之后
+ * 库那一半一个字面量地址都不含。
  *
  * 单独拆出来只是因为这一类的模型会长（每种地板都是一张贴图加一个 glb），
- * 全摆在 `useModelLibrary.ts` 的 `LIBRARY` 字面量里会把那个文件撑得很长。
- * **它仍然是写死的清单**，与 `LIBRARY` 里直接内联的那些分类没有区别——
- * 见那边的顶部注释：不抓服务器目录是有意的取舍，不是还没做。
+ * 全摆进下面那几行会把本文件撑得很长。
+ * **它仍然是写死的清单**：不抓服务器目录是有意的取舍，不是还没做。
  *
  * `file` 是服务器上 `floor/` 下的**子目录名**，目录里放同名的 `.glb` 与 `.png`
  * （`tile1` → `floor/tile1/tile1.glb` 与 `floor/tile1/tile1.png`）。
- * 分类那一段目录名不在这里写，它取 `LIBRARY` 里那个分类的 `key`。
+ * 分类那一段目录名不在这里写，它取分类自己的 `key`。
  *
- * `span` 是**这件资产的一张贴图铺几米见方**（下面 `LibraryFile.span` 有完整解释）。
+ * `span` 是**这件资产的一张贴图铺几米见方**（`EditorAssetEntry.span` 有完整解释）。
  * 两块地板都写 2.4 是因为它们的美术尺寸本来就大致相当：`tile1` 的一张图里是
  * 4 × 4 块砖 → 一块砖 0.6 米；`wood` 的一张图里是 12 行板 → 一条板 0.2 米宽。
  * 换资产时这个数**要照新图里的格子数重算**，不是照抄。
  */
-export const FLOOR: { label: string; file: string; span: number }[] = [
+export const FLOOR = [
   { label: '瓷砖地板', file: 'tile1', span: 2.4 },
   { label: '木制地板', file: 'wood', span: 2.4 },
-]
+] satisfies readonly EditorAssetEntry[]
 
 /**
  * 墙壁的外观模型。
@@ -30,10 +37,10 @@ export const FLOOR: { label: string; file: string; span: number }[] = [
  * 现成的空态文案（见 `useModelLibrary.ts` 顶上那段 `files: []` 的说明）。
  * 所以「上传了资产但还没来这里加一行」的表现是**空分类**，不是报错。
  */
-export const WALL: { label: string; file: string }[] = [
+export const WALL = [
   { label: '墙壁1', file: 'wall1' },
   { label: '墙壁2', file: 'wall2' }
-]
+] satisfies readonly EditorAssetEntry[]
 
 /**
  * 门的外观模型。
@@ -81,9 +88,9 @@ export const WALL: { label: string; file: string }[] = [
  * 而事实可以是脏的。换了资产、或者哪天这份 glb 清理干净了，
  * 拿 `node scripts/measure-glb.mjs` 量一遍再回来改这个数。
  */
-export const DOOR: { label: string; file: string; width: number; height: number }[] = [
+export const DOOR = [
   { label: '双开玻璃门', file: 'doubleGlassDoor', width: 1.8, height: 2.1 },
-]
+] satisfies readonly EditorAssetEntry[]
 
 /**
  * 窗的外观模型。
@@ -143,9 +150,9 @@ export const DOOR: { label: string; file: string; width: number; height: number 
  * 那时编辑器量出来的数会被填进去；写了就照写的开洞，两边差到 3 倍以上时
  * 控制台会点一句名（那说明清单或资产有一个是错的，而它说得出是哪一个）。
  */
-export const WINDOW: { label: string; file: string; width: number; height: number }[] = [
+export const WINDOW = [
   { label: '窗户1', file: 'window1', width: 2.5, height: 2.7 },
-]
+] satisfies readonly EditorAssetEntry[]
 
 /**
  * 天空盒。
@@ -169,7 +176,7 @@ export const WINDOW: { label: string; file: string; width: number; height: numbe
  */
 const SKY_BOX_COUNT = 32
 
-export const SKY_BOX: { label: string; file: string }[] = [
+export const SKY_BOX = [
   /*
     「空盒子」排在最前面，`file` 空串。
 
@@ -195,4 +202,4 @@ export const SKY_BOX: { label: string; file: string }[] = [
     { length: SKY_BOX_COUNT },
     (_, i) => ({ label: `天空盒${i + 1}`, file: `bak${i + 1}` }),
   ),
-]
+] satisfies readonly EditorAssetEntry[]

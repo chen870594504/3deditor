@@ -1,5 +1,6 @@
 import type { App, Component, Plugin } from 'vue'
 import { createPinia } from 'pinia'
+import { EDITOR_ASSETS_KEY, EMPTY_EDITOR_ASSETS } from './editor/assets'
 import SceneFloorplan from './components/SceneFloorplan.vue'
 import SceneToolbar from './components/SceneToolbar.vue'
 import SceneViewer from './components/SceneViewer.vue'
@@ -158,6 +159,20 @@ export { viewModeOf } from './utils/viewMode'
 export type { ViewMode } from './utils/viewMode'
 
 /**
+ * 编辑器素材的类型与读取入口。
+ *
+ * 类型随包导出，是因为宿主写 `createThreeDMaker({ assets })` 时就是照它们拼那份表。
+ * `useEditorAssets` 也导出，理由与 `resolveSceneSwitches` 那类一样——**宿主自己也
+ * 绕不过去**：宿主想在画布外层自己摆一栏（正是「嵌进已有布局」那个用法），
+ * 渲染的是同一份素材，不导出就只能把那份表另存一份副本，两份迟早不一致。
+ *
+ * 三个类型的完整含义（尤其那五个承重的分类 key）在 `editor/assets.ts` 上。
+ */
+export { useEditorAssets } from './editor/assets'
+
+export type { EditorAssetCategory, EditorAssetEntry, EditorAssets } from './editor/assets'
+
+/**
  * 模型 id 的派生子。
  *
  * `object-click` 载荷里的 id 就是这么算出来的，导出它是为了让宿主
@@ -245,7 +260,7 @@ declare module 'vue' {
  * ```
  */
 export function createThreeDMaker(options: ThreeDMakerOptions = {}): Plugin {
-  const { pinia, registerComponents = true, prefix = 'Tdm' } = options
+  const { pinia, registerComponents = true, prefix = 'Tdm', assets } = options
 
   return {
     install(app: App) {
@@ -256,6 +271,17 @@ export function createThreeDMaker(options: ThreeDMakerOptions = {}): Plugin {
       if (!app.config.globalProperties.$pinia) {
         app.use(pinia ?? createPinia())
       }
+
+      /**
+       * 素材走 `provide` 而不是模块级常量：这份值在库的模块求值那一刻还不存在
+       * （它来自宿主），而模块级常量要跟着宿主变就只能改写成一份**模块级可变状态**
+       * ——那是 SSR 下会串请求的写法。`app.provide` 在 `app.use()` 时就位，
+       * 晚于所有模块求值、早于任何组件 setup，正是这条链唯一站得住的时机。
+       *
+       * 没传就是 `EMPTY_EDITOR_ASSETS`（空地址、空分类）：编辑器据此渲染空态，
+       * 不发任何请求、不报错，库一个字面量地址都不含。
+       */
+      app.provide(EDITOR_ASSETS_KEY, assets ?? EMPTY_EDITOR_ASSETS)
 
       if (!registerComponents) return
 

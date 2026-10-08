@@ -1,5 +1,6 @@
 import type { Pinia } from 'pinia'
 import type { Object3D } from 'three'
+import type { EditorAssets } from './editor/assets'
 
 /**
  * 天空盒的六个面。
@@ -628,6 +629,17 @@ export interface ThreeDMakerOptions {
 
   /** 全局组件名前缀，默认 'Tdm' */
   prefix?: string
+
+  /**
+   * 编辑器要用的一整套素材（根地址 + 分类清单），走 `provide` 发给整棵树。
+   *
+   * 写在这一层而不是 `SceneViewer` 的 prop 上，是为了让宿主**只写一次**：
+   * 一个页面里挂几个 `SceneViewer` 都共用同一份，不必逐个传。
+   *
+   * **不传就是空**：编辑器渲染一句空态，不发任何请求。库不含任何默认地址——
+   * 素材从哪来是宿主的事，见 `EditorAssets`。
+   */
+  assets?: EditorAssets
 }
 
 /** SceneViewer 组件属性 */

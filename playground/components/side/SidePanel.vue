@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, useTemplateRef } from 'vue'
 import { librarySection, openLibrarySection } from '../../composables/useEditorState'
-import { LIBRARY_SECTIONS, resolveLibrarySection } from '../../composables/useModelLibrary'
+import { resolveLibrarySection, useLibrarySections } from '../../composables/useModelLibrary'
 import type {
   ExtraLibrarySection,
   LibrarySection,
@@ -35,12 +35,17 @@ const props = withDefaults(
  * 合并表：内置五类在前、宿主追加的在后。**导轨与宫格读的是同一个数组**，
  * 所以两边不可能对不上（`resolveLibrarySection` 那边的注释讲了代价）。
  *
+ * 内置那五类由 `useLibrarySections()` 现算：它们的**条目**来自宿主注入的素材
+ * （`useEditorAssets`），不再是模块常量——见 `useModelLibrary.ts` 顶上那一节。
+ *
  * 追加的那几类排在最末（天空盒之后）。天空盒之所以排在内置的末尾，是因为
  * 它不是「往场景里摆的实体」；追加分类接在它后面，读起来是「另一组」，
  * 分割线由每一项自己的 `groupStart` 给出（见 `railButtons`）。
  */
+const builtinSections = useLibrarySections()
+
 const sections = computed<MergedLibrarySection[]>(() => [
-  ...LIBRARY_SECTIONS,
+  ...builtinSections.value,
   ...props.extraSections,
 ])
 
@@ -303,16 +308,22 @@ function sectionRailItem(section: MergedLibrarySection, groupStart: boolean): Ra
 /**
  * 数组顺序即导轨从上到下的顺序。
  *
- * 分类项**由 `LIBRARY_SECTIONS` 派生**：加一个分类只需要往那份数据里加一行，
- * 导轨自动多一格，不出现「数据里有、界面上没有」。
+ * 分类项**由 `useLibrarySections()` 派生**：那五个内置分类的顺序只写在
+ * `useModelLibrary.ts` 的 `LIBRARY_SHAPE` 一处，导轨自动跟着，不出现
+ * 「数据里有、界面上没有」。
  *
  * 每一项的 `groupStart` 都是 false：那条第几项上的分隔线原先分的是「页面级的
  * 预设页」与「模型库的分类」，现在整条导轨都是分类，没有可分的两组。
  *
  * 这里**只有内置那五类**。宿主追加的分类在下面的 `extraRailItems` 里，
  * 两者由 `railButtons` 决定怎么合并。
+ *
+ * 写成 computed 而不是常量：内置那五类现在是算出来的（条目来自宿主注入的素材），
+ * 不再是模块常量。
  */
-const RAIL_ITEMS: RailItem[] = LIBRARY_SECTIONS.map((section) => sectionRailItem(section, false))
+const RAIL_ITEMS = computed<RailItem[]>(() =>
+  builtinSections.value.map((section) => sectionRailItem(section, false)),
+)
 
 /** 宿主追加的那几项，只在宿主没写 `#rail`（不想自己画）时由组件代画 */
 const extraRailItems = computed<RailItem[]>(() =>
@@ -336,7 +347,9 @@ const extraRailItems = computed<RailItem[]>(() =>
  * 于是导轨的顺序与「翻到底才见到追加的分类」是同一件事。
  */
 function railButtons(hostDrawsExtras: boolean): RailItem[] {
-  return hostDrawsExtras ? RAIL_ITEMS : [...RAIL_ITEMS, ...extraRailItems.value]
+  return hostDrawsExtras
+    ? RAIL_ITEMS.value
+    : [...RAIL_ITEMS.value, ...extraRailItems.value]
 }
 
 const navRef = useTemplateRef<HTMLElement>('nav')
@@ -438,7 +451,7 @@ function activate(item: RailItem) {
       -->
       <div class="ed-rail" @mouseleave="hideTip" @scroll="hideTip">
         <!--
-          待画的项由 `railButtons` 算：宿主写了 `#rail` 就只剩内置那六项
+          待画的项由 `railButtons` 算：宿主写了 `#rail` 就只剩内置那五项
           （追加项改由插槽给出），没写就连追加的一起代画。
           `!!$slots.rail` 必须在**这里**读——理由写在 `railButtons` 上面那段。
         -->

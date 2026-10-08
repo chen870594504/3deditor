@@ -483,7 +483,7 @@ export function layFloorModel(
       用户报的那个现象：地基画多大，砖就有多大。
 
       `span` 是资产自己的属性（一个 uv 重复铺几米），一路从模型清单原样搬到这里
-      （`LibraryFile.span` → `LibraryEntry.span` → `PickedAsset.span`），
+      （`EditorAssetEntry.span` → `LibraryEntry.span` → `PickedAsset.span`），
       解释在清单那边。不合法的值（0、负数、NaN）当没写，走兜底——
       重复次数为 0 或负数会让采样塌成一条线。
     */
