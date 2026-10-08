@@ -1,5 +1,5 @@
 {
-  "name": "3deditor",
+  "name": "@chen870594504/3deditor",
   "version": "0.1.2",
   "description": "基于 Vue3 + TresJS 的可嵌入 3D 场景插件",
   "type": "module",
@@ -41,6 +41,9 @@
   "sideEffects": [
     "**/*.css"
   ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
   "scripts": {
     "dev": "vite",
     "build": "pnpm typecheck && vite build --mode lib",

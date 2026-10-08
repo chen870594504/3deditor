@@ -1,4 +1,4 @@
-# 3deditor
+# @chen870594504/3deditor
 
 一句话：这是一个 Vue 3 插件，给你的网页装上一块 **3D 画布**。你往里丢 glTF / GLB 模型，它能同时摆好几个、调相机和日照阴影、还能画户型图（墙 / 门窗 / 房间）。
 
@@ -12,17 +12,60 @@
 
 这段在装包。装完你就能 `import` 它了。
 
+包发在 **GitHub Packages** 上：
+
+```bash
+pnpm add @chen870594504/3deditor three pinia @tresjs/core @tresjs/cientos
+```
+
+运行后会发生什么：pnpm 从 GitHub Packages 拉下**构建好的产物**，放进 `node_modules/@chen870594504/3deditor`。这条路上没有构建步骤，所以不会因为构建工具而挑你的 Node 版本（`engines` 那条不匹配时只会打一句警告）。
+
+### 先配 registry 与令牌——这一步不能省
+
+GitHub Packages 有一条和 npmjs 不一样的规矩：
+
+> **即使包是公开的，读取也强制带令牌。** 匿名拉会直接吃一个
+
+```
+401 Unauthorized
+```
+
+这个失败信号很坑人：`401` 看起来像"包名写错了"，而不像"缺令牌"，第一次接入的人多半会先去翻自己的包名。
+
+所以在项目根建一个 `.npmrc`（已有就往后加两行）：
+
+```
+@chen870594504:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}
+```
+
+第一行把 `@chen870594504` 这个 scope 分流到 GitHub Packages。**漏了它，npm 会去 npmjs 找这个包——那边没有，报的是 404，同样很像"名字写错了"。**
+
+第二行给它令牌。令牌去 GitHub 的 Settings → Developer settings → Personal access tokens 建一个 **classic** token，勾 `read:packages` 就够（公开包只读，不需要 `repo`）。`${GITHUB_TOKEN}` 用哪个环境变量名随你，改名字就把这里一起改。
+
+> **代价是每个项目、每台 CI 都要各配一次**，令牌一过期就集体拉不动。不想付这个代价的话，见下面「另一条路」。
+
+### 另一条路：从 git 装
+
+直接从仓库装，**匿名可拉、不需要任何令牌**：
+
 ```bash
 pnpm add github:chen870594504/3deditor three pinia @tresjs/core @tresjs/cientos
 ```
 
-运行后会发生什么：pnpm 从 GitHub 把仓库拉下来，在你的机器上现场构建一遍，然后把产物放进 `node_modules/3deditor`。
+装出的目录名同样是 `node_modules/@chen870594504/3deditor`，所以**两条路的 `import` 语句一模一样**。区别只在代价落在哪一头：
 
-### 这个包不在 npm 上
+|  | GitHub Packages | 从 git 装 |
+| --- | --- | --- |
+| 令牌 | 每个项目各配一次 | 不需要 |
+| 拿到的是什么 | 构建好的产物 | 仓库源码，**在你的机器上现构建** |
+| 首次装耗时 | 快 | 慢几分钟 |
+| 你的 Node | 不匹配时只是 `engines` 警告 | **必须 20.19+ / 22.12+**，否则构建失败且报错里不提 Node |
+| 额外的闸 | — | pnpm 默认拦构建脚本，要放行一次 |
 
-它**没有发到任何 npm 源**。你从上面那条 GitHub 地址直接装。仓库是公开的，所以匿名就能拉——不需要令牌，也不用配 `.npmrc` 的 registry。
+后面两节**只在这条路上成立**。
 
-### 你的 Node 必须是 20.19+ 或 22.12+
+### 你的 Node 必须是 20.19+ 或 22.12+（git 装）
 
 **这是硬要求，不是建议。**
 
@@ -32,12 +75,12 @@ pnpm add github:chen870594504/3deditor three pinia @tresjs/core @tresjs/cientos
 
 所以：**先敲一句 `node -v`**。能省掉一整轮排查。
 
-### 第一次装还会失败一次——别慌，这是正常的
+### 第一次装还会失败一次——别慌，这是正常的（git 装）
 
 pnpm 默认**不执行依赖的构建脚本**。而这个包必须构建一次（下面讲为什么），于是 pnpm 把你拦下来：
 
 ```
-ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED  The git-hosted package "3deditor@0.1.1"
+ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED  The git-hosted package "@chen870594504/3deditor@0.1.2"
 needs to execute build scripts but is not in the "onlyBuiltDependencies" allowlist.
 ```
 
@@ -56,14 +99,16 @@ needs to execute build scripts but is not in the "onlyBuiltDependencies" allowli
 ```yaml
 # pnpm 10.x —— 键是列表，填裸包名
 onlyBuiltDependencies:
-  - "3deditor"
+  - "@chen870594504/3deditor"
 ```
 
 ```yaml
 # pnpm 11.x —— 键是映射，键要带完整说明符，值填 true
 allowBuilds:
-  3deditor@https://codeload.github.com/chen870594504/3deditor/tar.gz/1a679eb57dd2e1a006282def542cccd03e989c9f: true
+  "@chen870594504/3deditor@https://codeload.github.com/chen870594504/3deditor/tar.gz/1a679eb57dd2e1a006282def542cccd03e989c9f": true
 ```
+
+> **键必须加引号。** 包名以 `@` 开头，而 YAML 里 `@` 是保留字符、不能作裸键的开头（实测：不加引号直接报 `while scanning for the next token`）。原来的 `3deditor@…` 没有前导 `@` 才不用引——**改了名之后这里就多了一道**。pnpm 打出来的那段未必带引号，照抄时记得补上。
 
 > **在 pnpm 11 上，请把版本钉死。** 它要的那个键**里面带着 commit**（上面那条里的 `1a679eb…`）。意思是上游每推一个新提交，这个键就失配一次，同一道闸再拦你一回。把地址钉成 `github:chen870594504/3deditor#<commit 或 tag>` 之后键就固定了——这也是下面「想锁死版本」那个做法的额外好处。
 
@@ -105,8 +150,8 @@ allowBuilds:
 ```ts
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
-import { createThreeDMaker } from '3deditor'
-import '3deditor/style.css' // 必须引入，否则组件没有样式
+import { createThreeDMaker } from '@chen870594504/3deditor'
+import '@chen870594504/3deditor/style.css' // 必须引入，否则组件没有样式
 
 const app = createApp(App)
 app.use(createPinia()) // 可选：不装插件会自己建一个内部实例
@@ -116,7 +161,7 @@ app.mount('#app')
 
 运行后会发生什么：应用启动时插件注册了 3 个全局组件，从这一刻起任何 `.vue` 文件里都能直接写 `<TdmSceneViewer />`。
 
-⚠️ **`import '3deditor/style.css'` 这一行不能省。** 省了不会报错，但你的画布会是一堆没有外观的裸 DOM——颜色、边框、按钮全没有。
+⚠️ **`import '@chen870594504/3deditor/style.css'` 这一行不能省。** 省了不会报错，但你的画布会是一堆没有外观的裸 DOM——颜色、边框、按钮全没有。
 
 `createThreeDMaker` 一共收三个选项：
 
@@ -137,7 +182,7 @@ interface ThreeDMakerOptions {
 
 ```vue
 <script setup lang="ts">
-import { SceneViewer, useSceneStore } from '3deditor'
+import { SceneViewer, useSceneStore } from '@chen870594504/3deditor'
 
 const scene = useSceneStore()
 </script>
@@ -212,8 +257,8 @@ resolveSceneSwitches({ editable })
 ```vue
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { SceneViewer } from '3deditor'
-import type { ModelTransformPayload } from '3deditor'
+import { SceneViewer } from '@chen870594504/3deditor'
+import type { ModelTransformPayload } from '@chen870594504/3deditor'
 
 // 组件交出五个方法（captureCamera / measureModel / groundPointAt /
 // getSceneData / loadSceneData），拿实例的方式是普通的模板 ref
@@ -255,7 +300,7 @@ function onTransform(payload: ModelTransformPayload) {
 ```vue
 <script setup lang="ts">
 import { onMounted } from 'vue'
-import { SceneViewer, useSceneStore } from '3deditor'
+import { SceneViewer, useSceneStore } from '@chen870594504/3deditor'
 
 const scene = useSceneStore()
 
@@ -338,7 +383,7 @@ scene.canUndo / scene.canRedo / scene.history
 ```vue
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { SceneViewer } from '3deditor'
+import { SceneViewer } from '@chen870594504/3deditor'
 
 const saved = ref(null)
 
@@ -367,8 +412,8 @@ onMounted(async () => {
 
 ```vue
 <script setup lang="ts">
-import { SceneViewer } from '3deditor'
-import type { EditorPanelTab } from '3deditor'
+import { SceneViewer } from '@chen870594504/3deditor'
+import type { EditorPanelTab } from '@chen870594504/3deditor'
 
 const sideTabs: EditorPanelTab[] = [
   { key: 'device', label: '设备' },        // 有 key 就够，图标不写会退回占位字形
@@ -581,7 +626,7 @@ interface ModelTransformPayload {
 `migrateConfig` 单独导出，因为"你自己读盘、自己 `applyConfig`"那条路同样合法：
 
 ```ts
-import { migrateConfig } from '3deditor'
+import { migrateConfig } from '@chen870594504/3deditor'
 
 scene.applyConfig(migrateConfig(await fetch('/api/scene/9f2').then((r) => r.json())))
 ```

@@ -269,8 +269,8 @@ declare module 'vue' {
  *
  * ```ts
  * import { createApp } from 'vue'
- * import { createThreeDMaker } from '3deditor'
- * import '3deditor/style.css'
+ * import { createThreeDMaker } from '@chen870594504/3deditor'
+ * import '@chen870594504/3deditor/style.css'
  *
  * createApp(App).use(createThreeDMaker()).mount('#app')
  * ```

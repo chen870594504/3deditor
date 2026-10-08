@@ -1965,28 +1965,37 @@ playground/              宿主示例，不会进入库产物。只放库碰不�
 scripts/smoke.mjs        打包产物冒烟测试
 ```
 
-## 分发：从 git 安装
+## 分发
 
-包**没有发到任何 npm 源上**，宿主直接从这个仓库装：
+**包发在 GitHub Packages（`npm.pkg.github.com`）上，包名 `@chen870594504/3deditor`**，宿主据此装：
+
+```bash
+pnpm add @chen870594504/3deditor three pinia @tresjs/core @tresjs/cientos
+```
+
+**scope 必须等于仓库 owner** 是 GitHub Packages 的硬规矩，也是名字从 `3deditor` 改成这个形式的
+唯一原因。改名波及**每一条导入语句**——README 里十几处、`src/index.ts` 的 JSDoc 示例，以及宿主
+已有的代码。**但 `3deditor:` 这个日志前缀与 `.3deditor.json` 这个扩展名不是包名，不要跟着改**：
+设计决定 21 与目视清单按它们写死了断言，跟着改会让文档与实现对不上。
+
+**从 git 装这条路仍然保留**，宿主匿名可拉、不需要任何令牌：
 
 ```bash
 pnpm add github:chen870594504/3deditor three pinia @tresjs/core @tresjs/cientos
 ```
 
-仓库是公开的，所以**匿名可拉**——不需要令牌、不需要配 registry。宿主那侧的完整说法（含五个
-peer、Node 版本要求，以及那道随 pnpm 版本换形态的放行）在 [README](README.md) 的「安装」一节里。
+两条路装出来的目录名**完全相同**（`node_modules/@chen870594504/3deditor`），所以宿主那份 `import`
+两边通用——这让「主路径换成 registry」没有额外迁移成本。宿主那侧的完整说法（含五个 peer、Node
+版本要求、两道闸）在 [README](README.md) 的「安装」一节里；下面只记**为什么留这两条、各自堵在哪**。
 
-**`package.json` 的 `name` 仍是 `3deditor`**（不带 scope）。它现在只是包的身份标识，不再对应
-任何注册表——GitHub Packages 强制 scope 等于仓库 owner，要走那条得改回
-`@chen870594504/3deditor`，既然不发源就没必要。
-
-**本仓库没有 `.npmrc`**：原先那份只为了分流 scope，已删除。不要在将来为了「配一下 registry」
-把它加回来——现在没有任何注册表要配。**`publishConfig` 也删了**：`access: "public"`
-只对 scope 包有意义。
+**发布的目标 registry 由 `package.json` 的 `publishConfig.registry` 声明，不靠 `.npmrc`。**
+本仓库里**不放 `.npmrc`，也不要加回来**：令牌只住在发布者自己的用户级 `~/.npmrc` 里，往仓库里塞
+一份带 `_authToken` 的会被直接提交上去（`.gitignore` 不排除它，与硬性约束 7 里 `.env` 的情形同类），
+**令牌就是这么泄出去的**。
 
 ### 怎么走到这一步的
 
-三段，每一段都堵在前一段的失败上。
+三条候选各堵在一处，最后落成「GitHub Packages 主 + git 装备」。
 
 1. **GitHub Packages**（包名 `@chen870594504/3deditor`）。堵在**拉取门槛**：GitHub Packages
    **即使包是公开的，读取也强制带令牌**，不支持匿名安装。这是它与 npmjs 最大的区别，实测过：
@@ -2003,7 +2012,7 @@ peer、Node 版本要求，以及那道随 pnpm 版本换形态的放行）在 [
    `401 Unauthorized` 看起来像「包名写错了」而不像「缺令牌」，初次接入的人多半会先怀疑
    自己的配置。顺带还有第二类坑：GitHub Packages 强制 scope 等于仓库 owner，于是包名、
    `.npmrc` 的 scope 分流、`publishConfig.registry` **三处必须完全一致**，不一致的表现是
-   `npm publish` 悄悄发到 registry.npmjs.org 去了而不报错。
+   `npm publish` 悄悄发到**默认 registry** 指向的那个源去了而不报错。
 
 2. **npmjs**（包名 `3deditor`，不带 scope）。匿名可拉，上面两条坑一起消失。堵在**发布的
    2FA**：npm 现在**强制**发布账户开 2FA（或用一个勾了 Bypass 2FA 的细粒度令牌），否则
@@ -2018,9 +2027,26 @@ peer、Node 版本要求，以及那道随 pnpm 版本换形态的放行）在 [
    而 2FA 的绑定（验证器 App 扫码，或安全密钥）在这个环境里没能完成——没有 USB 密钥，
    扫码也失败。于是这条路走不通，**不是「开关没打开」，是绑定做不了**。
 
-3. **从 git 装**（本节）。绕开注册表，也绕开 2FA。代价转移到宿主的安装体验上，见下。
+3. **从 git 装**。绕开注册表，也绕开 2FA。代价转移到宿主的安装体验上，见下。
 
-### `prepare` 是分发的必需钩子，不要删
+**三条的路标是「代价落在谁头上」**，这正是选第一条的理由：
+
+| | 代价落在谁头上 | 一次性的还是每次都付 |
+| --- | --- | --- |
+| GitHub Packages | 每个宿主各配一次 `read:packages` 令牌 | 一次配置，之后不再痛 |
+| npmjs | 发布者过一道本环境跨不过去的 2FA | **跨不过去就是跨不过去** |
+| 从 git 装 | 每个宿主首次安装等几分钟 + 过 pnpm 那道放行 | 每个项目、每台 CI 各付一次 |
+
+第 2 条是**能力问题**而不是意愿问题：本环境的验证器绑定做不了（没有 USB 密钥，扫码也失败），
+所以它出局。剩下两条都要宿主付出点什么，选 GitHub Packages 是因为它的代价**配一次就结束**，
+而 git 装的代价（现场构建、挑 Node、构建脚本放行）在每个新项目、每台新 CI 上各来一遍。
+
+> 顺带一条当天实测：`~/.npmrc` 里那个 npmjs 令牌**已经失效**（`GET /-/whoami` → `401`），
+> GitHub Packages 那个仍然有效。也就是说第 2 条今天连「发布」这一步都进不去。
+
+### `prepare` 是 git 安装的必需钩子，不要删
+
+**只有 git 那条路需要它**：从 registry 装拿到的是已构建的产物，npm / pnpm 不会为它跑 `prepare`。
 
 `dist/` 被 `.gitignore` 排除，`files` 又只收 `dist`，所以从 git 装时**必须现构建一次**。
 `package.json` 里的 `"prepare": "npm run build:only"` 就是干这个的：pnpm / npm 处理 git 依赖
@@ -2040,7 +2066,8 @@ peer、Node 版本要求，以及那道随 pnpm 版本换形态的放行）在 [
 
 ### 宿主侧的那道放行
 
-pnpm 10 起默认不执行依赖的构建脚本，git 依赖因此会被拦下（下面是 pnpm 10.28.2 的原文）：
+pnpm 10 起默认不执行依赖的构建脚本，git 依赖因此会被拦下（下面是 pnpm 10.28.2 的原文，捕获于
+改名之前，所以名字还是不带 scope 的旧形式）：
 
 ```
 ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED  The git-hosted package "3deditor@0.1.1"
@@ -2069,6 +2096,10 @@ needs to execute build scripts but is not in the "onlyBuiltDependencies" allowli
 - **pnpm 10 对完整说明符是硬报错而不是「不匹配」**：它把 `allowBuilds` 的键按包名 /
   版本范围解析，`name@git+file://…#<sha>` 不是合法版本范围，于是 `ERR_PNPM_INVALID_VERSION_UNION`
   （文案是 `Use exact versions only.`）在**读配置那一刻**就炸了，跟放不放行无关。
+- **改名之后，那个键必须加引号。** scope 包名以 `@` 开头，而 YAML 把 `@` 列为保留字符、不能作
+  裸键的开头（实测：不加引号直接报 `while scanning for the next token`）。原来的 `3deditor@…`
+  没有前导 `@` 才不用引——**改名给宿主多加了一道**，而报错信息打出来的那段未必带引号。
+  这条是静态的语法约束，与 pnpm 版本无关，两版都要加。宿主侧的对应条目在 README「安装」一节。
 
 **踩过的弯路，记一笔**：这个矩阵第一次跑时，pnpm 11 连它自己打印出来的那一行都没放行。
 原因是探针放在 `C:\Users\华聪\…` 下，而 pnpm 内部按**百分号编码**的说明符比对
@@ -2088,7 +2119,8 @@ needs to execute build scripts but is not in the "onlyBuiltDependencies" allowli
 好在**报错信息会把该抄的那一段原样打出来**（连内容一起，直接粘进 `pnpm-workspace.yaml` 即可），
 不需要去查文档。要留意的是**那一段是跟着 pnpm 版本走的**，别照抄别人的。
 
-实测过一轮完整的 `pnpm add git+file://…`（pnpm 10.28.2）：
+实测过一轮完整的 `pnpm add git+file://…`（pnpm 10.28.2；**本节往下的实测记录都跑在改名之前**，
+那时包名还是不带 scope 的 `3deditor`，所以下面出现的旧名字是当时的真实输出，不是笔误）：
 
 - 不放行 → 上面那个 `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED`
 - 放行后 → pnpm 在克隆里**自跑一遍 `pnpm install`**（130 个 devDeps，含 vite / vue-tsc /
@@ -2111,18 +2143,30 @@ Vite 对低于要求的版本**只打一行黄色警告就继续往下跑**（`c
 里只有 `3deditor` 自己。所以 README 那条「五个 peer 必须显式装」**在 git 安装下同样成立，
 而且更要紧**——不显式装，宿主自己那份与插件那份就是两份，而两份的后果全是静默失败。
 
-### 真要发源的话
+### 发到 GitHub Packages
 
-`prepublishOnly`（`pnpm build && pnpm smoke`）留着，它守的是「发出去的产物必须是刚构建的」：
+`prepublishOnly`（`pnpm build && pnpm smoke`）就是这条路的守卫，它守的是「发出去的产物必须是
+刚构建的」：
 
 `dist/` 被 `.gitignore` 排除，`files` 又只收 `dist`，所以没这道钩子时 `pnpm publish` 会把
 **上一次构建的陈旧产物**、甚至空目录发出去，而 npm 不会因此报错——表现是宿主装到了旧版本，
 怎么改代码都不生效。
 
-将来若真要发到某个源上：**版本号必须递增**（同一个版本任何源都不接受覆盖）；
-**白名单看一眼** `npm pack --dry-run`，确认只有 `dist/` + `README` + `LICENSE`；
-**`dist/style.css` 必须在里面**（组件样式是副作用导入，漏了它构建照样成功，宿主却渲染出一片
-裸 DOM，不报错）；发 npmjs 还要先解决上面那个 2FA。
+发布前的三条自查：
+
+1. **版本号必须递增**——同一个版本任何源都不接受覆盖，而 GitHub Packages **不允许删除已发布的
+   版本**，发错了只能往上加号。
+2. **白名单看一眼** `npm pack --dry-run`，确认只有 `dist/` + `README` + `LICENSE`。
+3. **`dist/style.css` 必须在里面**：组件样式是副作用导入，漏了它构建照样成功、宿主却渲染出一片
+   裸 DOM，而这个不报错。
+
+**`publishConfig.registry` 是唯一把 PUT 指到 GitHub Packages 的东西。** 漏了或写错，npm 会照
+**默认 registry** 发：本机全局 `.npmrc` 指的是 npmmirror 那个只读镜像，PUT 不会成功；但换台
+默认指向 npmjs 的机器就会真发出去。所以**发完要去 GitHub 的 packages 页面确认那个版本确实
+出现了**，别只看命令行没报错。
+
+> 今天实测的发布锚点：scope `@chen870594504` 的令牌（classic PAT）有效，`npm whoami` 认得出
+> `chen870594504`；该名下此前只有一个 `0.1.0`（当年那次尝试留下的），本次发的是 `0.1.2`。
 
 ## 后续可以做的事
 

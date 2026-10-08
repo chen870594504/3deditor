@@ -6,8 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `3deditor` 是一个**同时具有两个身份**的仓库：
 
-- **发布态**：npm 包 `3deditor`（**没有发到任何源上**，宿主直接从 git 装，见「分发」），其他项目
-  `app.use(createThreeDMaker())` + `import '3deditor/style.css'` 获得 3D 场景能力
+- **发布态**：npm 包 `@chen870594504/3deditor`（发在 **GitHub Packages** 上，宿主也可匿名从 git
+  装，见「分发」），其他项目 `app.use(createThreeDMaker())` +
+  `import '@chen870594504/3deditor/style.css'` 获得 3D 场景能力
 - **开发态**：`playground/` 是一个可独立运行的场景编辑器，同时是插件的**第一个消费者**
 
 分层依据是本仓库最重要的一条铁律，**它已经改写过一次**：
@@ -256,15 +257,28 @@ API 是什么（签名 / 默认值 / 字段含义 / 用法规则）、以及宿�
 
 ### 分发
 
-包名 **`3deditor`**（不带 scope），**没有发到任何 npm 源上**——宿主直接
-`pnpm add github:chen870594504/3deditor three pinia @tresjs/core @tresjs/cientos`
-从这个仓库装。仓库公开，所以匿名可拉，不需要令牌也不需要配 registry。
-宿主那侧的说法（含五个 peer、Node 版本要求，以及那道放行）在 README 的「安装」一节里。
+包名 **`@chen870594504/3deditor`**，发在 **GitHub Packages**（`npm.pkg.github.com`）上。scope 必须
+等于仓库 owner，所以名字从 `3deditor` 改成了这个形式——**改名波及所有导入语句**，宿主与做演示的
+文档都要跟着走。
 
-走到这一步是被堵了两次：GitHub Packages 强制「公开包也要带令牌拉取」；换到 npmjs 后又卡在
-**发布强制 2FA**，而这个环境的验证器绑定做不了（没有 USB 密钥，扫码也失败）。三轮的实测
-记录与代价都在 DESIGN.md「分发：从 git 安装」里——**那是「为什么不是别的方案」的唯一落点**，
-不要再往 README 里写一遍。
+发布用 `pnpm publish`（`prepublishOnly` 会先跑一遍 `build + smoke`）。**推送到哪个 registry 由
+`package.json` 的 `publishConfig.registry` 声明**，不靠 `.npmrc`。
+
+宿主有两条装法，代价落在不同处，README 的「安装」一节是给宿主看的完整说法：
+
+- **GitHub Packages**（主路径）：拿到的是构建好的产物、不挑 Node，但该源**即使包是公开的也强制
+  带令牌拉取**——每个项目、每台 CI 都要各配一次勾了 `read:packages` 的 classic PAT。失败信号是
+  一句 `401`，看起来很像「包名写错了」。
+- **从 git 装**（备选，一直留着）：匿名可拉、不需要令牌，代价是宿主机器上**现构建一次**，
+  于是连带挑 Node 版本、还要过 pnpm 那道构建脚本放行。
+
+**`3deditor:` 日志前缀与 `.3deditor.json` 扩展名不是包名，改名时不要动。** 设计决定 21 与目视清单
+按它们写死了断言，跟着改会让文档与实现对不上。真正在写导入语句的地方只有 README、`src/index.ts`
+的 JSDoc 示例。
+
+走到今天是被堵了两次才换的这条路：npmjs 匿名可拉但**发布强制 2FA**（本环境的验证器绑定做不了，
+没有 USB 密钥、扫码也失败），GitHub Packages 发布能过、卡在拉取门槛。三段的实测与代价都在
+DESIGN.md「分发」里——**那是「为什么是这条」的唯一落点**，不要再往 README 里写一遍。
 
 **两个钩子都别删，它们守的是同一件事的两半**：
 
@@ -275,14 +289,15 @@ API 是什么（签名 / 默认值 / 字段含义 / 用法规则）、以及宿�
   但别往它前面加 `typecheck` 之类会变慢又可能让安装失败的东西。
   它写 `npm run build:only` 而不是 `pnpm build:only`，是因为 pnpm 处理 git 依赖时是借 npm
   执行的，宿主那边不一定装了 pnpm。
-- **`prepublishOnly`（`pnpm build && pnpm smoke`）** —— 仍然留着，守的是「发出去的产物必须
-  是刚构建的」：`dist/` 被 `.gitignore` 排除、`files` 又只收 `dist`，没有这道钩子时
-  `pnpm publish` 会把陈旧产物甚至空目录发出去，而 npm 不会因此报错。
+- **`prepublishOnly`（`pnpm build && pnpm smoke`）** —— 守的是「发出去的产物必须是刚构建的」：
+  `dist/` 被 `.gitignore` 排除、`files` 又只收 `dist`，没有这道钩子时 `pnpm publish` 会把陈旧
+  产物甚至空目录发出去，而 npm 不会因此报错。**发 GitHub Packages 就走它。**
 
-**本仓库没有 `.npmrc`，不要加回来**——现在没有任何注册表要配。这条是硬性约束的一部分，
-不是「暂时删了」。
+**本仓库不放 `.npmrc`，也不要加回来。** registry 由 `publishConfig.registry` 声明，令牌只住在
+**发布者自己的用户级 `~/.npmrc`** 里。往仓库里塞一份带 `_authToken` 的 `.npmrc` 会被直接提交上去
+（`.gitignore` 不排除它，与硬性约束 7 里 `.env` 的情形是同一类），**令牌就是这么泄出去的**。
 
-宿主侧还有两道闸：
+git 安装那条路上，宿主侧还有两道闸：
 
 - pnpm 默认不跑依赖的构建脚本，git 依赖会被 `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED` 拦下，
   要在项目的 `pnpm-workspace.yaml` 里放行。**这道放行的键名与形态随 pnpm 版本变，四种组合
@@ -296,4 +311,4 @@ API 是什么（签名 / 默认值 / 字段含义 / 用法规则）、以及宿�
   宿主的包管理器会据此打一条警告——但默认只是警告不是拒绝（`engine-strict` 才是拒绝），
   所以这条主要还得靠文档说。
 
-完整说明见 DESIGN.md「分发：从 git 安装」。
+完整说明见 DESIGN.md「分发」。
