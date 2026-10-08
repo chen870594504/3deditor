@@ -660,7 +660,29 @@ export interface SceneViewerProps {
   /** 画布高度，数字按 px 处理，默认 '480px' */
   height?: string | number
 
-  /** 是否显示内置工具栏，默认 true */
+  /**
+   * 编辑模式总闸：一处开关管一整组，不传时与加它之前的行为逐字一致。
+   *
+   * 它**不新增任何能力**，只改下面那四个开关（`toolbar` / `pickable` /
+   * `selection` / `gizmo`）的默认值。生效规则是三级：
+   *
+   *     生效值 = 分开关 ?? editable ?? 旧默认
+   *
+   * - `false` —— **预览**：四个一律关掉。只想让人转着看时写它，就不必再记着关哪几个
+   *   （漏关一个不报错，画面上只是多出一截本不该有的东西）。
+   * - `true` —— **编辑**：四个一律打开。宿主想自己画工具栏，再补一个
+   *   `:toolbar="false"` 即可——分开关优先于总闸。
+   * - **不传** —— 完全按四个分开关各自的值来，也就是旧行为。
+   *
+   * 三级规则与每条排法的理由在 `utils/sceneSwitches.ts` 里，那里也是唯一的实现。
+   */
+  editable?: boolean
+
+  /**
+   * 是否显示内置工具栏，默认 true。
+   *
+   * 未显式传时先看 `editable`（`false` 会把它一并关掉），两个都没给才是上面那个默认值。
+   */
   toolbar?: boolean
 
   /** 是否自动旋转视角，默认 false */
@@ -691,6 +713,8 @@ export interface SceneViewerProps {
    *
    * 所以它不会让任何模型每帧被 raycast，也不需要模型自己开任何事件。
    * 点空白处（地面、背景）不会有任何事件——`modelPick` 只在真的点中模型时发出。
+   *
+   * 未显式传时先看 `editable`（`true` 会把它一并打开），两个都没给才是上面的默认值。
    */
   pickable?: boolean
 
@@ -707,6 +731,8 @@ export interface SceneViewerProps {
    * 代价：只对**选中的那一个**模型每帧做一次世界包围盒计算
    * （遍历它的网格，不做逐顶点迭代），与 `events` 那种「整棵子树每帧被 raycast」
    * 不是一回事。
+   *
+   * 未显式传时先看 `editable`（`true` 会把它一并打开），两个都没给才是上面的默认值。
    */
   selection?: boolean
 
@@ -722,6 +748,8 @@ export interface SceneViewerProps {
    *
    * 拖动期间会临时把轨道控制禁用（相机的 `enable` 由 cientos 的 TransformControls
    * 处理），所以转视角与拖手柄不会互相打架。
+   *
+   * 未显式传时先看 `editable`（`true` 会把它一并打开），两个都没给才是上面的默认值。
    */
   gizmo?: boolean
 

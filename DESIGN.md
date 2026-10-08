@@ -1,6 +1,6 @@
 # 设计决定与验证清单
 
-这个文件是 `3deditor` 仓库的**内部文档**：编辑器的设计、45 条编号设计决定、验收用的目视清单，
+这个文件是 `3deditor` 仓库的**内部文档**：编辑器的设计、46 条编号设计决定、验收用的目视清单，
 以及仓库目录结构与发布流程。给宿主看的用法在 [README.md](README.md) 里，两者刻意分开——
 README 回答「怎么用这个库」，这里回答「为什么这么写、改了要重新验什么」。
 
@@ -1136,14 +1136,43 @@ skybox/bak38/{back,down,front,left,right,top}.jpg
 
 **`selectedIndex` 与配置里那个模型是两条独立的线**，把两者接起来的是 `selectedModel` 这个 computed。单模型时代的那批入口（`model` prop、`setModel` / `clearModel` / `modelUrl` / `wireframe` / `hasModel`）语义一律收窄成「作用于当前选中的那一个」，所以场景里只有一个模型时，它们的行为与多模型之前完全一致——这是刻意的：改多模型不该让任何一个已发布的宿主改代码。
 
+**46. 编辑模式是一个总闸 prop，不是两个壳**
+
+`SceneViewer` 一个组件同时担着两种身份：只读预览、可编辑场景。原先宿主想要前面那一种，就得自己关掉四个开关（`toolbar` / `pickable` / `selection` / `gizmo`），而**漏关一个不报错**——画面上只是多出一截本来不该有的东西（多一条内置工具栏、点一下模型还会被选中）。现在有 `editable`：**一处开关管一整组**。
+
+它**不新增任何能力**，只改那四个开关的默认值。规则写成了一句、实现在 `utils/sceneSwitches.ts`：
+
+```
+生效值 = 分开关 ?? 总闸 ?? 旧默认
+```
+
+三级各排在这儿都有具体理由，不是随手定的：
+
+- **分开关优先于总闸**：「编辑模式，但不要那条内置工具栏」是真需求——`playground/components/SceneStage.vue` 就是这么用的（它自绘工具栏，所以 `:toolbar="false"` 配 `:editable="!previewMode"`）。总闸盖过分开关，这种组合就没法表达了。
+- **旧默认垫底**：`DEFAULT_SCENE_SWITCHES`（工具栏开、三个交互开关关）是**所有已发布宿主**的默认表现。垫在最底下，`<SceneViewer />` 一个开关都不传时的行为与加总闸之前**逐字一致**——这是「加一个 prop 不会悄悄改掉别人的页面」的唯一保证，所以那个常量被冻结、并且冒烟测试逐字段比它。
+
+几处**错了不报错**的地方记在这里：
+
+- **五个开关的 `withDefaults` 必须显式写 `undefined`。** Vue 对声明为布尔的 prop 有一条特例：**缺失且没有 default 时把值转成 `false`**（不是 `undefined`）。漏掉 `undefined` 的后果分两种，都不报错：
+  - `toolbar` / `pickable` / `selection` / `gizmo` 漏了：分开关恒有值，总闸永远轮不到，`:editable="true"` 成一句空话；
+  - `editable` 漏了：它默认变 `false`，**所有宿主一夜之间进入只读模式**——工具栏消失、点不中、手柄不出来。
+  写 `default: undefined` 是关掉那条特例的办法（`hasDefault` 为真即跳过转换），产物里能查到 `editable: { type: Boolean, default: void 0 }`。冒烟里「一个开关都不传仍然有内置工具栏」那一条守的就是它。
+- **为什么是「默认值提供者」而不是「模式开关」**：若 `editable: true` 一律**强制**打开四个开关，`SceneStage.vue` 那种「编辑 + 自绘工具栏」就表达不出来；若把默认值定成 `false`，就是上面那条灾难；定成 `true` 则会给所有不传它的宿主凭空加出手柄来。三态（不传 / `true` / `false`）是唯一既能表达全部组合、又不动已发布宿主行为的形状。
+- **为什么不拆成两个组件**：拆过一次（`ScenePreview` / `SceneEditor` 两个薄壳，各自把一组旗标钉死），代价立刻显出来——两套公开面要各自声明全部 prop、各自转发 12 个事件与 5 个方法，**漏一处都是静默失效**；而「钉死」本身还得靠「被固定的旗标仍然必须出现在 `defineProps` 里」这种反直觉的规矩撑着（不声明就会被 `$attrs` 透传下去、顶掉模板里的硬编码值，实测过）。一个 prop 把这些账全免了：公开面只有一份。
+- **规则只能有一份实现**：`resolveSceneSwitches` 从 `index.ts` 导出，组件与宿主用的是同一份。宿主自绘工具栏时若自己写一份判断，两处迟早不一致，症状是「按钮亮着可点、画布上却点不中」。
+- **模板里一律读 `switches`，不要直接读 prop。** 直接读 `props.pickable` 不报错，只是总闸整个失效——画面上表现为「传了 `editable` 没反应」。
+
+**它在仓库里有一个常驻消费者**：`playground/components/SceneStage.vue` 的预览态从一个 `!previewMode` 的三连绑定收成了一个 `:editable="!previewMode"`（行为逐字不变，省掉的是「漏写一个 `!previewMode` 就静默失效」那类账），目视清单第 144 条因此有地方能真跑一次。
+
 ---
 
 ## 验证覆盖到哪一步
 
-`pnpm verify` 会跑 `scripts/smoke.mjs`，直接加载 `dist/index.js` 在真实 Vue 应用里安装插件并渲染，覆盖 91 项：
+`pnpm verify` 会跑 `scripts/smoke.mjs`，直接加载 `dist/index.js` 在真实 Vue 应用里安装插件并渲染，覆盖 98 项：
 
-- **导出面与安装**：具名导出、install、全局组件注册、Pinia 复用/补建
+- **导出面与安装**：具名导出、install、全局组件注册（3 个）、Pinia 复用/补建
 - **真实渲染**：组件树能渲染、store id 带前缀、根节点与工具栏文案齐全
+- **编辑模式总闸**：`resolveSceneSwitches` 的 6 组组合逐一比对（不传 = 旧默认、`false` = 全关、`true` = 全开，以及两条「分开关压过总闸」），`DEFAULT_SCENE_SWITCHES` 的四个字段与「已冻结」；真实渲染里拿 SSR 看得见的那一个开关（内置工具栏）把四种写法各断一次，其中**一个开关都不传时仍然有工具栏**那一条同时守着「五个布尔必须显式 `undefined`」这个机制（漏了就是全体宿主进只读）。**点选 / 包围框 / 手柄一律不写断言**：它们在 `TresCanvas` 里，SSR 下不渲染，写了只会得到永远为真的假断言（见 CLAUDE.md），那三条只归目视清单 144-146
 - **样式产物**：组件样式类齐全、作用域样式存在、无全局 reset 泄漏、无 playground 样式混入
 - **配置模型**：`models` 是数组且默认为空、新造出来的条目字段齐全、5 类事件各自是独立对象（防别名）、store 是深拷贝（不会污染 `DEFAULT_SCENE_CONFIG`）、深合并不清空未提及的分支、`undefined` 被跳过、导出往返幂等
 - **历史栈**：undo/redo 能还原与前进、resetConfig 复位
@@ -1180,6 +1209,11 @@ skybox/bak38/{back,down,front,left,right,top}.jpg
 > 与之对照：`migrateConfig` 是**纯函数**（不依赖 three、不依赖 DOM），
 > 属于**够得着**冒烟测试的那一类——它眼下还没有断言，要补随时可以补。
 > 「一条算术该放 `src/` 还是 `playground/`」的判断标准之一正是这个：放进 `src/` 才够得着。
+>
+> 另一处对照，方向正好相反：**编辑模式总闸那条规则是全覆盖的**。判据与上面那句一模一样——
+> 它在写进组件之前就先抽成了纯函数（`utils/sceneSwitches.ts`，并从 `index.ts` 导出），
+> 于是 `pickable` / `selection` / `gizmo` 三个开关的**行为**在 SSR 下一行都看不见，
+> 但它们的**规则**六组组合逐一有断言。够不着的一直是渲染，不是算术。
 
 > 还有一处也测不到，值得单独点出来：**「地板按区域尺寸摊 `repeat`」那两行除法住在
 > `playground/` 里**，而冒烟测试只加载 `dist/index.js`，所以它连边都够不着（对比之下，
@@ -1708,6 +1742,22 @@ skybox/bak38/{back,down,front,left,right,top}.jpg
        验过了——旧形状 `{ model: {...} }` 折成了 `models` 列表且 `applyConfig` 吃得下、
        `canUndo` 变 `false`、等过 400ms 防抖窗口后也没有悬挂提交留下。
        所以要目视的只是**这条线接通了没有**，不是那两步本身
+  144. **总闸一关，三个交互一起停**（这一条与下面两条都靠「临时改两行、验完还原」那一族
+       做法；`SceneStage.vue:361-364` 是 `editable` 在本仓库里唯一的常驻消费者，改的就是它
+       那个绑定）：把 `:editable="!previewMode"` 临时改成 `:editable="false"` →
+       在模型上点一下**不会被选中**、**没有包围框也没有手柄**，而**地面网格还在**。
+       最后这一项单列出来，是因为它守的是一条边界：总闸只该管那四个交互开关，
+       `showGrid` 不在其中——总闸若被写成「一关全关」把网格一并带走，症状是
+       「预览态的地面凭空消失」，而网格藏在 `TresCanvas` 里，冒烟测试一个字都看不见
+  145. **编辑态开箱就能改，且分开关压得住总闸**：改回 `:editable="true"` → 点模型会**选中**、
+       选中项画出包围框、拖手柄能真的移动它；此时紧邻那个 `:toolbar="false"` **仍然生效**
+       （工具栏不在）。这一条正是「分开关优先于总闸」在界面上的唯一落点，
+       编辑器自绘工具栏靠的就是它（见设计决定 46）
+  146. **四个开关各自独立，总闸只是「没写时的默认值」**：把 `:editable` 改回 `false`、
+       再补上 `:pickable="true" :selection="true"` → 点模型**又能选中了**、包围框回来，
+       但**手柄仍不在**（`gizmo` 没被显式打开，仍随总闸）。若三个一起回来了，
+       说明被写成了「任一开关为真就全开」；若一个都没回来，说明被写成了「总闸关着就一律锁死」
+       ——两种都**在类型层面完全看不出来**，只有这一眼
 - 编辑器的交互（拖放导入、快捷键、导入导出文件、**空档里点选门窗并沿墙拖动**、
   **左栏点一格替换选中的洞口或墙**、**「保存」取数据交给宿主**）
   没有自动化测试，只有类型检查和构建覆盖——上面那组「洞口落点」断言验的是它
@@ -1777,7 +1827,7 @@ pnpm add github:chen870594504/3deditor three pinia @tresjs/core @tresjs/cientos
 ```
 
 仓库是公开的，所以**匿名可拉**——不需要令牌、不需要配 registry。宿主那侧的完整说法（含五个
-peer 与那道 `onlyBuiltDependencies` 放行）在 [README](README.md) 的「安装」一节里。
+peer、Node 版本要求，以及那道随 pnpm 版本换形态的放行）在 [README](README.md) 的「安装」一节里。
 
 **`package.json` 的 `name` 仍是 `3deditor`**（不带 scope）。它现在只是包的身份标识，不再对应
 任何注册表——GitHub Packages 强制 scope 等于仓库 owner，要走那条得改回
@@ -1843,24 +1893,53 @@ peer 与那道 `onlyBuiltDependencies` 放行）在 [README](README.md) 的「�
 
 ### 宿主侧的那道放行
 
-pnpm 10 起默认不执行依赖的构建脚本，git 依赖因此会被拦下：
+pnpm 10 起默认不执行依赖的构建脚本，git 依赖因此会被拦下（下面是 pnpm 10.28.2 的原文）：
 
 ```
 ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED  The git-hosted package "3deditor@0.1.1"
 needs to execute build scripts but is not in the "onlyBuiltDependencies" allowlist.
 ```
 
-它拦的是 pnpm 自己那道 `onlyBuiltDependencies` 闸（**不是** `ignore-scripts`——git 依赖走的是
-fetch 阶段的 `preparePackage()`，那条路只查 `ignore-scripts`，而 pnpm 会显式把它从配置里
-摘掉）。宿主照报错说的在 `pnpm-workspace.yaml` 里放行即可：
+它拦的是 pnpm 自己那道放行闸（**不是** `ignore-scripts`——git 依赖走的是 fetch 阶段的
+`preparePackage()`，那条路只查 `ignore-scripts`，而 pnpm 会显式把它从配置里摘掉）。
+宿主照报错说的在 `pnpm-workspace.yaml` 里放行即可。
 
-```yaml
-onlyBuiltDependencies:
-  - "3deditor"
-```
+**但那个键叫什么、填什么，pnpm 11 起换了，而且四种组合**没有一种两版通用**。用一份本地的
+最小 git 依赖（自带 `prepare`，跑完写一个 `BUILT.txt`）把四格逐一跑过，pnpm 10.28.2 与
+11.28.5 各一次：
 
-好在**报错信息本身就把该填的包名说了出来**，不需要去查文档；填的是**包名**，不是那一长串
-解析后的 specifier。
+| `pnpm-workspace.yaml` 里写的 | pnpm 10.28.2 | pnpm 11.28.5 |
+| --- | --- | --- |
+| `onlyBuiltDependencies:` 列表，填裸包名 | 通过 | **完全不认**，只找 `allowBuilds` |
+| `allowBuilds:` 映射，键填裸包名 | 通过 | **不匹配**，报的还是同一个 `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED` |
+| `allowBuilds:` 映射，键填完整说明符 | **硬报错** `ERR_PNPM_INVALID_VERSION_UNION` | 通过 |
+
+两处细节值得单独记着：
+
+- **pnpm 10 两种都吃**，但它自己的报错只提 `onlyBuiltDependencies`——只看报错的宿主会以为
+  `allowBuilds` 不合法，其实合法。反过来 pnpm 11 **完全不读** `onlyBuiltDependencies`，
+  那条路是死的而不是「不推荐」。
+- **pnpm 10 对完整说明符是硬报错而不是「不匹配」**：它把 `allowBuilds` 的键按包名 /
+  版本范围解析，`name@git+file://…#<sha>` 不是合法版本范围，于是 `ERR_PNPM_INVALID_VERSION_UNION`
+  （文案是 `Use exact versions only.`）在**读配置那一刻**就炸了，跟放不放行无关。
+
+**踩过的弯路，记一笔**：这个矩阵第一次跑时，pnpm 11 连它自己打印出来的那一行都没放行。
+原因是探针放在 `C:\Users\华聪\…` 下，而 pnpm 内部按**百分号编码**的说明符比对
+（`%E5%8D%8E%E8%81%AA`），手抄的键里是原样中文，对不上。换成纯 ASCII 路径立刻通过——
+**所以这不是笔误，是抄的时候编码变了**。宿主那边的地址是 ASCII 的 GitHub URL，撞不上这条；
+但把这段矩阵贴给别人之前先确认路径里没有非 ASCII 字符。
+
+**这里原先记着的一句结论要更正**：先前写「报错信息本身就把该填的包名说了出来，填的是**包名**
+而不是那一长串解析后的 specifier」——那只在 pnpm 10 成立。pnpm 11 的文案里键名换成了
+`allowBuilds`，而它给的示例**用的是完整说明符**。
+
+**pnpm 11 那个键里带着 commit，这是它比 10 多出来的一处长期负担。** 上游每推一个新提交，
+键就失配一次、同一道闸再拦一回，报错会打出一份新的让人抄。宿主把地址钉成
+`github:chen870594504/3deditor#<commit 或 tag>` 之后键才固定——README 那条「想锁死版本」的
+提示因此在 pnpm 11 上从「可选」变成了「建议」。
+
+好在**报错信息会把该抄的那一段原样打出来**（连内容一起，直接粘进 `pnpm-workspace.yaml` 即可），
+不需要去查文档。要留意的是**那一段是跟着 pnpm 版本走的**，别照抄别人的。
 
 实测过一轮完整的 `pnpm add git+file://…`（pnpm 10.28.2）：
 
@@ -1871,6 +1950,14 @@ onlyBuiltDependencies:
 - 装出来的包里 `dist/` 齐全（`index.js` / `index.cjs` / `index.d.ts` / `style.css` /
   `types.d.ts` / 两份 map），`import('3deditor')` 能拿到 `createThreeDMaker` /
   `SceneViewer` / `useSceneStore` / `migrateConfig`，`createThreeDMaker().install(app)` 无异常
+
+**宿主的 Node 版本是一道额外的硬门槛，而且它失败时看不出跟版本有关。** 克隆里那遍 `pnpm install`
+装完就跑 `prepare`，也就是跑 `vite build`，而 Vite 8 的 `engines` 是
+`^20.19.0 || >=22.12.0`（`@vitejs/plugin-vue` 同、`sass-embedded` 是 `>=20.19.0`）。
+Vite 对低于要求的版本**只打一行黄色警告就继续往下跑**（`cli.js` 里那句 `console.warn`），
+所以真正的失败发生在更深处：实测在 Node 18.20.8 上表现为 `ERR_PNPM_PREPARE_PACKAGE` +
+`Exit status 1` + 一串 `node:internal/modules/esm/…` 的栈，**整段输出里没有一个字提到 Node**。
+排查时先 `node -v`，比读栈快得多。
 
 **peer 的解析要留意**：`auto-install-peers`（pnpm 默认开）会把 `vue` / `three` / `pinia` /
 `@tresjs/*` 装成 `.pnpm/3deditor@…/node_modules/` 里的**兄弟节点**，宿主顶层 `node_modules`

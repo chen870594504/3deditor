@@ -16,7 +16,13 @@ pnpm add github:chen870594504/3deditor three pinia @tresjs/core @tresjs/cientos
 包**没有发到任何 npm 源上**，直接从上面这个仓库装。仓库是公开的，所以匿名可拉——不需要
 令牌、也不需要配 `.npmrc` 的 registry。
 
-**第一次装会失败一次，这是正常的，而且它会把该做的事直接告诉你。** `pnpm` 10 起默认不执行
+**宿主那台机器的 Node 必须是 20.19+ 或 22.12+，这是硬要求不是建议。** 安装时要在你的机器上
+现构建一遍，而构建走的是 Vite 8（它的 `engines` 写的就是 `^20.19.0 || >=22.12.0`，
+`@vitejs/plugin-vue`、`sass-embedded` 同）。Node 18 上失败的样子**看不出跟版本有关**：
+Vite 只打一行黄色警告就继续跑，随后在某个 ESM 依赖上炸掉，表现为一段 `ELIFECYCLE` 加一串
+`node:internal/modules/esm/…` 的栈——先把 `node -v` 确认一下，能省掉一轮排查。
+
+**第一次装还会失败一次，这是正常的，而且它会把该做的事直接告诉你。** `pnpm` 默认不执行
 依赖的构建脚本，而 git 依赖必须构建一次（原因见下面那段），于是被拦下来：
 
 ```
@@ -24,12 +30,35 @@ ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED  The git-hosted package "3deditor@0.1.1"
 needs to execute build scripts but is not in the "onlyBuiltDependencies" allowlist.
 ```
 
-照它说的，在项目根的 `pnpm-workspace.yaml` 里加一行放行，再装一次即可：
+照它说的，在项目根的 `pnpm-workspace.yaml` 里放行，再装一次即可。
+
+**但该填什么随 pnpm 的版本变，而且没有一种写法两版通用——照它打印的那段抄，别照抄这里。**
+四种组合逐一实测下来是这样：
+
+| `pnpm-workspace.yaml` 里写的 | pnpm 10.28 | pnpm 11.28 |
+| --- | --- | --- |
+| `onlyBuiltDependencies:` 列表，填**裸包名** | 通过 | **完全不认**，它只找 `allowBuilds` |
+| `allowBuilds:` 映射，键填**裸包名** | 通过 | **不匹配**，报的还是同一个错 |
+| `allowBuilds:` 映射，键填**完整说明符** | **硬报错** `ERR_PNPM_INVALID_VERSION_UNION` | 通过 |
+
+所以两版各写各的：
 
 ```yaml
+# pnpm 10.x —— 键是列表，填裸包名
 onlyBuiltDependencies:
   - "3deditor"
 ```
+
+```yaml
+# pnpm 11.x —— 键是映射，键要带完整说明符，值填 true
+allowBuilds:
+  3deditor@https://codeload.github.com/chen870594504/3deditor/tar.gz/1a679eb57dd2e1a006282def542cccd03e989c9f: true
+```
+
+> **pnpm 11 上请把版本钉死。** 它要的那个键**里面带着 commit**（上面那条里的 `1a679eb…`），
+> 所以上游每推一个新提交这个键就失配一次、同一道闸再拦你一回，而报错会打出一份新的让你抄。
+> 把地址钉成 `github:chen870594504/3deditor#<commit 或 tag>` 之后键就固定了——
+> 这正是下面「想锁死版本」那个用法的额外好处。
 
 > **git 依赖为什么需要构建**：包里只发 `dist/`（`package.json` 的 `files` 字段），而
 > `dist/` 是 `vite build` 的产物、不进 git，所以只能在安装时现构建一次——`package.json`
@@ -85,10 +114,10 @@ interface ThreeDMakerOptions {
 }
 ```
 
-全局组件名就是 `prefix + SceneViewer / SceneToolbar / SceneFloorplan`，即默认的
-`<TdmSceneViewer />`。**模板里的类型提示只覆盖 `Tdm` 这个默认前缀**（`GlobalComponents`
-类型增强写死了这三个名字），用自定义前缀或 `registerComponents: false` 时请在模板里
-改用具名导入：
+全局组件名就是 `prefix + 组件名`，组件一共三个：`SceneViewer` / `SceneToolbar` /
+`SceneFloorplan`，即默认的 `<TdmSceneViewer />`。**模板里的类型提示只覆盖 `Tdm`
+这个默认前缀**（`GlobalComponents` 类型增强写死了这三个名字），用自定义前缀或
+`registerComponents: false` 时请在模板里改用具名导入：
 
 ```vue
 <script setup lang="ts">
@@ -103,6 +132,34 @@ const scene = useSceneStore()
 </template>
 ```
 
+## 预览还是编辑：`editable` 一个开关
+
+同一个 `SceneViewer` 担两种用法，用 `editable` 切：
+
+```vue
+<!-- 只给人转着看：没有内置工具栏、点不中模型、也没有包围框与手柄 -->
+<SceneViewer :editable="false" model="/chair.glb" height="480px" />
+
+<!-- 可编辑：内置工具栏 + 点选 + 包围框 + 变换手柄 -->
+<SceneViewer :editable="true" model="/chair.glb" height="480px" />
+```
+
+它**不新增任何能力**，只改下面四个开关（`toolbar` / `pickable` / `selection` / `gizmo`）
+的默认值：
+
+| `editable` | 效果 |
+| --- | --- |
+| 不传（默认） | 完全按四个开关各自的值来——与没有这个 prop 之前一致 |
+| `false` | 四个一律关掉 |
+| `true` | 四个一律打开 |
+
+**谁显式传了谁说话**：`:editable="true"` 配 `:toolbar="false"` 就是「要编辑，但不要内置工具栏」
+——宿主自己画一条工具栏时就是这么写。`editable` 只管这四个开关，其余 prop、下面 12 个事件、
+5 个对外方法都不因它增减。
+
+写在模板里想自己判「此刻点选到底开没开」，用导出的 `resolveSceneSwitches({ editable, pickable, … })`，
+与组件内部是同一条规则。
+
 ## 最小示例
 
 ```vue
@@ -111,6 +168,8 @@ import { onMounted, ref } from 'vue'
 import { SceneViewer } from '3deditor'
 import type { ModelTransformPayload } from '3deditor'
 
+// 组件交出五个方法（captureCamera / measureModel / groundPointAt /
+// getSceneData / loadSceneData），拿实例的方式是普通的模板 ref
 const viewer = ref<InstanceType<typeof SceneViewer>>()
 
 onMounted(async () => {
@@ -130,13 +189,12 @@ function onTransform(payload: ModelTransformPayload) {
 </script>
 
 <template>
+  <!-- editable 一下就把点选 / 包围框 / 手柄都打开，不必再写三个 prop -->
   <SceneViewer
     ref="viewer"
+    editable
     height="100%"
     model="/chair.glb"
-    pickable
-    selection
-    gizmo
     :camera-transition="450"
     :shadow="{ enabled: true, type: 'contact', contactOpacity: 0.6 }"
     @model-transform="onTransform"
@@ -158,6 +216,7 @@ function onTransform(payload: ModelTransformPayload) {
 | `background`  | `string`                          | `'#0b1020'` | 画布背景色，传 `'transparent'` 可透出页面背景       |
 | `environment` | `EnvironmentPreset`               | —           | 环境贴图预设，**不设置则不发起任何网络请求**        |
 | `height`      | `string \| number`                | `'480px'`   | 画布高度，数字按 px 处理                            |
+| `editable`    | `boolean`                         | —           | **预览 / 编辑总闸**（见上一节）：`false` 关掉下面四个开关，`true` 全开，不传则按四个开关各自的值 |
 | `toolbar`     | `boolean`                         | `true`      | 是否显示内置工具栏                                  |
 | `autoRotate`  | `boolean`                         | `false`     | 是否自动旋转视角                                    |
 | `wireframe`   | `boolean`                         | `false`     | 是否线框渲染（会遍历改写模型所有材质的 wireframe）  |
@@ -168,6 +227,13 @@ function onTransform(payload: ModelTransformPayload) {
 | `gizmo`       | `boolean`                         | `false`     | 是否给选中的模型挂 X/Y/Z 变换手柄（同上）           |
 | `gizmoMode`   | `TransformMode`                   | `'translate'` | 手柄模式：`'translate'` / `'rotate'` / `'scale'`  |
 | `cameraTransition` | `number`                     | `0`         | 机位改动滑过去的时长（毫秒），0 = 瞬移              |
+
+> **设高度请用 `height`，不要用内联 `style="height: …"`。** 宿主写在组件上的 `class` / `style`
+> 会透传到画布根节点上，而透传的样式**合并在后**——内联的 `height` 会把 `height` prop 算出来的
+> 那个值覆盖掉，两者同时写时以你的内联样式为准，`height` prop 看着像是失效了。
+
+> **`toolbar` / `pickable` / `selection` / `gizmo` 这四行的默认值列，是 `editable` 也没传时的值。**
+> 传了 `editable` 就以它为准（分开关优先），见「预览还是编辑」一节。
 
 `selection` / `gizmo` / `gizmoMode` 读的是 store 里那个选中项（由 `selectModel` 或用户在
 编辑器里点出来），不改变选中逻辑，也**不经过 `events`**。
@@ -594,12 +660,13 @@ scene.removeModel(1)
 
 | 类别 | 导出 |
 | --- | --- |
-| 组件 | `SceneViewer` / `SceneToolbar` / `SceneFloorplan` |
+| 组件 | `SceneViewer` / `SceneToolbar` / `SceneFloorplan`（后两个是配套件，`SceneViewer` 已经自动用上了） |
 | 插件 | `createThreeDMaker`（默认导出也是它） |
 | store | `useSceneStore` |
 | 配置 | `DEFAULT_SCENE_CONFIG` / `migrateConfig` / `cloneFloorplanPatch` / `createFloorplanConfig` |
 | 事件 | `MODEL_EVENT_TYPES` / `MODEL_EVENT_LABELS` / `activeEventTypes` / `defaultEventCode` |
 | 名称与档位 | `deriveModelId`（从地址派生可读短名，`model.name` 留空时的默认值）/ `viewModeOf`（现在算 2D 俯视还是 3D 透视） |
+| 开关规则 | `resolveSceneSwitches` / `DEFAULT_SCENE_SWITCHES`（`editable` 那条「分开关 ?? 总闸 ?? 旧默认」的唯一实现，见「预览还是编辑」） |
 | 户型图算术 | `wallPieces` / `removeWall` / `wallLength` / `wallRotationY` / `pointAlongWall` / `findNearestWall` / `findEnclosedArea` / `pointInPolygon` / `polygonCenter` / `pickRoomColor` / `createFloorplanId` / `openingFreeGap` / `openingOverlaps` / `openingMagnetOffset` / `resolveOpeningDrag` / `openingFilledByModel` / `openingRejectReason` / `dropOpeningFills` |
 | 户型图常量 | `CELL_SIZE` / `DEFAULT_WALL_HEIGHT` / `DEFAULT_WALL_THICKNESS` / `DOOR_WIDTH` / `DOOR_HEIGHT` / `WINDOW_WIDTH` / `WINDOW_HEIGHT` / `WINDOW_SILL` / `OPENING_EDGE_GAP` |
 | 墙面与洞口贴装 | `wallFaceTiles` / `wallFaceFit` / `wallFaceIsSheet` / `wallFaceUnusable` / `openingFaceUnusable` / `openingFaceOversized` |

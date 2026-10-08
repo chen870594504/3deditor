@@ -30,7 +30,7 @@ pnpm preview      # 预览构建产物
 几条容易踩的：
 
 - **没有 lint / formatter 配置**（无 ESLint / Prettier / Biome / EditorConfig）。不要凭空引入，也不要假设某个风格工具会兜住格式问题。
-- **没有测试框架**。`scripts/smoke.mjs` 是唯一的自动化测试，且**不支持筛选用例**——一次跑全部 91 条。想单点验证某个纯函数，写一个临时 node 脚本 `import('../dist/index.js')`（必须先 `pnpm build:only`），用完删掉。
+- **没有测试框架**。`scripts/smoke.mjs` 是唯一的自动化测试，且**不支持筛选用例**——一次跑全部 98 条。想单点验证某个纯函数，写一个临时 node 脚本 `import('../dist/index.js')`（必须先 `pnpm build:only`），用完删掉。
 - `pnpm smoke` 读的是 `dist/index.js`，改完 `src/` 不重新构建就测的是旧产物。
 - **验证 playground 构建必须另给 outDir**。仓库没有 `build:playground` 脚本，裸跑 `vite build` 会用默认 `outDir: dist` **覆盖库产物**。正确做法：
 
@@ -70,6 +70,12 @@ pnpm preview      # 预览构建产物
 「选中哪个模型」放进配置的代价是：在列表里点一下就算一次场景改动，历史里多出一串噪声。
 
 组件分层：`SceneViewer`（对外主组件）→ `SceneContent`（`TresCanvas` 内部，组装各 `Scene*` + 相机 + 控制器 + 物体级变换与拾取）→ 其余 `Scene*.vue`。
+
+`SceneViewer` **只有一个组件，不拆壳**：「预览还是编辑」由它的 `editable` 一个 prop 决定，
+规则是 `生效值 = 分开关 ?? editable ?? 旧默认`（`src/utils/sceneSwitches.ts` 是这条规则的唯一实现，
+并从 `index.ts` 导出）。`editable` / `toolbar` / `pickable` / `selection` / `gizmo` 五个 prop 一律
+`withDefaults` 成 `undefined`——**缺失的布尔 prop 会被 Vue 转成 `false`**，不给 `undefined` 就等于
+把宿主全部推进只读模式，且不报错。见 DESIGN.md 设计决定 46，动这几个 prop 之前先读它。
 
 `SceneViewer` 的对外面有两层：**props / emits**（声明式，「场景长什么样」）与
 **`defineExpose` 出来的 5 个方法**（命令式，「此刻画布上是什么情况」：`captureCamera` / `measureModel` /
@@ -118,7 +124,7 @@ pnpm preview      # 预览构建产物
 
 ## 验证到哪一步（不要补的测试）
 
-`pnpm verify` 的 91 条断言**跑在 SSR 下**（`createSSRApp` + `renderToString`），
+`pnpm verify` 的 98 条断言**跑在 SSR 下**（`createSSRApp` + `renderToString`），
 而 `TresCanvas` 的 children 在 SSR 下根本不渲染。所以下列内容**测不到**，
 不要为它们补冒烟用例（只会得到一条永远为真的断言）：
 
@@ -140,7 +146,7 @@ pnpm preview      # 预览构建产物
 | 文件 | 读者 | 内容 |
 |---|---|---|
 | `README.md` | 用这个库的宿主 | 安装、注册插件、`SceneViewer` 的 props / emits、配置分组、`useSceneStore`、**对外方法**、导出清单 |
-| `DESIGN.md` | 改这个仓库的人 | 编辑器的设计、**45 条编号设计决定**、143 条**目视清单**、目录结构、发布流程、待办 |
+| `DESIGN.md` | 改这个仓库的人 | 编辑器的设计、**46 条编号设计决定**、146 条**目视清单**、目录结构、发布流程、待办 |
 
 `README.md` 是一份**面向宿主的用法手册**，只有四类内容：怎么装进来、怎么用组件、
 API 是什么（签名 / 默认值 / 字段含义 / 用法规则）、以及宿主不照做就会出错的那几条警告。
@@ -192,7 +198,7 @@ API 是什么（签名 / 默认值 / 字段含义 / 用法规则）、以及宿�
 包名 **`3deditor`**（不带 scope），**没有发到任何 npm 源上**——宿主直接
 `pnpm add github:chen870594504/3deditor three pinia @tresjs/core @tresjs/cientos`
 从这个仓库装。仓库公开，所以匿名可拉，不需要令牌也不需要配 registry。
-宿主那侧的说法（含那道 `onlyBuiltDependencies` 放行）在 README 的「安装」一节里。
+宿主那侧的说法（含五个 peer、Node 版本要求，以及那道放行）在 README 的「安装」一节里。
 
 走到这一步是被堵了两次：GitHub Packages 强制「公开包也要带令牌拉取」；换到 npmjs 后又卡在
 **发布强制 2FA**，而这个环境的验证器绑定做不了（没有 USB 密钥，扫码也失败）。三轮的实测
@@ -215,8 +221,18 @@ API 是什么（签名 / 默认值 / 字段含义 / 用法规则）、以及宿�
 **本仓库没有 `.npmrc`，不要加回来**——现在没有任何注册表要配。这条是硬性约束的一部分，
 不是「暂时删了」。
 
-宿主侧还有一道闸：pnpm 10 默认不跑依赖的构建脚本，git 依赖会被
-`ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED` 拦下，要在项目的 `pnpm-workspace.yaml` 里
-`onlyBuiltDependencies: ["3deditor"]` 放行。好在报错信息本身就说了该填的包名。
+宿主侧还有两道闸：
+
+- pnpm 默认不跑依赖的构建脚本，git 依赖会被 `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED` 拦下，
+  要在项目的 `pnpm-workspace.yaml` 里放行。**这道放行的键名与形态随 pnpm 版本变，四种组合
+  没有一种两版通用**（矩阵与实测见 DESIGN.md）：pnpm 10 写列表 `onlyBuiltDependencies` +
+  裸包名，pnpm 11 写映射 `allowBuilds` + **完整说明符**（键里带 commit）。好在报错信息会把
+  该抄的那一段原样打印出来，照抄即可——**别照抄这里，也别照抄别人机器上的**。
+  pnpm 11 的键带 commit，所以宿主**推荐把地址钉死**，否则上游每推一次提交它就失配一次。
+- **宿主的 Node 必须 ≥20.19（或 ≥22.12）**：安装时会现构建，而构建走 Vite 8。低于它时
+  Vite 只打一行黄色警告就继续跑，真正的失败在更深处，输出里一个字都不提 Node。`package.json`
+  的 `engines` 照 Vite 的范围声明了同一条（**范围要与 `vite` 的 `engines` 保持一致**），
+  宿主的包管理器会据此打一条警告——但默认只是警告不是拒绝（`engine-strict` 才是拒绝），
+  所以这条主要还得靠文档说。
 
 完整说明见 DESIGN.md「分发：从 git 安装」。

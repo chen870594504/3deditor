@@ -7,6 +7,7 @@ import ScenePicker from './ScenePicker.vue'
 import SceneSelection from './SceneSelection.vue'
 import SceneToolbar from './SceneToolbar.vue'
 import { useSceneStore } from '../stores/scene'
+import { resolveSceneSwitches } from '../utils/sceneSwitches'
 import { cloneFloorplanPatch, cloneModelPatch, migrateConfig } from '../utils/config'
 import type {
   CameraChangePayload,
@@ -27,14 +28,32 @@ const props = withDefaults(defineProps<SceneViewerProps>(), {
   background: '#0b1020',
   environment: undefined,
   height: '480px',
-  toolbar: true,
+  /*
+    这五个必须显式写成 `undefined`，**不是**可有可无的写法，也不是「顺手对齐格式」。
+
+    它们的类型都是 `boolean`，而 Vue 对声明为布尔的 prop 有一条特例：**缺失且没有
+    default 时把值转成 `false`**，而不是留成 `undefined`。于是 `props.toolbar` 就分不出
+    「宿主说了 false」与「宿主什么都没说」——而下面那条三级规则
+    （`分开关 ?? 总闸 ?? 旧默认`，实现见 utils/sceneSwitches.ts）全靠这个区分：
+
+    - `toolbar` / `pickable` / `selection` / `gizmo` 漏了 `undefined`：分开关恒有值，
+      总闸永远轮不到，`:editable="true"` 变成一句空话；
+    - `editable` 漏了它：**默认变成 `false`**，也就是所有宿主一夜之间进入预览模式——
+      内置工具栏消失、点不中模型、手柄也不出来。不报错，只有肉眼看得出来。
+
+    写 `default: undefined` 是关掉那条布尔特例的办法（`hasDefault` 为真即跳过转换），
+    冒烟测试里「一个 prop 都不传仍然有内置工具栏」那一条守的就是它。
+    早在这里的 `environment: undefined` 是同一个写法，只是它不为布尔、撞不上这条特例。
+  */
+  editable: undefined,
+  toolbar: undefined,
   autoRotate: false,
   wireframe: false,
   showGrid: true,
   draco: false,
-  pickable: false,
-  selection: false,
-  gizmo: false,
+  pickable: undefined,
+  selection: undefined,
+  gizmo: undefined,
   gizmoMode: 'translate',
   cameraTransition: 0,
   camera: undefined,
@@ -43,6 +62,17 @@ const props = withDefaults(defineProps<SceneViewerProps>(), {
   sun: undefined,
   shadow: undefined,
 })
+
+/**
+ * 四个开关的**生效值**——模板与所有判断一律读它，不要直接读上面的 prop。
+ *
+ * 直接读 prop 的后果是总闸整个失效（`editable` 只管默认值，不改 prop 本身），
+ * 而这件事在画面上只表现为「传了 editable 没反应」。
+ *
+ * `computed` 是必要的：`props` 是响应式的，规则本身是条纯算术，
+ * 写成普通常量会把开关冻结在首次渲染那一刻。
+ */
+const switches = computed(() => resolveSceneSwitches(props))
 
 const emit = defineEmits<{
   (e: 'loaded'): void
@@ -468,7 +498,7 @@ defineExpose({
         它是空模板组件（渲染返回 null），只在 pickable 打开时才存在；
         关掉时连那两个 DOM 监听器都不挂。
       -->
-      <ScenePicker v-if="pickable" @pick="emit('modelPick', $event)" />
+      <ScenePicker v-if="switches.pickable" @pick="emit('modelPick', $event)" />
 
       <!--
         选中视觉：包围框与变换手柄，作用于 store 里那个选中的模型。
@@ -481,11 +511,11 @@ defineExpose({
         两个开关都没开时连这个组件都不渲染，里面那次每帧的包围盒计算自然也没有。
       -->
       <SceneSelection
-        v-if="selection || gizmo"
+        v-if="switches.selection || switches.gizmo"
         :model-id="scene.selectedModel?.id ?? ''"
         :object="selectedObject"
-        :box="selection"
-        :gizmo="gizmo"
+        :box="switches.selection"
+        :gizmo="switches.gizmo"
         :mode="gizmoMode"
         @transform="onTransform"
         @transform-end="emit('modelTransformEnd', $event)"
@@ -500,7 +530,7 @@ defineExpose({
       <slot name="scene" />
     </TresCanvas>
 
-    <SceneToolbar v-if="toolbar" />
+    <SceneToolbar v-if="switches.toolbar" />
 
     <!--
       加载进度遮罩。pointer-events: none 是必须的：它是 inset-0 的，

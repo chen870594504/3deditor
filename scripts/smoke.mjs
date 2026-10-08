@@ -19,7 +19,15 @@ import { fileURLToPath } from 'node:url'
 import { createPinia, setActivePinia } from 'pinia'
 import { createSSRApp, defineComponent, h, toRaw } from 'vue'
 import { renderToString } from '@vue/server-renderer'
-import { createThreeDMaker, DEFAULT_SCENE_CONFIG, SceneViewer, deriveModelId, useSceneStore } from '../dist/index.js'
+import {
+  createThreeDMaker,
+  DEFAULT_SCENE_CONFIG,
+  DEFAULT_SCENE_SWITCHES,
+  SceneViewer,
+  deriveModelId,
+  resolveSceneSwitches,
+  useSceneStore,
+} from '../dist/index.js'
 import { MAX_COUNT, MAX_PARTS, parseModelParts, placeModelParts } from '../dist/index.js'
 import {
   CELL_SIZE,
@@ -72,7 +80,10 @@ check('具名导出齐全', () => {
   assert(typeof createThreeDMaker === 'function', 'createThreeDMaker 不是函数')
   assert(typeof useSceneStore === 'function', 'useSceneStore 不是函数')
   assert(SceneViewer, 'SceneViewer 缺失')
-  return 'createThreeDMaker / useSceneStore / SceneViewer 均存在'
+  // 总闸那条算术进公开面有两条理由（见 index.ts 的注释），其中一条就是这里够得着它
+  assert(typeof resolveSceneSwitches === 'function', 'resolveSceneSwitches 不是函数')
+  assert(DEFAULT_SCENE_SWITCHES, 'DEFAULT_SCENE_SWITCHES 缺失')
+  return 'createThreeDMaker / useSceneStore / SceneViewer / resolveSceneSwitches 均存在'
 })
 
 // ---------- 2. 插件安装 ----------
@@ -86,9 +97,13 @@ check('install 可调用', () => {
 })
 
 check('全局组件已注册', () => {
-  assert(hostApp.component('TdmSceneViewer'), 'TdmSceneViewer 未注册')
-  assert(hostApp.component('TdmSceneToolbar'), 'TdmSceneToolbar 未注册')
-  return 'TdmSceneViewer / TdmSceneToolbar 已注册'
+  // TdmSceneFloorplan 一直漏在断言之外（运行时注册着，只是没人守）。
+  // 三个都要在：少一个，宿主的模板标签会静默渲染成空标签。
+  const names = ['TdmSceneViewer', 'TdmSceneToolbar', 'TdmSceneFloorplan']
+  for (const name of names) {
+    assert(hostApp.component(name), `${name} 未注册`)
+  }
+  return `${names.length} 个全局组件均已注册`
 })
 
 check('复用宿主已有的 Pinia', () => {
@@ -141,6 +156,142 @@ check('渲染出插件根节点与工具栏', () => {
   assert(html.includes('tdm-toolbar'), '缺少 .tdm-toolbar')
   assert(html.includes('自动旋转'), '缺少工具栏按钮文案')
   return '.tdm-root + .tdm-toolbar + 按钮文案齐全'
+})
+
+// ---------- 3b. 编辑模式总闸 ----------
+
+check('总闸的三级优先级：分开关 ?? editable ?? 旧默认', () => {
+  /**
+   * 这是 `pickable` / `selection` / `gizmo` 三个开关**唯一可能的自动化防线**：
+   * 它们住在 TresCanvas 内部，SSR 下 children 根本不渲染，行为层面一条断言都写不出来。
+   * 规则写成纯函数（`utils/sceneSwitches.ts`）之后，每一条优先级都能量。
+   */
+  const cases = [
+    ['什么都不传 = 旧默认', {}, DEFAULT_SCENE_SWITCHES],
+    [
+      ':editable="false" = 只读',
+      { editable: false },
+      { toolbar: false, pickable: false, selection: false, gizmo: false },
+    ],
+    [
+      ':editable="true" = 全开',
+      { editable: true },
+      { toolbar: true, pickable: true, selection: true, gizmo: true },
+    ],
+    [
+      '分开关优先：编辑模式里单关手柄',
+      { editable: true, gizmo: false },
+      { toolbar: true, pickable: true, selection: true, gizmo: false },
+    ],
+    [
+      '分开关优先：只读里单开点选',
+      { editable: false, pickable: true },
+      { toolbar: false, pickable: true, selection: false, gizmo: false },
+    ],
+    [
+      '只给分开关时总闸不参与',
+      { toolbar: false },
+      { toolbar: false, pickable: false, selection: false, gizmo: false },
+    ],
+  ]
+  for (const [name, input, expected] of cases) {
+    const actual = resolveSceneSwitches(input)
+    assert(
+      JSON.stringify(actual) === JSON.stringify(expected),
+      `${name}：期望 ${JSON.stringify(expected)}，得到 ${JSON.stringify(actual)}`,
+    )
+  }
+  return `${cases.length} 组组合均符合「分开关 ?? 总闸 ?? 旧默认」`
+})
+
+check('旧默认值没被动过', () => {
+  /**
+   * 这一组是**所有已发布宿主**的默认表现。改它，`<SceneViewer />` 一个开关都不传的
+   * 那些页面就会跟着变（工具栏消失、手柄冒出来），而且不会有任何报错。
+   */
+  assert(
+    DEFAULT_SCENE_SWITCHES.toolbar === true &&
+      DEFAULT_SCENE_SWITCHES.pickable === false &&
+      DEFAULT_SCENE_SWITCHES.selection === false &&
+      DEFAULT_SCENE_SWITCHES.gizmo === false,
+    `旧默认值被改了：${JSON.stringify(DEFAULT_SCENE_SWITCHES)}`,
+  )
+  assert(
+    Object.isFrozen(DEFAULT_SCENE_SWITCHES),
+    'DEFAULT_SCENE_SWITCHES 没冻结：谁都能就地改掉所有宿主的默认行为',
+  )
+  return '工具栏默认开、三个交互开关默认关，且已冻结'
+})
+
+/**
+ * 下面几条走真实渲染。`toolbar` 在 SSR 下看得见（SceneToolbar 渲染在 TresCanvas 之外），
+ * 另外三个开关**刻意不写断言**——加了只会得到一条永远为真的假断言（见 CLAUDE.md），
+ * 它们的防线是 DESIGN.md 目视清单第 144-146 条。
+ *
+ * 只守 `toolbar` 一个也够用：它同时管着两件事——props 有没有真的转发到底层，
+ * 以及 Vue 有没有把「没传的布尔」悄悄转成 `false`。后者一旦发生，`.tdm-toolbar`
+ * 会从**所有**宿主页面上消失（`editable` 被转成 false 就是只读模式）。
+ */
+async function renderViewer(props) {
+  const pinia = createPinia()
+  const app = createSSRApp({ render: () => h(SceneViewer, props) })
+  app.use(pinia)
+  app.use(createThreeDMaker({ pinia }))
+  return { html: await renderToString(app), store: useSceneStore(pinia) }
+}
+
+/** 渲染失败时把结果放进同一个列表，不中断后面那些与总闸无关的断言 */
+async function tryRenderViewer(name, props) {
+  try {
+    return await renderViewer(props)
+  } catch (error) {
+    results.push({ ok: false, name, detail: error.message })
+    return { html: '', store: null }
+  }
+}
+
+const plainViewer = await tryRenderViewer('渲染不带任何开关的画布', { model: '/sw-probe.glb' })
+const readonlyViewer = await tryRenderViewer('渲染只读画布', { editable: false })
+const editingViewer = await tryRenderViewer('渲染编辑画布', { editable: true })
+const bareToolbarViewer = await tryRenderViewer('渲染编辑画布但关掉工具栏', {
+  editable: true,
+  toolbar: false,
+})
+
+check('props 真的转发到了底层', () => {
+  assert(plainViewer.store, '画布没能渲染出来')
+  const models = plainViewer.store.config.models
+  assert(models.length === 1, `store 里模型数不是 1：${models.length}`)
+  assert(models[0].url === '/sw-probe.glb', `模型地址不对：${models[0].url}`)
+  return 'model 经 props → store 的 watcher 落进配置'
+})
+
+check('一个开关都不传时与加总闸之前一致（有内置工具栏）', () => {
+  // 五个开关的默认值在 withDefaults 里必须写成 `undefined`。漏了就会被 Vue 的布尔
+  // 特例转成 false，其中 `editable` 变 false 的后果是**所有宿主进入只读模式**
+  assert(plainViewer.html.includes('tdm-root'), '缺少 .tdm-root')
+  assert(plainViewer.html.includes('tdm-toolbar'), '不传任何开关时内置工具栏消失了')
+  return '有 .tdm-toolbar，默认没被总闸翻掉'
+})
+
+check(':editable="false" 是只读', () => {
+  assert(readonlyViewer.html.includes('tdm-root'), '缺少 .tdm-root')
+  assert(!readonlyViewer.html.includes('tdm-toolbar'), '只读画布渲染出了内置工具栏')
+  return '无 .tdm-toolbar'
+})
+
+check(':editable="true" 是编辑', () => {
+  assert(editingViewer.html.includes('tdm-toolbar'), '编辑画布没有渲染出内置工具栏')
+  return '有 .tdm-toolbar'
+})
+
+check('分开关优先于总闸（它仍是个可传的真 prop）', () => {
+  assert(bareToolbarViewer.html.includes('tdm-root'), '缺少 .tdm-root')
+  assert(
+    !bareToolbarViewer.html.includes('tdm-toolbar'),
+    'editable=true 配 toolbar=false 时工具栏还在——总闸盖过了分开关',
+  )
+  return 'editable=true + toolbar=false → 无 .tdm-toolbar'
 })
 
 // ---------- 4. 样式产物 ----------
@@ -840,6 +991,18 @@ check('公开契约里有物体级 API', () => {
     'resolveOpeningDrag',
     'OpeningGap',
     'OpeningRejectReason',
+    /*
+      编辑模式总闸。
+
+      这里只守「这几个名字都进了公开面」。规则本身由上面「总闸的三级优先级」那一条
+      逐组验过——那是 `pickable` / `selection` / `gizmo` 三个开关唯一够得着的防线：
+      它们在 TresCanvas 内部，SSR 下不渲染，行为层面写不出断言。
+    */
+    'editable',
+    'resolveSceneSwitches',
+    'DEFAULT_SCENE_SWITCHES',
+    'SceneSwitches',
+    'SceneSwitchInput',
   ]
   const missing = needed.filter((name) => !both.includes(name))
   assert(missing.length === 0, `类型声明里缺少：${missing.join(', ')}`)

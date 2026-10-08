@@ -350,13 +350,19 @@ const viewMode = computed(() => viewModeOf(scene.config.camera))
       @pointerleave="onFloorplanPointerLeave"
       @contextmenu="onFloorplanContextMenu"
     >
+      <!--
+        这里就是 `editable` 那个总闸的**唯一常驻消费者**：预览态一个开关关掉一整组
+        （点选 / 包围框 / 手柄），不必再摆三个 `!previewMode`——那种写法漏一个不报错，
+        画面上只是「预览里还能点中模型」。
+
+        `:toolbar="false"` 仍要单独写：分开关优先于总闸，编辑器自绘工具栏这件事
+        总闸表达不了（见 DESIGN.md 设计决定 46）。
+      -->
       <SceneViewer
         ref="viewer"
         height="100%"
+        :editable="!previewMode"
         :toolbar="false"
-        :pickable="!previewMode"
-        :selection="!previewMode"
-        :gizmo="!previewMode"
         :gizmo-mode="gizmoMode"
         :camera-transition="CAMERA_TRANSITION"
         @loaded="pushEvent('模型加载完成')"

@@ -17,7 +17,12 @@ import './styles/index.scss'
 
 import type { ThreeDMakerOptions } from './types'
 
-// 具名导出：支持宿主按需引入组件
+/**
+ * 具名导出：支持宿主按需引入组件。
+ *
+ * 三个组件里只有 `SceneViewer` 是画布：「要预览还是编辑」由它的 `editable` 一个 prop 决定
+ * （不传则与旧版逐字一致），不再拆成预览壳 / 编辑壳两个组件——两套公开面迟早会各长各的。
+ */
 export { SceneFloorplan, SceneToolbar, SceneViewer }
 
 // 状态与类型
@@ -117,6 +122,26 @@ export type {
 export { wallFaceFit, wallFaceIsSheet, wallFaceTiles, wallFaceUnusable, openingFaceUnusable, openingFaceOversized } from './utils/wallFace'
 
 export type { WallFaceBounds, WallFaceTile } from './utils/wallFace'
+
+/**
+ * 编辑模式总闸的算术。
+ *
+ * 导出它有两条理由，都够得上「宿主自己也绕不过去」这条线：
+ *
+ * 1. **宿主自己画工具栏时问的是同一个问题**——「此刻点选到底开没开」。
+ *    若宿主那边照着自己的绑定写一份，两处规则迟早不一致，症状是
+ *    「按钮亮着可点、画布上却点不中」。
+ * 2. **它是这条规则唯一能被自动化验证的落点**。四个开关里有三个
+ *    （`pickable` / `selection` / `gizmo`）住在 `TresCanvas` 内部，SSR 下 children
+ *    不渲染，断言一个都写不出来；写成纯函数之后 `scripts/smoke.mjs` 就能把
+ *    `分开关 ?? 总闸 ?? 旧默认` 三级逐一钉住。
+ *
+ * `DEFAULT_SCENE_SWITCHES` 一并导出，因为**改它等于改所有已发布宿主的默认表现**，
+ * 这种事该被断言守着，而不是藏在一个不导出的常量里。
+ */
+export { DEFAULT_SCENE_SWITCHES, resolveSceneSwitches } from './utils/sceneSwitches'
+
+export type { SceneSwitchInput, SceneSwitches } from './utils/sceneSwitches'
 
 /**
  * 「现在算 2D 俯视还是 3D 透视」。
