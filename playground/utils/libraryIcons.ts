@@ -15,6 +15,12 @@ import type { LibraryIconPath } from '../../src/editor/composables/useModelLibra
  *       { key: 'furniture', label: '家具', kind: 'model', icon: ICON_FURNITURE, entries: [...] },
  *     ]
  *
+ * **本仓库里现在没有任何地方 import 它。** 原先 `playground/App.vue` 拿
+ * `ICON_EQUIPMENT` 当过一页宿主面板的图标，那一页已经撤掉了（理由写在那份注释里），
+ * 于是这个文件只剩「给宿主抄的两笔字形」这一重身份——与 `ICON_FURNITURE` 平等，
+ * 两者都是备着没人用的。**它不会被引进库产物**（`playground/` 不在那张依赖图上），
+ * 所以留着不占宿主的体积；真不需要就整个删掉，删之前按下面那句 grep 一遍确认。
+ *
  * 其余几个分类的图标仍然内置在 `SidePanel.vue` 的 `SECTION_ICONS` 里，跟着内置分类走
  * （那边有 `satisfies SafeIcons` 守着「新加一个内置分类却忘了画图标」）。
  *

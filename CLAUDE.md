@@ -142,16 +142,18 @@ SceneViewer.vue  公开面：八个 prop（editable / height / autoRotate / drac
 ### `playground/`（宿主示例）
 
 **现在只剩两件事**：`App.vue`（宿主外壳：`AppHeader` + 一个
-`<SceneViewer editable height="100%" :asset-base-url="ASSET_BASE">` + 两页自己的面板）与那两件
+`<SceneViewer editable height="100%" :asset-base-url="ASSET_BASE">`，没有插槽）与那两件
 库碰不得的东西（`useConfigIO.ts` 保存、`useEventRunner.ts` 执行代码）。
-`main.ts` 挂载应用并引样式，`styles/base.scss` 是**宿主页面**的底座（`html` / `body` / `#app`
-与 `.pg-panel` —— 宿主自己那两页的样式），`utils/` 是宿主自己的图标与那两件素材相关的东西
+`main.ts` 挂载应用并引样式，`styles/base.scss` 是**宿主页面**的底座（`html` / `body` / `#app`；
+原先那一节 `.pg-panel` 是宿主面板页的样式，随样例页一起删掉了），`utils/` 是宿主自己的图标与那两件素材相关的东西
 （`editorAssets.ts` 只给出 DEV 期的同源代理前缀，**清单引用库那份 `DEFAULT_EDITOR_ASSETS`，
 不留第二份**）。
 
 **它同时是库诚实的一份用法示例**：公开面在这里被完整地用了一遍（一个 `editable` 决定形态、
-两个 prop 声明面板页、`assetBaseUrl` 换素材服务器、`getSceneData()` 取数据落盘），没有一处走后门
+`assetBaseUrl` 换素材服务器、`getSceneData()` 取数据落盘），没有一处走后门
 import 内部模块。
+**左右栏的宿主页（`sideTabs` / `inspectorTabs`）它不摆样例**——那是宿主自己该写的东西，摆一页
+假数据在库的导轨上读起来像是库内置了那些分类；那条路两个前缀在冒烟里各有断言守着。
 **往 `src/` 里加东西之前，先想一遍 `App.vue` 会不会变复杂**——它变复杂通常说明那件东西该留在
 host 这一层。
 

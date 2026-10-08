@@ -2,51 +2,38 @@
 import { onMounted, onUnmounted } from 'vue'
 import AppHeader from './components/AppHeader.vue'
 import { useConfigIO } from './composables/useConfigIO'
-import { ICON_EQUIPMENT } from './utils/libraryIcons'
-import { SceneViewer, useSceneStore } from '../src'
-import type { EditorPanelTab } from '../src'
+import { SceneViewer } from '../src'
 import { pushEvent } from '../src/editor/composables/useEditorState'
 import { ASSET_BASE } from './utils/editorAssets'
 
 /*
   宿主外壳。
 
-  这一页现在只做四件事，都是**宿主该做的**：一条自己的顶栏、一个高度、
-  `⌘S` 保存，以及**往左右栏各加一页自己的东西**。三栏工作台整个由
-  `<SceneViewer editable />` 渲染出来——左边挑料、中间画布、右边改属性、
-  W/E/R 与 Esc 与 ⌘Z 全在库里面。
+  这一页现在只做三件事，都是**宿主该做的**：一条自己的顶栏、一个高度、`⌘S` 保存。
+  三栏工作台整个由 `<SceneViewer editable />` 渲染出来——左边挑料、中间画布、
+  右边改属性、W/E/R 与 Esc 与 ⌘Z 全在库里面。
 
   它同时是这个仓库最诚实的一份用法示例：**库的公开面在这里被完整地用了一遍**
-  （一个 prop 决定形态、一个 prop 换素材地址、两个 prop 声明自己的面板页、
-  `getSceneData()` 取数据落盘），没有一处走后门 import 内部模块——
-  `useEditorState` 那几条是公开导出，宿主自己画顶栏时按的就是同一组状态。
-  **素材清单则一个字都不在这里**：那是库内置的，这一页只在开发期把根地址
-  换成同源代理前缀。
+  （一个 prop 决定形态、一个 prop 换素材地址、`getSceneData()` 取数据落盘），
+  没有一处走后门 import 内部模块——`useEditorState` 那几条是公开导出，
+  宿主自己画顶栏时按的就是同一组状态。**素材清单则一个字都不在这里**：
+  那是库内置的，这一页只在开发期把根地址换成同源代理前缀。
+
+  **左右栏的宿主页（`sideTabs` / `inspectorTabs`）这一页不摆样例。** 原先左栏
+  挂过一页「设备」、右栏挂过一页「说明」，现在都撤了：那是**宿主自己该写的**
+  东西，把一页假数据摆在库的导轨上，读起来像是库内置了这些分类
+  （导轨上除了宿主自己挂的页，其余每一格都是真分类）。这条路本身是
+  `panelSlots` 按前缀挑一遍、`SceneViewer` 与 `SceneEditor` 各透一轮，
+  两个前缀在 `scripts/smoke.mjs` 里各有一组自己的断言守着，不靠这一页验。
+  真要看效果，就在下面 `<SceneViewer>` 上临时挂 `:side-tabs` / `:inspector-tabs`
+  配一个具名插槽——**正文那一页的宽度 / 内边距 / 滚动全归宿主自己给**，
+  库交出来的只是一个空槽位；`playground/utils/libraryIcons.ts` 里备着两笔导轨
+  图标可以拿去当 `icon`（不写就在导轨上退回占位立方体）。写法与要看的现象
+  见目视清单 148-150。
 */
 defineOptions({ name: 'App' })
 
 const { saveScene } = useConfigIO()
-
-const scene = useSceneStore()
-
-/**
- * 宿主自己的两页面板。
- *
- * **声明与内容分在两处**，这正是那对 prop 的用法：名字 / 图标 / 顺序是数据
- * （库要拿去画导轨），页里画什么由具名插槽给（`#side-tab-device` /
- * `#inspector-tab-about`）。所以「有哪些页」在 setup 里看得到，
- * 「每页长什么样」在模板里看得到。
- *
- * 图标借的是 `utils/libraryIcons.ts` 里那个「设备」字形（插头），
- * 它与库里那套图标同约定（24 格、只用描边、只吃 currentColor），
- * 拿去当 `icon` 直接用——那一行注释里写着为什么这两个字形留在宿主这边。
- *
- * 两页的 key（`device` / `about`）**不要与内置分类撞名**
- * （`floor` / `wall` / `door` / `window` / `skybox`），理由见 `EditorPanelTab`。
- */
-const HOST_SIDE_TABS: EditorPanelTab[] = [{ key: 'device', label: '设备', icon: ICON_EQUIPMENT }]
-
-const HOST_INSPECTOR_TABS: EditorPanelTab[] = [{ key: 'about', label: '说明' }]
 
 /**
  * 宿主自己那一条快捷键：`⌘S` 保存。
@@ -97,40 +84,9 @@ onUnmounted(() => {
       这一页一个字都不用配。所以这一行同时是「库内置默认」与「只换地址」
       两条路各自的示例。
 
-      编辑态的一切（三栏、事件弹窗、绘制工具、快捷键）都在这个组件里面，
-      外加下面这两页宿主自己的面板——它们的正文本页自己画。
+      编辑态的一切（三栏、事件弹窗、绘制工具、快捷键）都在这个组件里面。
+      它没有插槽——左右栏的宿主页这一页不摆样例（理由见上面那段注释）。
     -->
-    <SceneViewer
-      editable
-      height="100%"
-      :asset-base-url="ASSET_BASE"
-      :side-tabs="HOST_SIDE_TABS"
-      :inspector-tabs="HOST_INSPECTOR_TABS"
-    >
-      <!--
-        左栏「设备」页的正文。库只给一个空槽位，所以宽度、内边距、滚动都归这里
-        （`.pg-panel` 写在 `styles/base.scss`）。
-
-        这一页**读**的是公开的 `useSceneStore`——宿主自己的面板想显示什么，
-        依据就在这里，不需要库再开任何 API。
-      -->
-      <template #side-tab-device>
-        <div class="pg-panel">
-          <h3>设备</h3>
-          <p>这一页不是库里的东西：声明在 <code>sideTabs</code> 里，内容在这个插槽里。</p>
-          <p>场景里现在有 <b>{{ scene.models.length }}</b> 个模型。</p>
-          <p>库不知道这一页里有什么，也不会替它保存任何东西。</p>
-        </div>
-      </template>
-
-      <!-- 右栏「说明」页的正文。与左栏那页同一条路数，只是挂在另一根导轨上。 -->
-      <template #inspector-tab-about>
-        <div class="pg-panel">
-          <h3>说明</h3>
-          <p>右栏这一页同样由宿主提供，排在库那七个内置页之后。</p>
-          <p>它没有图标，导轨上退回了库给的占位立方体。</p>
-        </div>
-      </template>
-    </SceneViewer>
+    <SceneViewer editable height="100%" :asset-base-url="ASSET_BASE" />
   </div>
 </template>
