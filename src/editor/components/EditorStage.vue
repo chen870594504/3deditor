@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, useTemplateRef, watch } from 'vue'
 import { useSceneStore } from '../../stores/scene'
-import { activeEventTypes } from '../../utils/eventCode'
 import type {
   CameraChangePayload,
   ModelEventPayload,
@@ -9,14 +8,12 @@ import type {
   ModelPickPayload,
   ModelTransformPayload,
   ObjectClickPayload,
-  SceneStats,
   SceneViewerApi,
   TransformMode,
 } from '../../types'
 import SceneCanvas from '../../components/SceneCanvas.vue'
 import ModelActions from './ModelActions.vue'
 import FloorplanTools from './FloorplanTools.vue'
-import PerfProbe from './PerfProbe.vue'
 import PreviewBar from './PreviewBar.vue'
 import SceneFloorplanDraft from './SceneFloorplanDraft.vue'
 import {
@@ -24,7 +21,6 @@ import {
   gizmoMode,
   previewMode,
   pushEvent,
-  stats,
 } from '../composables/useEditorState'
 import {
   floorplanEnabled,
@@ -273,60 +269,18 @@ function onDrop(event: DragEvent) {
   pushEvent(`从本地拖入模型：${file.name}（场景中第 ${index + 1} 个）`)
 }
 
-// ---------- 读数 ----------
-
-function onStats(payload: SceneStats) {
-  stats.value = payload
-}
-
-/** 三角面用 K 结尾，避免数字位数变化让整行抖动 */
-const triangleLabel = computed(() => {
-  const value = stats.value.triangles
-  return value >= 1000 ? `${(value / 1000).toFixed(1)}K` : String(value)
-})
-
-/*
- * 三角面 / 绘制调用 / 帧率三个数只在这条 HUD 上出现一次。
- *
- * 它们原本在右栏「模型属性 → 05 本轮渲染」里还有一份逐行读数，纯属重复——
- * 同一屏里同一个数字有两个地方显示，只会让人怀疑哪个是对的。那一节连同
- * 「04 组件」的工具栏开关一起去掉了（工具栏与右栏控件完全重叠，从来没人开）。
- *
- * 帧率因此只剩这里一个落点，不能跟着一起删：PerfProbe 每帧都在算它，
- * 没有消费者的话这个值就白算了。
- */
-
-const cameraLabel = computed(() =>
-  scene.config.camera.position.map((value) => value.toFixed(2)).join(' · '),
-)
-
-const shadowLabel = computed(() =>
-  scene.config.shadow.enabled ? `${scene.config.shadow.type} 阴影` : '无阴影',
-)
+// ---------- 选中项 ----------
 
 /**
- * HUD 上的模型信息一律取**当前选中的那个**。
+ * 当前选中的模型。
  *
- * 与「模型属性」页里那组字段是同一个人：在列表里点一下换模型，
- * 这里和下面那三节会同时跟着变，不出现「HUD 说的是 A、面板改的是 B」。
- * 空场景时选中项不存在，读数退化成占位符而不是崩在 `.slice` 上。
+ * 视口里现在只剩一处读它：下面那条 `gizmoVisible`（判断该不该给手柄）。
+ *
+ * 它原先还喂着视口左上角那条 **HUD** 的四行读数（`CAM` / `FOV·TRI·CALL·FPS` /
+ * `SKY·阴影` / `MDL·ID·EVT`）——那条 HUD 连同**只喂它**的 `PerfProbe` 与
+ * `stats` 一起删掉了，理由与代价见 DESIGN.md 设计决定 51。这里因此只剩一个消费者。
  */
 const selected = computed(() => scene.selectedModel)
-
-/**
- * HUD 上只留 uuid 的头一段。
- *
- * 36 位铺在视口角落会把一行的注意力全吃掉，而这个 HUD 的职责是「扫一眼看状态」；
- * 完整值挂在 title 上，要核对时悬停即可，右侧面板里也一直是全的。
- * 空场景时没有选中项，给一个占位符而不是让 `.slice` 抛出去。
- */
-const modelIdShort = computed(() => selected.value?.id.slice(0, 8) ?? '—')
-
-/** 已启用的事件数，与属性面板那一行的读数是同一次计算 */
-const eventCount = computed(() => activeEventTypes(selected.value ?? {}).length)
-
-/** 场景里的模型个数。多模型下「现在有几个」是 HUD 上最该有、却没处看的一个数 */
-const modelCount = computed(() => scene.models.length)
 
 // ---------- 变换手柄 ----------
 
@@ -485,23 +439,21 @@ const viewMode = computed(() => viewModeOf(scene.config.camera))
         @object-context-menu="onModelEvent('contextmenu', $event)"
       >
         <!--
-          插槽内容位于 TresCanvas 内部，能拿到 useTres / useLoop。
-          性能探针靠这一点在画布内读 renderer.info：
+          `#scene` 里的内容位于 TresCanvas 内部，能拿到 useTres / useLoop。
+          编辑器自己的户型草稿要的正是这个：它得是画布里的**真 3D 对象**。
           插件不必为此新增 prop，3D 层也不必引入 Pinia。
         -->
         <template #scene>
-          <PerfProbe @stats="onStats" />
           <!--
             画到一半的东西只在这里出现（橡皮筋、拖到一半的矩形）。
             库渲染的是配置里那份「用户已经确认存在」的房子，草稿是编辑态，
             所以它不走库、也不进配置——`SceneConfig` 只放可 JSON 往返的数据。
-            插槽位置在 TresCanvas 内部，所以这里的每一样都是 3D 对象。
           -->
           <SceneFloorplanDraft />
           <!--
-            宿主自己的 3D 内容排在**最后**：上面两件是编辑器的内部件
-            （性能探针、户型草稿），它们要在，而宿主注入的东西不该插在它们中间——
-            顺序会影响渲染次序，内部件的位置是编辑器说了算的。
+            宿主自己的 3D 内容排在**最后**：上面那件是编辑器的内部件，
+            它要在，而宿主注入的东西不该插在它前面——顺序会影响渲染次序，
+            内部件的位置是编辑器说了算的。
           -->
           <slot name="scene" />
         </template>
@@ -512,24 +464,13 @@ const viewMode = computed(() => viewModeOf(scene.config.camera))
       <span class="tdm-corner tdm-corner--bl" :class="{ 'tdm-corner--lit': lit }" />
       <span class="tdm-corner tdm-corner--br" :class="{ 'tdm-corner--lit': lit }" />
 
-      <div class="tdm-hud">
-        <div class="tdm-hud-row">CAM <b>{{ cameraLabel }}</b></div>
-        <div class="tdm-hud-row">
-          FOV <b>{{ scene.config.camera.fov }}°</b> · TRI <b>{{ triangleLabel }}</b> · CALL
-          <b>{{ stats.drawCalls }}</b> · FPS <b>{{ stats.fps }}</b>
-        </div>
-        <div class="tdm-hud-row">
-          {{ scene.config.sun.showSky ? 'SKY ON' : 'SKY OFF' }} · {{ shadowLabel }}
-        </div>
-        <div class="tdm-hud-row">
-          MDL <b>{{ modelCount }}</b> · ID <b :title="selected?.id ?? ''">{{ modelIdShort }}</b> · EVT
-          <b>{{ eventCount }}/5</b>
-        </div>
-      </div>
-
       <!--
-        手柄模式切换。放在顶边中部：左上角被 .tdm-hud 那四行读数占着，
-        右边与底部要留给操作胶囊与四角角标。
+        手柄模式切换。放在顶边中部。
+
+        这个位置原先是被**挤**出来的（「左上角被视口 HUD 的四行读数占着」）——
+        视口 HUD 删掉之后左上角空了出来，所以这一条**现在是可以挪的**；这次没动它：
+        删读数与重排浮层是两件事，真要挪就把右上角的视角档位、左中部的绘制工具条
+        一起看（三者的位置本来是互相让出来的）。
 
         它是**编辑控件**而不是读数，所以预览模式下跟胶囊一起消失（CSS 里同一条规则），
         没有选中模型时也整块不渲染——没有手柄就没有模式可言。
@@ -550,11 +491,14 @@ const viewMode = computed(() => viewModeOf(scene.config.camera))
       </div>
 
       <!--
-        视角档位切换。放在右上角：这里是视口里唯一还空着的角——左上被 .tdm-hud 的四行读数
-        占着，顶边中部是手柄条，右下是操作胶囊，四个角还有 13×13 的装饰角标。
+        视角档位切换。放在右上角。
 
-        与手柄条不同，它**没有 v-if**：它管的是相机而不是模型，空场景（MDL 0）时
-        同样有意义。预览模式下跟着其余编辑控件一起由 CSS 关掉。
+        左上角原先被那条视口 HUD 的四行读数占着，HUD 删掉之后那里空了出来
+        ——挪不挪见上面手柄条那一段。顶边中部是手柄条，右下是操作胶囊，
+        四个角还有 13×13 的装饰角标。
+
+        与手柄条不同，它**没有 v-if**：它管的是相机而不是模型，
+        空场景里同样有意义。预览模式下跟着其余编辑控件一起由 CSS 关掉。
       -->
       <div class="tdm-view" role="group" aria-label="视角模式">
         <button
@@ -584,8 +528,8 @@ const viewMode = computed(() => viewModeOf(scene.config.camera))
         （`gizmoVisible`），而平面图工具要在空场景里就能用；而且「手柄模式」
         与「绘制工具」是两类东西，混在一条上会让「这条到底管什么」变模糊。
 
-        为什么在左侧中部：左上角是 .tdm-hud 的四行读数（下面一整段是空的），
-        右上角是视角档位、右下角是操作胶囊、四周还有角标——只剩这里。
+        为什么在左侧中部：右上角是视角档位、右下角是操作胶囊、四周还有角标；
+        左上角原先被那条视口 HUD 占着，HUD 删掉之后那里空了出来（挪不挪见手柄条那段）。
 
         **摆不摆由组件自己按 `planView` 决定**（3D、「允许旋转」开着、预览，
         三种情况下都不摆）：画不了的时候留着按钮，只会让人点一下、什么也没发生。

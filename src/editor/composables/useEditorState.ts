@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import type { ModelBounds, SceneConfig, SceneStats, TransformMode } from '../../types'
+import type { ModelBounds, SceneConfig, TransformMode } from '../../types'
 
 /**
  * 编辑器自身的 UI 状态。
@@ -365,14 +365,12 @@ export const canvasApi: {
   getSceneData: null,
 }
 
-/** 由画布内的 PerfProbe 定期刷新，视口 HUD 与属性面板的只读读数都读它 */
-export const stats = ref<SceneStats>({ fps: 0, triangles: 0, drawCalls: 0 })
-
 /**
  * 往浏览器控制台打一条编辑器自己的日志。
  *
  * 早先它写进底部那条可展开的事件控制台，那个面板连同状态栏一起被去掉了
- * （两条加起来占掉近 50px 视口，而状态栏里的读数在视口 HUD 与右栏都有）。
+ * （两条加起来占掉近 50px 视口；状态栏里那些读数在右栏本来就各有一份，
+ * 后加的视口 HUD 也已在 DESIGN.md 设计决定 51 里删掉）。
  * 但它承载的是**别处看不到**的反馈，不能跟着一起删：
  *
  * - 事件代码的语法 / 运行时错误（写错一个括号就没有任何提示）

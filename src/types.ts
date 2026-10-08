@@ -83,7 +83,7 @@ export interface ModelEventHandler {
    * 是否绑定。这是**唯一**的门控。
    *
    * 代码为空也算绑定（等于一个空操作）：门控只有一个判据，
-   * 三处消费者（挂载监听器、HUD 读数、执行者）才不会各说各话。
+   * 两处消费者（挂载监听器、执行者）才不会各说各话。
    */
   enabled: boolean
   /** 要执行的 JS 语句体。库本身不解释它 */
@@ -898,16 +898,6 @@ export interface SceneViewerApi {
 export interface CameraChangePayload {
   position: [number, number, number]
   target: [number, number, number]
-}
-
-/** 渲染统计，由画布内的探针组件定期上报 */
-export interface SceneStats {
-  /** 实测帧率 */
-  fps: number
-  /** 本帧绘制的三角面数 */
-  triangles: number
-  /** 本帧的绘制调用次数 */
-  drawCalls: number
 }
 
 /**

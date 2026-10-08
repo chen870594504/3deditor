@@ -163,5 +163,5 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <!-- 渲染返回 null 的组件：TresJS 有专门分支跳过，不会污染场景图（同 PerfProbe） -->
+  <!-- 渲染返回 null 的组件：TresJS 有专门分支跳过，不会污染场景图 -->
 </template>
