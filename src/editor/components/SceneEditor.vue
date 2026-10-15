@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, useTemplateRef } from 'vue'
+import { computed, provide, useTemplateRef } from 'vue'
 import EditorStage from './EditorStage.vue'
 import EventBindingDialog from './inspector/EventBindingDialog.vue'
 import InspectorPanel from './inspector/InspectorPanel.vue'
 import SidePanel from './side/SidePanel.vue'
+import { EDITOR_ASSETS_KEY, useEditorAssets } from '../assets'
 import type {
   CameraChangePayload,
   DeepPartial,
@@ -15,6 +16,7 @@ import type {
   SceneViewerApi,
 } from '../../types'
 import { useSceneStore } from '../../stores/scene'
+import { useAssetManifest } from '../composables/useAssetManifest'
 import { useEditorShortcuts } from '../composables/useEditorShortcuts'
 import {
   INSPECTOR_TAB_PREFIX,
@@ -66,6 +68,28 @@ const scene = useSceneStore()
   ⌘S 保存**不在这里**——它是宿主的策略，见该 composable 的头部注释。
 */
 useEditorShortcuts()
+
+/*
+  素材：把宿主给的那一份补成**编辑器实际要用的那一份**，再往下一层 provide。
+
+  补的那一步是「清单从服务器上读」——素材根**根目录那一份** `<地址>index.json`
+  （`useAssetManifest` 里写了判据、失败怎么降级、以及为什么空地址不发请求）。
+  宿主整份给了清单时这一层什么都不做，与从前完全一样。
+
+  **同一个 key 在这里被 provide 了第二次，这不是笔误。** `SceneViewer` 那一层
+  说的是「宿主给了什么素材」，这一层说的是「编辑器实际用哪一份」；`inject` 取的是
+  **最近的一层**，所以只有编辑器内部看得到这份合并结果，宿主那侧不受影响。
+  之所以重新 provide 而不是换个键：下游（`useLibrarySections`、以及
+  `ModelLibrary` 那条兜底）只认 `EDITOR_ASSETS_KEY`，同一个键就让它们一行都不用改。
+
+  与 `SceneViewer` 那条纪律相同：**必须无条件执行**。setup 只跑一次，而编辑态 /
+  画布态是模板里的 `v-if`——塞进分支里，挂载时是画布态就再也补不回来了。
+  放在这一层（而不是 `SceneViewer`）另有个好处：画布态根本不渲染本组件，
+  预览态的宿主不会白付那几条请求。
+*/
+const sourceAssets = useEditorAssets()
+
+provide(EDITOR_ASSETS_KEY, useAssetManifest(sourceAssets))
 
 /*
   12 个事件与 5 个方法在**这一层也要再声明一次**。

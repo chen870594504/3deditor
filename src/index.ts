@@ -173,12 +173,16 @@ export type { ViewMode } from './utils/viewMode'
 export { useEditorAssets } from './editor/assets'
 
 /**
- * 库内置的那份标准素材表，以及「清空」那个取值。
+ * 库内置的那份默认，以及「清空」那个取值。
  *
- * `DEFAULT_EDITOR_ASSETS` 导出，理由与 `DEFAULT_SCENE_CONFIG` 那类一样、
- * 但更强一层：宿主**确实绕不过去**。今天的 `assets` 是**整份替换**、
- * `extraSections` 只能**追加分类**，所以「在内置的『地板』里再加一件资产」
- * 这个需求没有任何出口——除非拿到这份默认表摊平一份、往 `categories` 里加一项：
+ * 两个都导出，而今天的含义已经比从前窄了一层：`DEFAULT_EDITOR_ASSETS`
+ * **只有一个地址**（清单不在这里了，它在服务器**根目录那一份** `index.json` 里，
+ * 见设计决定 52 与 53）。导出它的理由仍然成立、而且更强——宿主**确实绕不过去**：
+ * `assets` 是**整份替换**、`extraSections` 只能**追加分类**，所以
+ *
+ *   - 想知道「库里默认指哪台服务器」（换个镜像、或者自己核对一遍）只能读它；
+ *   - 想在内置那几类里再加件资产，今天**更省事的做法是改服务器上那份 json**，
+ *     而真要写进代码，就得摊平这份默认再拼：
  *
  *     const mine = {
  *       ...DEFAULT_EDITOR_ASSETS,
@@ -187,11 +191,14 @@ export { useEditorAssets } from './editor/assets'
  *
  * 它是**冻结**的，所以摊平之后的那个新对象才是宿主该改的东西，
  * 直接 push 进 `categories` 会报错（这正是冻结要拦的那件事）。
- * playground 是这条用法的一个现成例子。
+ *
+ * **摊平了 `categories` 就整份算你的**：编辑器不会再去看服务器
+ * （判据在 `useAssetManifest.ts` 上），所以那条路也是「要一份不联网的清单」
+ * 的写法。
  *
  * `EMPTY_EDITOR_ASSETS` 一起导出，让「关掉内置模型库」不必手写
  * `{ baseUrl: '', categories: [] }` 那个字面量——它同时是「关掉」这件事的
- * **唯一说法**（判据是 `??`，空表不会被当成没传）。
+ * **唯一说法**（判据是 `??`，空表不会被当成没传，而且空地址连清单都不去读）。
  *
  * 那一份地址常量**不单独导出**：它就是 `DEFAULT_EDITOR_ASSETS.baseUrl`，
  * 再单开一个导出属于放无关的东西。
@@ -201,6 +208,41 @@ export { EMPTY_EDITOR_ASSETS } from './editor/assets'
 export { DEFAULT_EDITOR_ASSETS } from './editor/defaultAssets'
 
 export type { EditorAssetCategory, EditorAssetEntry, EditorAssets } from './editor/assets'
+
+/**
+ * 素材清单的地址拼法与格式校验。
+ *
+ * 清单住在素材服务器上，**整个素材根只有一份**（`<根>/index.json`，顶层是对象、
+ * 键就是那五个分类、值是该类的条目数组，字段与 `EditorAssetEntry` 同形）——
+ * 于是往服务器上加模型不必再重新打包库，见 DESIGN.md 设计决定 52 与 53。
+ *
+ * 这两个函数导出，理由与 `placeOpenings` 那类一样：**宿主自己也绕不过去**。
+ * 宿主迟早要做「服务器上那份清单对不对」这件事（上线前比一遍、自己那一栏里
+ * 渲染同一份列表、迁移时批量校验），没有它们就得照抄一遍拼法与校验规则，
+ * 而抄漏的每一处都是静默的——少一个斜杠就是整份 404，少判一条就是一行坏数据
+ * 悄悄消失。库自己那份实现是唯一的（`src/utils/assetManifest.ts`），
+ * 编辑器走的也是它。
+ */
+export { assetManifestUrl, parseAssetManifest } from './utils/assetManifest'
+
+export type { AssetManifestParse } from './utils/assetManifest'
+
+/**
+ * 分类图标的地址拼法。
+ *
+ * 与上面两个同一个理由导出：它是**一条拼地址的规则**，而规则只能有一份实现
+ * （宿主自己在别处搭一个缩略图墙、或者做一份服务器资源的体检脚本时要用到它）。
+ *
+ * 与那两个的区别是它**与清单没有关系**：图标根是素材根在服务器上的**同级目录**
+ * （`…/static/3d-assets/` 与 `…/static/svg/3dmaker/`），由素材根拼不出来，
+ * 而且它**不随 `assetBaseUrl` 变**——换镜像时模型跟着换、图标仍指原来那台。
+ * 完整的摆放理由与「这张图会被当遮罩用、所以要画成单色实心」那几条画图规矩，
+ * 见 DESIGN.md 设计决定 54。
+ *
+ * `normalizeBase`（补末尾斜杠那条）**仍然不单独导出**：它是上面三个函数共用的
+ * 内部实现，冒烟够得着的是拼出来的结果。
+ */
+export { assetIconUrl } from './utils/assetIcon'
 
 /**
  * 编辑器回调宿主的入口。
@@ -325,8 +367,11 @@ export function createThreeDMaker(options: ThreeDMakerOptions = {}): Plugin {
        * ——那是 SSR 下会串请求的写法。`app.provide` 在 `app.use()` 时就位，
        * 晚于所有模块求值、早于任何组件 setup，正是这条链唯一站得住的时机。
        *
-       * 没传就是 `DEFAULT_EDITOR_ASSETS`（库内置那份标准素材表）：装完库写一句
-       * `<SceneViewer editable />` 左栏就有货，宿主一行都不用配。
+       * 没传就是 `DEFAULT_EDITOR_ASSETS`（库内置的那个默认：**只有地址**）：
+       * 装完库写一句 `<SceneViewer editable />`、服务器根目录上放着那份
+       * index.json、请求又走的是同源代理，左栏就有货，宿主一行都不用配。清单本身
+       * 由编辑器挂载后去服务器上读（`editor/composables/useAssetManifest.ts`），
+       * 所以「一行不写」与从前相比多了一个前提，见设计决定 52 与 53。
        *
        * 判据是 `??` 而不是真假——**传进来的空表要原样生效**。宿主
        * `assets: { baseUrl: '', categories: [] }` 的意图是「关掉模型库」，

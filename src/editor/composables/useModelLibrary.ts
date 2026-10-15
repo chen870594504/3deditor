@@ -1,6 +1,9 @@
 import { computed, type ComputedRef } from 'vue'
 import { useEditorAssets } from '../assets'
 import { useSceneStore } from '../../stores/scene'
+// 补末尾斜杠那条规则搬去了 `utils/assetManifest.ts`：拼清单地址也要用它，
+// 抄两份就是那条「共用的算术只能有一份实现」的错法
+import { normalizeBase } from '../../utils/assetManifest'
 import type { EditorAssetEntry } from '../assets'
 import type { SkyboxFaces } from '../../types'
 
@@ -9,29 +12,31 @@ import type { SkyboxFaces } from '../../types'
  *
  * ## 清单从哪来
  *
- * **内置的只有「有哪五类」这件事与兜底那份条目表。** 这个文件里写死的是五个
- * 分类的 `key` / `label` / `kind` 与它们的先后（下面的 `LIBRARY_SHAPE`），
+ * **内置的只有「有哪五类」这件事。** 这个文件里写死的是五个分类的
+ * `key` / `label` / `kind` 与它们的先后（下面的 `LIBRARY_SHAPE`），
  * 以及「一个目录一个模型，目录里放同名的 .glb 与 .png」这套拼地址的约定；
- * 条目本身来自 `useEditorAssets()`——正常就是 `defaultAssets.ts` 那份库内置的
- * 标准素材表，宿主也可以整份换掉（`createThreeDMaker({ assets })`）
- * 或只换根地址（`SceneViewer` 的 `assetBaseUrl`）。
+ * **条目本身不在这里、也不在库里**——它来自 `useEditorAssets()`，而那一份今天
+ * 通常是「只有地址、没有清单」：真正的列表由 `SceneEditor` 从服务器根目录那份
+ * `index.json` 读回来（`useAssetManifest.ts` 写了判据与失败怎么降级）。
+ * 宿主当然也可以整份换掉（`createThreeDMaker({ assets })`）或只换根地址
+ * （`SceneViewer` 的 `assetBaseUrl`）。
  *
- * 这么切是因为**「哪一类」是承重的、得由编辑器定，而「这一类里有什么」
- * 是素材包长什么样、该有份能用的默认**：真实宿主装完库写一句
- * `<SceneViewer editable />` 就该看到五个分类有货，而不是先配一份表。
- * 早先的规矩反过来（库一个字面量地址都不含、缺省是空表），代价是每一家宿主
- * 都得先做那道功课，而漏做的表现是「左栏空的、不报错」。见设计决定 50。
+ * 这么切是因为**「哪一类」是承重的、得由编辑器定，而「这一类里有什么」是数据**：
+ * 数据会变（今天加一块地板，明天加一扇门），而库发出去就不动了。
+ * 早先那份清单写死在 `defaultAssets.ts` 里，代价是**每加一个模型都要回来改库、
+ * 重新打包、再等宿主升级库**。见设计决定 52。
  *
- * 刻意**不去抓服务器的目录索引页**，即使那台 nginx 已经开了 autoindex、
- * 抓下来解析出列表是可行的：
- *   - 抓目录页 = 把整棵目录结构暴露在页面上，谁打开编辑器都能看到
- *     服务器上放了什么、叫什么名字。列表写死在数据里就没有这个口子。
- *   - 目录页的响应也不带 Access-Control-Allow-Origin（实测），
- *     生产环境要靠再开一条 CORS 规则才能读，等于为了这个功能放宽服务器配置。
- *   - 写死的列表在离线、代理没配好、服务器换路径时都还能用。
+ * 刻意**不去抓服务器的目录索引页**，即使那台 nginx 开了 autoindex、
+ * 抓下来解析出列表是可行的：抓目录页 = 把整棵目录结构暴露在页面上，谁打开
+ * 编辑器都能看到服务器上放了什么、叫什么名字。
  *
- * 代价是**往服务器上放了新模型要去 `defaultAssets.ts` 里加一行**。
- * 这是有意的取舍。
+ * **这一条今天仍然成立**：本轮加的是「读一份服务器自己放的清单文件」
+ * （素材根下那一份 `index.json`），谁能看到什么由那份文件决定，而不是由目录结构
+ * 决定。别把两件事读成一件——真去列举目录仍然是被否掉的那件事。
+ *
+ * 读那份清单要**同源**（那台服务器不发 CORS 头），与加载 `.glb` 是同一条命，
+ * 而缩略图是 `<img>`、不受这条约束。配错了的表现因此还是那个老坑：
+ * **缩略图全都好好的，模型一个都加载不出来，清单那一格是空的**。
  *
  * ## 内置的这五类：工具钉住的那四类 + 天空盒
  *
@@ -73,7 +78,7 @@ import type { SkyboxFaces } from '../../types'
  * 内置五类：key、显示名、以及这一类里的东西点一下是干什么的。
  *
  * 顺序即界面上的显示顺序。**条目不在这一份里**（它从 `useEditorAssets` 进来，
- * 缺省是 `defaultAssets.ts` 那份标准素材表）。
+ * 而那一份的条目通常是 `SceneEditor` 从服务器上读回来的）。
  *
  * `as const` **不能省**：它是下面 `LibrarySectionKey` 能推成字面量联合的唯一原因，
  * 而 `SidePanel.vue` 的 `satisfies Record<LibrarySectionKey, IconPath[]>` 正是靠
@@ -302,16 +307,6 @@ const SKYBOX_FACE_FILES = ['right', 'left', 'top', 'down', 'back', 'front'] as c
 type SkyboxFace = (typeof SKYBOX_FACE_FILES)[number]
 
 /**
- * 素材根地址的归一化：末尾补一个斜杠，拼的时候不用每处都判。
- *
- * 宿主写不写末尾那个斜杠都可以（`https://x/y` 与 `https://x/y/` 等价），
- * 少判一次就少一处「有的地方写了、有的地方没写」的不一致。
- */
-function normalizeBase(baseUrl: string): string {
-  return baseUrl.replace(/\/?$/, '/')
-}
-
-/**
  * 拼一个天空盒面的地址。
  *
  * **刻意不复用下面那个 `resolve`**：那一个是「一个目录、一个同名文件」这条约定的
@@ -423,8 +418,9 @@ const BUILTIN_KEYS: readonly string[] = LIBRARY_SHAPE.map((shape) => shape.key)
  *
  * 写成 `computed` 而不是模块常量：条目的来源是 `useEditorAssets()`，也就是
  * `inject` 出来的一份输入——**模块求值那一刻它还不存在**。它后面可能是库内置
- * 那份默认表，也可能是宿主整份换掉的、或者只在根地址上被 `assetBaseUrl` 改过的
- * 那一份，三种情况都得现算。
+ * 那个默认（地址 + 空清单）、宿主整份换掉的表、只在根地址上被 `assetBaseUrl`
+ * 改过的那一份，以及**编辑器的 `SceneEditor` 读回来的服务器清单**
+ * （`useAssetManifest.ts` 把后三种合成一份），四种都得现算。
  *
  * 与它配套的 `resolve` / `resolveSkyboxFace` 都**把根地址当参数**收：
  * 原先它们闭包在模块级那个 `ASSET_BASE` 上，那是「库自带地址」的写法，
@@ -558,5 +554,10 @@ export const scenePartsJsons = computed<Set<string>>(
     ),
 )
 
-/** 内置五类的 key 表（`ModelLibrary.vue` 判「这一类是不是宿主追加上来的」时用） */
+/**
+ * 内置五类的 key 表。两个读者：
+ *   - `ModelLibrary.vue` 判「这一类是不是宿主追加上来的」；
+ *   - `useAssetManifest.ts` 照它去读服务器上那五份 `index.json`
+ *     （**只读这五类**：追加分类的条目是宿主自己给的，不在服务器那份清单上）。
+ */
 export { BUILTIN_KEYS }

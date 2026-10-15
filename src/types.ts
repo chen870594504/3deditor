@@ -638,14 +638,16 @@ export interface ThreeDMakerOptions {
    * 写在这一层而不是 `SceneViewer` 的 prop 上，是为了让宿主**只写一次**：
    * 一个页面里挂几个 `SceneViewer` 都共用同一份，不必逐个传。
    *
-   * **不传就是库内置那份标准素材表**（`DEFAULT_EDITOR_ASSETS`）：装完库写一句
-   * `<SceneViewer editable />`，左栏那五个分类就有货，不必先配一顿。
+   * **不传就是库内置的那个默认**（`DEFAULT_EDITOR_ASSETS`）：它**只有一个地址**
+   * ——清单在素材服务器上，整个素材根只有一份 `index.json`，由编辑器挂载后去读
+   * （见设计决定 52 与 53）。所以「装完库写一句 `<SceneViewer editable />` 左栏
+   * 就有货」这件事现在多一个前提：那台服务器上真放着那份清单，且请求走的是同源代理。
    * 只想换台服务器（换镜像、换开发期同源代理前缀）**不必动这一项**——
-   * 给 `SceneViewer` 的 `assetBaseUrl` 就够，那条路只换根地址。
+   * 给 `SceneViewer` 的 `assetBaseUrl` 就够，那条路只换根地址、清单仍从新地址读。
    *
-   * 这里的语义是**整份替换**：传了就以传的为准，`categories` 也一起替换掉。
-   * 想在内置那份的基础上加东西，摊平 `DEFAULT_EDITOR_ASSETS` 再拼
-   * （见 `index.ts` 里那段用法）。
+   * 这里的语义是**整份替换**：传了就以传的为准，`categories` 也一起替换掉，
+   * 而且**不再去读服务器**。所以想「在内置那几类里再加一件」而懒得动服务器上的
+   * json 时，摊平 `DEFAULT_EDITOR_ASSETS` 再拼是那条路（见 `index.ts` 里那段用法）。
    *
    * 传一个空表（`{ baseUrl: '', categories: [] }`，或直接 `EMPTY_EDITOR_ASSETS`）
    * 是**关掉模型库**这个动作本身：导轨上五个分类照常，宫格一律空态、不发请求。
@@ -827,7 +829,8 @@ export interface SceneViewerProps {
   inspectorTabs?: EditorPanelTab[]
 
   /**
-   * 只换**素材根地址**，清单仍用生效的那一份（库内置的，或插件选项给的）。
+   * 只换**素材根地址**，清单仍用生效的那一份（插件选项给的，或从本 prop 指的这台
+   * 服务器上每类目录的 `index.json` 读回来的）。
    *
    *     <!-- 换台镜像服务器 -->
    *     <SceneViewer editable asset-base-url="https://cdn.example.com/3d-assets/" />
@@ -837,9 +840,10 @@ export interface SceneViewerProps {
    *
    * ## 它为什么只收地址，不收清单
    *
-   * 「哪一类里有哪些模型」是**标准素材包长什么样**的编码，宿主换的通常只是
-   * **镜像**——同一套目录、换个域名。只换一个字符串就够，不必把那份表复述一遍
-   * （复述就会有两份，迟早只改一处）。真要换成自己那套目录，走
+   * 「哪一类里有哪些模型」是**素材服务器上的数据**（素材根下那一份 `index.json`），
+   * 宿主换的通常只是**镜像**——同一套目录、换个域名，清单跟着新地址一起读回来。
+   * 只换一个字符串就够，不必把那份表复述一遍（复述就会有两份，迟早只改一处）。
+   * 真要换成自己那套目录、或者要一份不联网的清单，走
    * `createThreeDMaker({ assets })`，那条路本来就是为「整份替换」准备的。
    *
    * ## 三级优先级
@@ -855,6 +859,10 @@ export interface SceneViewerProps {
    * 地址写错了。要跨域用就走本 prop 指到一个同源（或 CORS 可用的）镜像，
    * 开发期也可以自己挂一条代理再把前缀传进来（playground 就是这么做的）。
    *
+   * **清单（素材根下那份 `index.json`）也是 `fetch` 拉的**，与 `.glb` 是同一条命：
+   * 配错了连左栏都空着（控制台有一行 `3deditor:` 的 warn 点出这件事），
+   * 而缩略图照旧好好的——同一类误判。
+   *
    * ## ⚠️ 只影响本组件的子树
    *
    * 它是**在 `SceneViewer` 这一层 provide 下去的**，所以只对编辑器内部生效。
@@ -863,6 +871,35 @@ export interface SceneViewerProps {
    * 请把地址写在插件选项上。
    */
   assetBaseUrl?: string
+
+  /**
+   * 只换**分类图标**的根地址：`<这个地址><分类 key>.svg`，末尾斜杠可有可无。
+   *
+   * ## 它为什么与 `assetBaseUrl` 是两个 prop
+   *
+   * 图标与素材在服务器上是**同级**的两个目录（`…/static/3d-assets/` 与
+   * `…/static/svg/3dmaker/`），由其中一个**拼不出**另一个。所以换素材服务器
+   * 顺带把图标也换掉这件事，只能靠两个 prop 一起给——**只给 `assetBaseUrl`
+   * 时图标仍指原来那台**，而那个错不报错：图标探不到就静静退回内置那五个
+   * 描边图标（导轨不会空白，只是没换成你服务器上那些）。
+   *
+   * ## ⚠️ 它必须是同源（或那台服务器发 CORS 头）
+   *
+   * 这张图是当 **CSS 遮罩**用的（`mask-image`），而**遮罩走 CORS**——这与
+   * `<img>` / `background-image` 的 no-cors 不是同一条规矩。配错了的表现是
+   * **控制台一条 `has been blocked by CORS policy`，导轨上那几格退回内置图标**
+   * （界面看不出错，只有控制台说得出）。实测结论，见 DESIGN.md 设计决定 54。
+   *
+   * 所以换服务器时通常写成一对：素材根指到自己的同源代理、图标根也指到
+   * 自己为它另配的那条代理（dev 期 playground 就是这么做的，两条前缀各自
+   * 对着一个目录）。传空字符串表示「不探服务器图标、五个一律用内置的」。
+   *
+   * ## ⚠️ 只影响本组件的子树
+   *
+   * 与 `assetBaseUrl` 同一条：它在 `SceneViewer` 这一层 provide 下去，
+   * 宿主在组件之外自己调 `useEditorAssets()` 时看不到它。
+   */
+  iconBaseUrl?: string
 }
 
 /**

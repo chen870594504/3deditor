@@ -30,10 +30,12 @@ app.use(createPinia())
  * 这里**只接一个回调**，素材一个字都不配——那正是这次改造要演示的事情：
  * 装完插件、写一句 `<SceneViewer editable />`，左栏那五个分类就该有货。
  *
- * 素材缺省是库内置那份标准表（`src/editor/defaultAssets.ts`）。开发期需要的
- * 同源代理前缀是**这一页自己的事**，走 `<SceneViewer>` 的 `assetBaseUrl`
- * （见 `App.vue`，值在 `utils/editorAssets.ts`）——它只覆盖根地址，清单仍取
- * 库那一份。要整份换成自己那套目录才写 `createThreeDMaker({ assets })`。
+ * 「有货」现在指的是：编辑器去素材服务器上把根目录那份 `index.json` 读回来
+ * （库内置的默认只有一个地址，清单不在库这一侧了）。开发期需要的同源代理前缀
+ * 是**这一页自己的事**，走 `<SceneViewer>` 的 `assetBaseUrl`
+ * （见 `App.vue`，值在 `utils/editorAssets.ts`）——它只覆盖根地址，
+ * **清单也跟着这个新地址读**。要整份换成自己那套目录、或者要一份不联网的清单，
+ * 才写 `createThreeDMaker({ assets })`。
  *
  * 回调：`runEventCode` 是「把模型事件绑定里的那段字符串跑起来」。它只能靠
  * `new Function` 实现，而库产物里不许出现这四个字（冒烟测试钉着这一条），

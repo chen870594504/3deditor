@@ -1,23 +1,42 @@
 /**
- * playground 作为**宿主**给编辑器指的那个素材根地址。
+ * playground 作为**宿主**给编辑器指的那两个地址。
  *
- * 清单**不在这里**——它现在是库内置的（`src/editor/defaultAssets.ts`），
- * playground 只是那个默认的一份消费者，不再自己维护一份模型列表。
- * 这一点与改造前正好相反：原先清单和地址都归 playground，库一个字面量都不含，
- * 结果是真实宿主装完库不写一行配置就得到一个空左栏。
+ * 清单**不在这里**——它住在素材服务器上（素材根下那一份 `index.json`），
+ * playground 与库都不维护一份模型列表。这一点与最早那版正好相反：那时清单和
+ * 地址都归 playground，库一个字面量都不含，结果是真实宿主装完库不写一行配置
+ * 就得到一个空左栏。
  *
  * ## 它为什么只剩下「开发期换个前缀」这一件事
  *
  * 库内置的地址就是生产该用的那个，**不必再指一遍**（指了就是把同一个值抄成两份，
- * 迟早只改一处）。唯一需要覆盖的是开发期：素材服务器不发 CORS 头，而
- * `GLTFLoader` 走 `fetch`——响应其实完整到手了，是浏览器在交给 JS 之前丢掉的。
+ * 迟早只改一处）。唯一需要覆盖的是开发期：素材服务器不发 CORS 头，
+ * 而 `GLTFLoader` 走 `fetch`——响应其实完整到手了，是浏览器在交给 JS 之前丢掉的。
  * 同目录下的缩略图反而正常（`<img>` 不受 CORS 约束），所以这个错很容易被当成
  * 「地址写错了」，实际文件是好的。开发期把跨域变成同源，问题就不存在了。
  *
- * 生产构建下这里返回 `undefined`，意思是**不覆盖**：`<SceneViewer>` 那个 prop
- * 是「给了才生效」，`undefined` 就一路落到库内置那份。
+ * **清单也是同一件事**：它是 `fetch` 拉的（`useAssetManifest.ts`），
+ * 走的正是下面这个前缀，所以那条代理同时救了清单与模型——只配一半的话，
+ * 表现是「左栏空的、控制台一行 warn」而缩略图还是好的。
+ *
+ * **图标是第三件事，而且用的是另一条前缀**：导轨那五个分类图标当 CSS 遮罩用，
+ * 而**遮罩走 CORS**（与 `<img>`/`background-image` 的 no-cors 不同，实测结论
+ * 见 DESIGN.md 设计决定 54）——所以它也必须有同源代理，且因为图标与素材在服务器上
+ * 是两个**同级**目录，它需要自己那一条。两条前缀在 `vite.config.ts` 里并列放着，
+ * 各自对着一个目录。
+ *
+ * 生产构建下这里两个都返回 `undefined`，意思是**不覆盖**：`<SceneViewer>` 那两个
+ * prop 是「给了才生效」，`undefined` 就一路落到库内置那两个地址。宿主的**生产**
+ * 环境同理得自己解决同源（自建代理，或者让那台服务器发 CORS 头）——这一页
+ * 只示范开发期怎么绕。
  */
 const DEV_ASSET_PREFIX = '/3d-assets'
+
+/**
+ * 图标那条代理的同源前缀，由 `vite.config.ts` 里同名的 `ICON_PROXY_PREFIX` 代理出去。
+ * **两边必须一起改**：只改一边，图标代理不到，表现是导轨上那几格退回内置图标、
+ * 控制台里一条 CORS 报错（界面上看不出是代理没配）。
+ */
+const DEV_ICON_PREFIX = '/3d-icons'
 
 /**
  * 开发期换上的同源前缀，由 `vite.config.ts` 里同名的 `ASSET_PROXY_PREFIX` 代理出去。
@@ -30,4 +49,16 @@ const DEV_ASSET_PREFIX = '/3d-assets'
  */
 export const ASSET_BASE: string | undefined = import.meta.env.DEV
   ? `${DEV_ASSET_PREFIX}/`
+  : undefined
+
+/**
+ * 图标根在开发期换上的同源前缀。生产下 `undefined`（不覆盖，落到库内那个默认）。
+ *
+ * 与 `ASSET_BASE` **各是各的**：它们是服务器上两个同级的目录，一条前缀拼不出
+ * 另一条，所以覆盖也必须分别给。只给 `ASSET_BASE` 的表现是「模型走代理、
+ * 图标仍直接跨域」——而图标跨域会被 CORS 拦下（遮罩那条规矩），
+ * 导轨于是退回内置图标，看起来像是「服务器上还没放图标」。
+ */
+export const ICON_BASE: string | undefined = import.meta.env.DEV
+  ? `${DEV_ICON_PREFIX}/`
   : undefined

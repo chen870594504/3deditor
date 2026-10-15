@@ -9,6 +9,7 @@ import type {
   MergedLibrarySection,
 } from '../../composables/useModelLibrary'
 import { useRailTip } from '../../composables/useRailTip'
+import { useCategoryIcons } from '../../composables/useCategoryIcons'
 import type { IconPath } from '../../composables/useInspectorSchema'
 import { ICON_HOST_FALLBACK } from '../../utils/panelIcons'
 import { SIDE_TAB_PREFIX } from '../../utils/panelSlots'
@@ -210,6 +211,12 @@ type SafeIcons = Record<LibrarySectionKey, IconPath[]>
  * 不会变成导轨上一格空白。这条落得成立，是因为 `LibrarySectionKey` 是从
  * `LIBRARY` 那个 `as const` 字面量推出来的字面量联合——若它退化成 `string`，
  * `satisfies` 会跟着退化成 `Record<string, …>`，这里就静默不报错了。
+ *
+ * **这张表今天守的是「服务器上没有图标时的兜底」**。导轨那五格现在先问
+ * `serverIcon()`（服务器上的 `<分类 key>.svg`，当遮罩用），问到就用服务器那张；
+ * 没问到（包括**服务器上那个目录还是空的时候**——今天是默认情形）才落回这里。
+ * 所以这张表**一个字都不能省**：省掉任何一个，对应的那一格在该情形下就是空白。
+ * 服务器与它谁是主用、谁在什么时候上场，见设计决定 54。
  */
 const SECTION_ICONS = {
   floor: ICON_FLOOR,
@@ -218,6 +225,17 @@ const SECTION_ICONS = {
   window: ICON_WINDOW,
   skybox: ICON_SKYBOX,
 } satisfies SafeIcons
+
+/**
+ * 服务器上那五个分类图标（`<分类 key>.svg`，今天可能一个都没有）。
+ *
+ * 它返回的是一张**地址**，不是图标数据——渲染时会写成 `mask-image`，
+ * 与上面那张 `IconPath[]` 是完全两条路（这也是它为什么不并进 `railIcon`：
+ * 那一个的返回值是路径数据，拼成一个联合会让下面模板里那一对分支没法写）。
+ * 探测的时机、失败为什么**不打 warn**、以及为什么只探内置这五个 key，
+ * 都写在 `useCategoryIcons.ts` 上。
+ */
+const serverIcon = useCategoryIcons()
 
 /**
  * 每个分类的**量词**，用在导轨的悬停提示与 `aria-label` 里（`地板 · 2 个模型`）。
@@ -586,8 +604,28 @@ function activate(item: RailItem) {
           @focus="showTip(item.tip, $event)"
           @blur="hideTip"
         >
+          <!--
+            两条路：服务器上有这一类图标就把它当**遮罩**铺在这一格上，
+            没有就画内置那个描边图标。
+
+            遮罩那条路用 `<span>` 而不是 `<svg>`：`mask-image` 指向的是一份
+            svg **文件**，那个文档里的 `fill` 被遮罩忽略（只取「有没有像素」），
+            颜色全靠 `.tdm-rail-icon--mask` 的 `background-color: currentColor`
+            从这一格的 `color` 继承下来——于是激活/悬停照旧只改 `color` 就整体变色。
+            **换成 `<img>` 会在这里挂**：`<img>` 里的 svg 是独立文档，
+            `currentColor` 传不进去，那张图会永远停在文件里写死的颜色上。
+
+            `aria-hidden` 跟着搬到 span：名字在按钮的 `aria-label` 上，
+            图标两边都只是装饰。
+          -->
+          <span
+            v-if="serverIcon(item.key)"
+            class="tdm-rail-icon tdm-rail-icon--mask"
+            :style="{ maskImage: `url(${serverIcon(item.key)})` }"
+            aria-hidden="true"
+          />
           <!-- 描边粗细/端点交给 CSS，fill 由属性决定：两者控制不同的属性，不会互相覆盖 -->
-          <svg class="tdm-rail-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <svg v-else class="tdm-rail-icon" viewBox="0 0 24 24" aria-hidden="true">
             <path
               v-for="(part, i) in item.icon"
               :key="i"

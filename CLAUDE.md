@@ -43,7 +43,7 @@ pnpm preview      # 预览构建产物
 几条容易踩的：
 
 - **没有 lint / formatter 配置**（无 ESLint / Prettier / Biome / EditorConfig）。不要凭空引入，也不要假设某个风格工具会兜住格式问题。
-- **没有测试框架**。`scripts/smoke.mjs` 是唯一的自动化测试，且**不支持筛选用例**——一次跑全部 105 条。想单点验证某个纯函数，写一个临时 node 脚本 `import('../dist/index.js')`（必须先 `pnpm build:only`），用完删掉。
+- **没有测试框架**。`scripts/smoke.mjs` 是唯一的自动化测试，且**不支持筛选用例**——一次跑全部 111 条。想单点验证某个纯函数，写一个临时 node 脚本 `import('../dist/index.js')`（必须先 `pnpm build:only`），用完删掉。
 - `pnpm smoke` 读的是 `dist/index.js`，改完 `src/` 不重新构建就测的是旧产物。
 - **验证 playground 构建必须另给 outDir**。仓库没有 `build:playground` 脚本，裸跑 `vite build` 会用默认 `outDir: dist` **覆盖库产物**。正确做法：
 
@@ -57,8 +57,9 @@ pnpm preview      # 预览构建产物
   ```bash
   pnpm exec sass --no-source-map <file.scss> > /tmp/out.css
   ```
-- `node scripts/measure-glb.mjs <本地文件|http(s) 地址>` 离线量一份 glb 的包围盒，输出模型清单要的格式。
-  `src/editor/defaultAssets.ts` 里门窗那两类的 `width` / `height` 是「洞口要开多大」，量法口径与渲染端一致（片会被筛掉），写错了不报错、只有目视才发现。
+- `node scripts/measure-glb.mjs <本地文件|http(s) 地址>` 离线量一份 glb 的包围盒，输出模型清单要的格式
+  （**供填服务器上那份 `index.json`**）。门窗那两类的 `width` / `height` 是「洞口要开多大」，
+  量法口径与渲染端一致（片会被筛掉），写错了不报错、只有目视才发现。
 
 ## 架构
 
@@ -93,7 +94,7 @@ SceneCanvas.vue  由合并后的 SceneViewer.vue 改名而来，收窄成**内�
      ↑
 SceneEditor.vue  三栏工作台 = SidePanel | EditorStage | InspectorPanel + 事件绑定弹窗
      ↑
-SceneViewer.vue  公开面：八个 prop（editable / height / autoRotate / draco / initialScene / sideTabs / inspectorTabs / assetBaseUrl）
+SceneViewer.vue  公开面：九个 prop（editable / height / autoRotate / draco / initialScene / sideTabs / inspectorTabs / assetBaseUrl / iconBaseUrl）
 ```
 
 `SceneCanvas` 里面才是 `SceneContent`（`TresCanvas` 内部，组装各 `Scene*` + 相机 + 控制器 +
@@ -139,15 +140,30 @@ SceneViewer.vue  公开面：八个 prop（editable / height / autoRotate / drac
 字段级 `when`（不渲染）、字段级 `dim`（渲染但灰显）、分区级 `when`（整节连标题一起不渲染）。
 宿主追加的页不走 schema（它们是整页正文），见上面「宿主还能往左右栏各加一页」那一段。
 
+**左栏那五类模型的条目来自服务器**：`composables/useAssetManifest.ts` 去素材根读那一份
+`index.json`（判据与代价见设计决定 52 与 53），拿到什么就填什么；库里**没有任何内置条目**。
+它在 `SceneEditor.vue` 里再 `provide` 一次同一个 key——所以只有编辑态内部看得到合并结果，
+画布态一行请求都不发。改左栏的取数行为先读那一个文件，别在 `useModelLibrary.ts` 里另起一套。
+
+**导轨那五个分类图标也来自服务器**（另一条路、**另一条代理前缀**）：`composables/useCategoryIcons.ts`
+先逐个探一次 `<图标根><分类 key>.svg`，探到的当 CSS 遮罩渲染、探不到就退回内置那五个描边图标
+（`SidePanel.vue` 的 `SECTION_ICONS`，那张表一个都不能删——服务器上那个目录**今天还是空的**，
+退回才是默认情形）。改这个 composable 或 `SidePanel.vue` 那段模板之前先读设计决定 54，那里写着
+两件反直觉的事：**遮罩走 CORS**（于是图标必须有同源代理，`iconBaseUrl` 那一档就是为它加的），
+以及**探测必须带 `crossOrigin="anonymous"`**（不带的话跨域 svg 照样 `onload`，探测放行、
+渲染遮罩时才被拦，导轨上多出一格空白——兜底就白兜了）。
+
 ### `playground/`（宿主示例）
 
 **现在只剩两件事**：`App.vue`（宿主外壳：`AppHeader` + 一个
-`<SceneViewer editable height="100%" :asset-base-url="ASSET_BASE">`，没有插槽）与那两件
+`<SceneViewer editable height="100%" :asset-base-url="ASSET_BASE" :icon-base-url="ICON_BASE">`，
+没有插槽）与那两件
 库碰不得的东西（`useConfigIO.ts` 保存、`useEventRunner.ts` 执行代码）。
 `main.ts` 挂载应用并引样式，`styles/base.scss` 是**宿主页面**的底座（`html` / `body` / `#app`；
 原先那一节 `.pg-panel` 是宿主面板页的样式，随样例页一起删掉了），`utils/` 是宿主自己的图标与那两件素材相关的东西
-（`editorAssets.ts` 只给出 DEV 期的同源代理前缀，**清单引用库那份 `DEFAULT_EDITOR_ASSETS`，
-不留第二份**）。
+（`editorAssets.ts` 只给出 DEV 期的**两条**同源代理前缀——素材一条、图标一条，
+两者必须分别与 `vite.config.ts` 里那条同名。**清单不归任何人所有**——
+它在素材服务器上，素材根下那一份 `index.json`，playground 与库都不留副本）。
 
 **它同时是库诚实的一份用法示例**：公开面在这里被完整地用了一遍（一个 `editable` 决定形态、
 `assetBaseUrl` 换素材服务器、`getSceneData()` 取数据落盘），没有一处走后门
@@ -176,21 +192,42 @@ host 这一层。
 4. **库构建只从 `src/index.ts` 一个入口出发**，playground 因此进不了产物。不要加第二个 entry。
 5. `dist/style.css` 是单文件（`cssCodeSplit: false` + `assetFileNames: 'style.css'`），
    `package.json` 的 `sideEffects` 只列 `**/*.css`。
-6. **素材地址有两处，改一处要看看另一处**：
-   - **库内默认**：`src/editor/defaultAssets.ts` 的 `DEFAULT_ASSET_BASE_URL`（字面量，**那个文件里不许
+6. **素材地址有四处，改一处要看看另外三处**：
+   - **库内默认（素材根）**：`src/editor/defaultAssets.ts` 的 `DEFAULT_ASSET_BASE_URL`（字面量，**那个文件里不许
      出现 `import.meta.env`**——库构建会把它内联进产物，等于把本仓库的 `.env` 发给每一家宿主）。
      它是 `DEFAULT_EDITOR_ASSETS` 的根地址，宿主一行不写时左栏读的就是它。**`dist/index.js` 与
      sourcemap 里带着那台服务器的域名是刻意的**（见设计决定 50），别在「产物里搜不到域名」这类
      检查里把它当 bug 删掉。
+     **地址之后还有一步**：库不再内置任何条目，编辑器拿这个地址去读 `<base>index.json`
+     （`useAssetManifest.ts`，见设计决定 52 与 53）。所以「库内那份素材表」这个概念已经没有了，
+     要改一个模型的 label / 尺寸是去改**服务器根目录那个 json**，不是改这里。
+   - **库内默认（图标根）**：同一个文件的 `DEFAULT_ICON_BASE_URL`（`…/static/svg/3dmaker/`）。
+     左栏导轨那五个分类图标按 `<分类 key>.svg` 从这里取。**它不随 `assetBaseUrl` 变**（换镜像时
+     模型跟着换、图标仍指原来那台，见设计决定 54），但**换得掉**：`SceneViewer` 的 `iconBaseUrl`
+     prop / 插件选项 `assets.iconBaseUrl`（三级优先级与素材那条逐字对称）。
+     ⚠️ **它拼出来的地址会被当 CSS 遮罩用（`mask-image`），而遮罩走 CORS**——这条曾经被写反过
+     （早先这里写着「不走代理、服务器也不用发 CORS 头」，理由是「CSS 里的图片不吃 CORS」）；
+     那句**已作废**：那个豁免只对 `background-image` / `<img>` 成立，遮罩的 alpha 要参与合成、
+     浏览器得读像素，于是发的是 CORS 模式的请求，实测报过 `No 'Access-Control-Allow-Origin'
+     header is present`。所以它**必须同源**，见下面那条独立前缀。
+     宿主那边同理：不给 `iconBaseUrl` 时图标直接跨域取、会被拦下，表现是导轨**退回内置图标**
+     ——看起来与「服务器上还没放图标」一模一样。
    - **dev 代理的目标**：`.env` 的 `VITE_ASSE_IMAGE_URL`（**`ASSE` 少一个 `R`，是照那台服务器
      原样读的历史遗留**），由 `vite.config.ts` 的 `loadEnv()` 读走当代理目标；`vite.config.ts`
      从 `defaultAssets.ts` 导入那个常量当兜底，所以**两份不同源时 `.env` 赢**。
-   另外 `vite.config.ts` 里的 `ASSET_PROXY_PREFIX`（`/3d-assets`）必须与
-   `playground/utils/editorAssets.ts` 的 `DEV_ASSET_PREFIX` 一致（**不再是
-   `useModelLibrary.ts`**）——只改一边的表现是列表里的地址代理不到，清一色加载失败。
-   那台服务器不发 CORS 头而 `GLTFLoader` 走 `fetch`，所以必须靠这个同源代理。
-   缩略图是 `<img>`、**不受 CORS 约束**——于是「缩略图全都好好的、拖进场景加载失败」正是这个坑，
-   很容易误判成地址写错。
+     **图标那一条不读 `.env`**：它只有 `DEFAULT_ICON_BASE_URL` 一个来源（dev 期真要换图标目录，
+     改那个 import）。这是刻意的——`.env` 表达的是「临时换一台素材服务器」，而图标根是另一个口子。
+   另外 `vite.config.ts` 里有**两条**代理前缀，各自映射到一个目录，两条都恒挂着：
+   - `ASSET_PROXY_PREFIX`（`/3d-assets`）必须与 `playground/utils/editorAssets.ts` 的
+     `DEV_ASSET_PREFIX` 一致（**不再是 `useModelLibrary.ts`**）——只改一边的表现是列表里的地址
+     代理不到，清一色加载失败。那台服务器不发 CORS 头而 `GLTFLoader` 走 `fetch`，所以必须靠它。
+     **清单是同一件事的第二半**：根目录那份 `index.json` 也是 `fetch` 拉的，走的就是这条前缀。
+     缩略图是 `<img>`、**不受 CORS 约束**——于是「缩略图全都好好的、左栏是空的、拖进场景加载失败」
+     正是这个坑（在清单出现之前，它只表现为前两者里后一半），很容易误判成地址写错。
+   - `ICON_PROXY_PREFIX`（`/3d-icons`）必须与 `playground/utils/editorAssets.ts` 的
+     `DEV_ICON_PREFIX` 一致。**不能复用上面那条**：两个目录在服务器上同级，一条前缀映射不到两处。
+     只给 `ASSET_BASE` 的表现是「模型走了代理、图标仍跨域」，而图标跨域会被拦下 → 导轨退回内置
+     图标（界面上看不出是代理没配，只有控制台一条 CORS 报错说得清）。
 7. `.gitignore` 只排除 `.env.local` / `.env.*.local`，**不排除 `.env` 本身**。
 8. **`src/styles/_editor.scss` 里有一处靠源码顺序决胜负的地方**：`.tdm-view-btn` 与 `.tdm-draw-btn`
    先并入三选择器组（`min-width: 40px`），之后各自再单独收窄（34px / 30px）。特异性同为 (0,1,0)，
@@ -207,7 +244,7 @@ host 这一层。
 
 ## 验证到哪一步（不要补的测试）
 
-`pnpm verify` 的 105 条断言**跑在 SSR 下**（`createSSRApp` + `renderToString`），
+`pnpm verify` 的 111 条断言**跑在 SSR 下**（`createSSRApp` + `renderToString`），
 而 `TresCanvas` 的 children 在 SSR 下根本不渲染。所以下列内容**测不到**，
 不要为它们补冒烟用例（只会得到一条永远为真的断言）：
 
@@ -223,6 +260,21 @@ host 这一层。
 - **宿主面板页的正文**：那一页点开才渲染，而 SSR 里点不了。能断言的只有「那一格进了导轨」
   （`aria-label` 在不在、分隔线在不在）；正文到不到得了、点回内置页会不会留下空白，
   全归目视清单 147-151。
+- **去服务器读那份清单**：`index.json` 是在 `onMounted` 里 `fetch` 的，SSR 不跑 `onMounted`，
+  所以整条路一行断言都盖不到。冒烟能断的只有两头的纯函数（`assetManifestUrl` 拼得对、
+  `parseAssetManifest` 认得那份格式）与「库里不再内置任何条目」。
+  真拉一份回来填进宫格、换地址会不会重取、整份 json 读不到是不是**五类全空**、
+  某一个**键**写坏了是不是只空那一类，全归目视清单 156-160。
+  改 `useAssetManifest.ts` 时**必须**同时看一眼那几条。
+- **探那五个分类图标**：`useCategoryIcons.ts` 也是在 `onMounted` 里探（`new Image()`），
+  SSR 里同样一行都盖不到。冒烟能断的只有三件：`assetIconUrl` 拼得对、**探不到时导轨退回
+  内置那五个 `<svg>`**（那一档是 SSR 下的初始态，断得到；探到之后换成遮罩那一路断不到），
+  以及 `iconBaseUrl` **确实是个声明过的 prop**（给上它渲染一次、断 HTML 里没有
+  `iconbaseurl` 属性——漏声明的话它只是个静默落到根节点上的 attr，地址不生效也不报错）。
+  真实图标出不出图、**遮罩会不会被 CORS 拦下**、悬停/选中跟不跟着变色，归目视清单 160
+  ——**改这个 composable 或 `SidePanel.vue` 那段模板时必须看一眼它**。
+  这条路上有一处已实测的结论，别再想当然：**遮罩走 CORS**（早先按「CSS 里的图片不吃 CORS」
+  假设过，实测被推翻），所以它靠同源代理、靠 `iconBaseUrl` 那一档，见设计决定 54。
 
 这些的唯一防线是 DESIGN.md 末尾「验证覆盖到哪一步」里的**目视清单**，配合 `pnpm dev`。
 推翻了某条断言时，要同时更新 DESIGN.md 里对应的说明。
@@ -232,7 +284,7 @@ host 这一层。
 | 文件 | 读者 | 内容 |
 |---|---|---|
 | `README.md` | 用这个库的宿主 | **一份精简卡片（≤80 行）**：一句话简介、安装、快速开始、三条核心概念、props / 事件 / 对外方法三张表 |
-| `DESIGN.md` | 改这个仓库的人 | 编辑器的设计、**51 条编号设计决定**、155 条**目视清单**、目录结构、发布流程、待办 |
+| `DESIGN.md` | 改这个仓库的人 | 编辑器的设计、**54 条编号设计决定**、160 条**目视清单**、目录结构、发布流程、待办 |
 
 `README.md` 是一份**面向宿主的用法卡片**，结构是固定的（**总长 ≤80 行**）：一句话简介 →
 安装（一条命令）→ 快速开始（一个最小示例）→ 核心概念（最多 3 条）→ props / 事件 / 对外方法
@@ -283,6 +335,7 @@ host 这一层。
   （库内默认住在 `src/editor/defaultAssets.ts`，是**提交里本来就带着的另一个字面量**），
   按第 6 条那两处一起看——只改一边时，dev 期代理指向一台服务器、而宿主不写任何配置时读的是另一台，
   表现是「自己开发时好好的、宿主那边清一色加载失败」，两者都不报错。
+  清单跟模型走的是同一条代理，所以那一整句现在**两样都适用**（左栏连格子都读不回来）。
 
 ### 分发
 

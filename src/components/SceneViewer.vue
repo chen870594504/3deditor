@@ -125,7 +125,8 @@ watch(
 )
 
 /**
- * 素材：把上面 inject 到的那一份**再 provide 一次**，带上 `assetBaseUrl` 的覆盖。
+ * 素材：把上面 inject 到的那一份**再 provide 一次**，带上 `assetBaseUrl` 与
+ * `iconBaseUrl` 两个 prop 的覆盖（两个地址各是各的，见下面那个 `get iconBaseUrl`）。
  *
  * ## 为什么在这一个组件里
  *
@@ -163,6 +164,14 @@ provide(EDITOR_ASSETS_KEY, {
   */
   get baseUrl() {
     return props.assetBaseUrl ?? inheritedAssets.baseUrl
+  },
+  /*
+    图标根与素材根是**两个独立的口子**（服务器上那两个目录同级、互相拼不出来），
+    所以这里各管各的：只给 `assetBaseUrl` 时图标仍指原来那台，反之亦然。
+    哪一个都不给就各自落到 `DEFAULT_EDITOR_ASSETS` 里对应的那一个。
+  */
+  get iconBaseUrl() {
+    return props.iconBaseUrl ?? inheritedAssets.iconBaseUrl
   },
   categories: inheritedAssets.categories,
 })

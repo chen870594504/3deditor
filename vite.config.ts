@@ -3,7 +3,7 @@ import vue from '@vitejs/plugin-vue'
 import templateCompilerOptions from '@tresjs/core/template-compiler-options'
 import { defineConfig, loadEnv } from 'vite'
 import dts from 'vite-plugin-dts'
-import { DEFAULT_ASSET_BASE_URL } from './src/editor/defaultAssets'
+import { DEFAULT_ASSET_BASE_URL, DEFAULT_ICON_BASE_URL } from './src/editor/defaultAssets'
 
 /**
  * 开发期给远程模型资源起的同源前缀。
@@ -12,6 +12,21 @@ import { DEFAULT_ASSET_BASE_URL } from './src/editor/defaultAssets'
  * 只改一边的话，列表里的地址代理不到，表现是清一色的加载失败。
  */
 const ASSET_PROXY_PREFIX = '/3d-assets'
+
+/**
+ * 开发期给**分类图标**起的同源前缀。
+ *
+ * **必须与 playground/utils/editorAssets.ts 里的 DEV_ICON_PREFIX 一致**：
+ * 只改一边的话图标代理不到，表现是**导轨上那几格退回内置图标 + 控制台一条
+ * CORS 报错**——界面上看不出是代理没配，只有控制台说得出。
+ *
+ * 它为什么不能复用素材那条前缀：图标与素材在服务器上是**同级**的两个目录
+ * （`…/static/3d-assets/` 与 `…/static/svg/3dmaker/`），两条前缀要各自映射到
+ * 各自的目录上去。而且图标是 `mask-image` 拉的——**遮罩走 CORS**，与 `.glb`
+ * 那条 `fetch` 是同一条命，**不能拿「CSS 里的图片不吃 CORS」去省这一条规则**
+ * （那条豁免只对 `background-image` 成立，实测见 DESIGN.md 设计决定 54）。
+ */
+const ICON_PROXY_PREFIX = '/3d-icons'
 
 /**
  * 这些包必须由宿主应用提供，不打进产物：
@@ -53,6 +68,17 @@ export default defineConfig(({ mode }) => {
   const assetUrl = new URL(assetBase)
   /** 地址里的目录部分，重写代理路径时用它替换掉前缀 */
   const assetPath = assetUrl.pathname.replace(/\/$/, '')
+
+  /**
+   * 图标那条代理的目标。
+   *
+   * **它不读 `.env`**，只有库内那个常量一个来源：图标根与素材根是两个独立的口子
+   * （换素材服务器时图标仍指原来那台，是刻意的，见 `defaultAssets.ts` 顶上那张表），
+   * 所以「临时换一台服务器」这件事本来就只该动素材那一条——`.env` 里没有、
+   * 也不该多出一个图标键。真要 dev 期换图标目录，改下面这个 import 的常量。
+   */
+  const iconUrl = new URL(DEFAULT_ICON_BASE_URL)
+  const iconPath = iconUrl.pathname.replace(/\/$/, '')
 
   return {
     plugins: [
@@ -102,10 +128,10 @@ export default defineConfig(({ mode }) => {
         }
       : undefined,
     /*
-      代理**恒挂着**：目标地址读不到 .env 时退到库内置那个默认，
-      两处都不是空，所以不存在「转发到一个空地址」这件事。
-      真要不挂，那得先把 `DEFAULT_ASSET_BASE_URL` 改成空——而它不是个空字符串
-      能表达的状态（`new URL('')` 会直接抛）。
+      两条代理**恒挂着**：目标地址各自读得到（素材那条读不到 .env 时退到库内置
+      那个默认），两处都不是空，所以不存在「转发到一个空地址」这件事。
+      真要不挂，那得先把对应的那个常量改成空——而它们不是空字符串能表达的
+      状态（`new URL('')` 会直接抛）。
     */
     server: {
       proxy: {
@@ -117,6 +143,14 @@ export default defineConfig(({ mode }) => {
           rewrite: (path) =>
             path.startsWith(ASSET_PROXY_PREFIX)
               ? assetPath + path.slice(ASSET_PROXY_PREFIX.length)
+              : path,
+        },
+        [ICON_PROXY_PREFIX]: {
+          target: iconUrl.origin,
+          changeOrigin: true,
+          rewrite: (path) =>
+            path.startsWith(ICON_PROXY_PREFIX)
+              ? iconPath + path.slice(ICON_PROXY_PREFIX.length)
               : path,
         },
       },

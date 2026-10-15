@@ -26,7 +26,10 @@ import {
   DEFAULT_SCENE_SWITCHES,
   EMPTY_EDITOR_ASSETS,
   SceneViewer,
+  assetIconUrl,
+  assetManifestUrl,
   deriveModelId,
+  parseAssetManifest,
   resolveSceneSwitches,
   useSceneStore,
 } from '../dist/index.js'
@@ -85,10 +88,139 @@ check('具名导出齐全', () => {
   // 总闸那条算术进公开面有两条理由（见 index.ts 的注释），其中一条就是这里够得着它
   assert(typeof resolveSceneSwitches === 'function', 'resolveSceneSwitches 不是函数')
   assert(DEFAULT_SCENE_SWITCHES, 'DEFAULT_SCENE_SWITCHES 缺失')
-  // 库内置那份素材表要够得着，否则上面那几条断言只能自己抄一份地址
+  // 库内置的默认仍然要够得着：它现在**只剩一个地址**（清单在服务器上，见下面
+  // 「库不再内置任何条目」），但那个地址正是宿主一行不写时唯一的东西，
+  // 去掉它这一组断言就只能自己抄一份地址
   assert(DEFAULT_EDITOR_ASSETS?.baseUrl, 'DEFAULT_EDITOR_ASSETS 缺失')
   assert(EMPTY_EDITOR_ASSETS, 'EMPTY_EDITOR_ASSETS 缺失')
+  // 清单那一路的两个纯函数。**它们是这次改造里唯一能不靠浏览器验的一段**
+  // ——`fetch` 与 `onMounted` 在 SSR 下走不到，而「地址拼对了没」「这份 json
+  // 认不认得出来」全是算术，错了的症状只是左栏少几格或整类空白
+  assert(typeof assetManifestUrl === 'function', 'assetManifestUrl 不是函数')
+  assert(typeof parseAssetManifest === 'function', 'parseAssetManifest 不是函数')
+  assert(typeof assetIconUrl === 'function', 'assetIconUrl 不是函数')
   return 'createThreeDMaker / useSceneStore / SceneViewer / resolveSceneSwitches 均存在'
+})
+
+check('清单地址拼法', () => {
+  /**
+   * 约定是 `<素材根>index.json`——**整个素材根只有一份**（见 `utils/assetManifest.ts`
+   * 的文件头与设计决定 53）。分类的 key 不再进地址，所以这里只断言地址本身。
+   *
+   * 末尾斜杠那条仍然要断言：漏了会拼出 `…/3d-assetsindex.json` 这种地址，
+   * 而它请求回来的是一份 404——**五类全空**、控制台一行 warn，
+   * 那句话里没有一个字说得出「少了个斜杠」。
+   */
+  assert(
+    assetManifestUrl('https://x/y/3d-assets/') === 'https://x/y/3d-assets/index.json',
+    `带斜杠的地址拼错了：${assetManifestUrl('https://x/y/3d-assets/')}`,
+  )
+  assert(
+    assetManifestUrl('https://x/y/3d-assets') === 'https://x/y/3d-assets/index.json',
+    `不带斜杠的地址没补上：${assetManifestUrl('https://x/y/3d-assets')}`,
+  )
+  return '末尾斜杠补齐、index.json 拼对，且地址里不再带分类段'
+})
+
+check('图标地址拼法', () => {
+  /**
+   * 约定是 `<图标根><分类 key>.svg`，**文件名就是那个 key**（见
+   * `utils/assetIcon.ts` 的文件头与设计决定 54）。同样的两条末尾斜杠断言：
+   * 漏了会拼出 `…/3dmakerfloor.svg`，而图标是**遮罩**——加载失败没有 error
+   * 事件、控制台一声不响，表现只是那一格退回内置图标，谁也不会当它是地址问题。
+   *
+   * 顺带断一个「它拼出来的地址与清单那个不是同一个根」：这两处是服务器上
+   * 同级的两个目录，一个改了另一个不该跟着变（真正的守卫在
+   * `useCategoryIcons.ts` 用的是哪个常量上，这里只是把这条约定摆明）。
+   */
+  assert(
+    assetIconUrl('https://x/y/svg/3dmaker/', 'floor') === 'https://x/y/svg/3dmaker/floor.svg',
+    `带斜杠的图标地址拼错了：${assetIconUrl('https://x/y/svg/3dmaker/', 'floor')}`,
+  )
+  assert(
+    assetIconUrl('https://x/y/svg/3dmaker', 'skybox') === 'https://x/y/svg/3dmaker/skybox.svg',
+    `不带斜杠的图标地址没补上：${assetIconUrl('https://x/y/svg/3dmaker', 'skybox')}`,
+  )
+  return '末尾斜杠补齐、<分类 key>.svg 拼对'
+})
+
+check('认得服务器那份 json 的格式', () => {
+  /**
+   * 样本**照抄服务器根目录那份真实的 index.json**（不是编一个好看的）：
+   * 顶层是对象、键就是那五个分类、值是条目数组，字段与 `EditorAssetEntry` 同形。
+   *
+   * 刻意把四种情形混进同一个样本里，因为这四种**症状完全不同、且都不抛错**：
+   *   - 一行写坏（`42` / `{file:7}`）→ 只该少那一格，计数进 `dropped`；
+   *   - 某个**键**的值不是数组（`wall: 42`）→ 那一类整片空，其余照常，
+   *     键进 `ignored`（这是逐类降级在文件内部剩下的那一半）；
+   *   - 顶层多一个**不认识的键**（`floors`，笔误或想凭空加一类）→ 同上进 `ignored`，
+   *     不认识的键**不解析**，它底下的坏行也不该记到 `dropped` 上；
+   *   - 顶层整个不是对象 → `ok: false`，五类全空。
+   *
+   * 另外两件容易写错的：`file: ''` **不是坏行**（天空盒第一条「空盒子」就是它），
+   * 缺 `label` 要退回 `file`，`span: '2.4'` 这种字符串数字当没写。
+   */
+  const parsed = parseAssetManifest(
+    {
+      floor: [
+        { label: '普通地板', file: 'carpet', span: 2.4 },
+        42,
+        { file: 7 },
+        { label: '瓷砖地板', file: 'tile1', span: '2.4' },
+      ],
+      door: [{ label: '双开玻璃门', file: 'doubleGlassDoor', width: 1.8, height: 2.1 }],
+      wall: 42,
+      skybox: [
+        { label: '空盒子', file: '' },
+        { label: '空盒子1', file: 'bak1' },
+      ],
+      floors: [],
+    },
+    ['floor', 'wall', 'door', 'window', 'skybox'],
+  )
+
+  assert(parsed.ok, '顶层是对象却被判成不可用')
+  assert(
+    Object.keys(parsed.lists).sort().join(',') === 'door,floor,skybox',
+    `认出来的类不对：${Object.keys(parsed.lists).join('、')}（应当是 floor、door、skybox 三个）`,
+  )
+  assert(parsed.dropped === 2, `丢掉的条数不对：${parsed.dropped}（应当是 2）`)
+  assert(
+    parsed.ignored.includes('wall') && parsed.ignored.includes('floors'),
+    `没被采纳的键不对：${parsed.ignored.join('、')}（应当同时含 wall 与 floors）`,
+  )
+
+  const [carpet, tile1] = parsed.lists.floor
+  assert(carpet.span === 2.4, `span 没接住：${carpet.span}`)
+  assert(carpet.label === '普通地板', `label 读错了：${carpet.label}`)
+  assert(tile1.label === '瓷砖地板', `label 读错了：${tile1.label}`)
+  assert(tile1.span === undefined, `字符串数字 span 被当成了数：${tile1.span}`)
+
+  const door = parsed.lists.door[0]
+  assert(door.width === 1.8 && door.height === 2.1, '门窗那两个数没接住')
+
+  const [empty, bak1] = parsed.lists.skybox
+  assert(empty.file === '' && empty.label === '空盒子', '「空盒子」那条没认出来（file 空串是合法的）')
+  assert(bak1.file === 'bak1', `天空盒第二条读错了：${bak1.file}`)
+
+  /**
+   * 顶层整个作废的那几档。**数组那一条是刻意的**：上一版「每一类一个文件」
+   * 的形态正是裸数组，收下它就会让两种形态同时活下来——而两套读法并存意味着
+   * 「改了其中一个地方不生效」，正是这份文件要防的那类沉默故障。
+   */
+  const asArray = parseAssetManifest([{ label: '空盒子', file: '' }], ['floor', 'skybox'])
+  assert(!asArray.ok && Object.keys(asArray.lists).length === 0, '顶层是数组时没整体作废（那是上一版的形态）')
+  const asString = parseAssetManifest('不是 json', ['floor'])
+  assert(!asString.ok, '顶层是字符串却当成清单收下了')
+  const asNull = parseAssetManifest(null, ['floor'])
+  assert(!asNull.ok, '顶层是 null 却当成清单收下了')
+  const wrapped = parseAssetManifest({ entries: [{ file: 'a' }] }, ['floor'])
+  assert(
+    wrapped.ok && Object.keys(wrapped.lists).length === 0 && wrapped.ignored.includes('entries'),
+    '`{entries:[…]}` 这种包装形态被收下了——它会让「这份文件该怎么写」有两个答案',
+  )
+
+  return '三个类认出来、2 条丢掉、wall 与 floors 都进 ignored，四种作废形态全拒'
 })
 
 // ---------- 2. 插件安装 ----------
@@ -294,12 +426,17 @@ const hostTabViewer = await tryRenderViewer(
 )
 
 /**
- * 素材那几条。分四种情形各渲染一次，为的是把「默认 → 只换地址 → 整份换 →
- * 关掉」四步各钉一条，**并且每一步都是独立的证据**。
+ * 素材那几条。分三种情形各渲染一次，为的是把「默认 → 整份换 → 关掉」三步
+ * 各钉一条，**并且每一步都是独立的证据**。
  *
  * 判据是宫格里的 `<img class="tdm-lib-thumb" src=…>`：模型库在 `TresCanvas`
- * 之外，SSR 下真的会渲染（`ModelLibrary.vue:742` 那一支无条件渲染，
- * 而 `resolveLibrarySection` 的兜底落在**第一个有货的分类**＝地板）。
+ * 之外，SSR 下真的会渲染（`ModelLibrary.vue:742` 那一支无条件渲染）。
+ *
+ * **「只换地址」这一步现在在这里断不出缩略图**：库内置的默认只剩一个地址，
+ * 条目要等浏览器 `onMounted` 去读服务器上那份 `index.json`（见
+ * `useAssetManifest.ts`），而 SSR 不跑 `onMounted`。所以那一步的证据换成了
+ * 「导轨五格都在、宫格是空态」（下面那条），而「地址真的传下去了」由
+ * `assetBaseUrl` 压过插件选项那一条守着——它自带条目，缩略图地址拼得出来。
  *
  * 地址一个字都不在这里另抄：期望值由 `DEFAULT_EDITOR_ASSETS.baseUrl` 拼出来，
  * 那边改了地址这一条跟着走。抄一份的话，改地址时这里会红，而红得没有意义
@@ -311,10 +448,6 @@ const PLUGIN_ASSETS = {
 }
 
 const defaultAssetsViewer = editingViewer
-const mirrorViewer = await tryRenderViewer('渲染只换素材地址的编辑画布', {
-  editable: true,
-  assetBaseUrl: '/mirror/',
-})
 const pluginAssetsViewer = await tryRenderViewer('渲染整份换素材的编辑画布', { editable: true }, undefined, {
   assets: PLUGIN_ASSETS,
 })
@@ -324,6 +457,14 @@ const propOverPluginViewer = await tryRenderViewer(
   undefined,
   { assets: PLUGIN_ASSETS },
 )
+/**
+ * 只为了钉住 `iconBaseUrl` **声明了**（它自己那一条 check 会说明为什么
+ * 「声明没声明」在 SSR 下只能这样验）。
+ */
+const iconBasePropViewer = await tryRenderViewer('渲染带图标根 prop 的编辑画布', {
+  editable: true,
+  iconBaseUrl: '/icon/',
+})
 const emptyAssetsViewer = await tryRenderViewer('渲染显式关掉模型库的编辑画布', { editable: true }, undefined, {
   assets: EMPTY_EDITOR_ASSETS,
 })
@@ -459,43 +600,45 @@ check('分隔线只画在有第二组的地方', () => {
  * 少了它，一段写错的转发（比如前缀拼错）连一次都不会执行。
  */
 
-check('一行不写也有库内置那份模型清单', () => {
+check('不传素材配置时是空态（清单要等浏览器去读服务器）', () => {
   /**
-   * 这一条守的是这次改造的**承诺本身**：宿主装完库、写一句
-   * `<SceneViewer editable />`，左栏那五类就该有货。它同时钉住了三件事
-   * ——「没传就是库内置那份」「`normalizeBase` 补了末尾斜杠」
-   * 「`resolve()` 拼的是 `<base><分类>/<file>/<file>.png`」，
-   * 三者任一坏掉，这条就红，而现场只是左栏一片空白或整片 404。
+   * 这一条守的是这次改造**换了承诺之后**的那句话：宿主装完库、写一句
+   * `<SceneViewer editable />`，左栏那五类**照样在**，但宫格是空的——
+   * 条目要等浏览器 `onMounted` 去读服务器根目录那份 `index.json`
+   * （`useAssetManifest.ts`），而 `renderToString` 不跑生命周期。
    *
-   * 期望值由公开导出的 `DEFAULT_EDITOR_ASSETS.baseUrl` 拼出来（见上面那段）：
-   * 地址改了这里跟着走，不另抄一份。
+   * 所以**有缩略图反而是错的**：那意味着谁又把清单搬回了库里。
+   * 两个断言缺一不可——只有「没图」的话，一个把整个左栏渲染没了的实现
+   * 照样过；只有「导轨在」的话，一个偷偷塞了内置条目的实现也照样过。
+   *
+   * `aria-label` 里那句「标签 · 数量 量词」是导轨上**唯一**的落点（导轨没有
+   * 常显文字，名字只在 `aria-label` 与悬停提示里），所以它同时是三条证据：
+   * 这一格画出来了、名字接对了、**这一类眼下是 0 条**。
    */
-  const expected = `${DEFAULT_EDITOR_ASSETS.baseUrl}floor/tile1/tile1.png`
+  const rail = [
+    'aria-label="地板 · 0 个模型"',
+    'aria-label="墙壁 · 0 个模型"',
+    'aria-label="门 · 0 个模型"',
+    'aria-label="窗 · 0 个模型"',
+    'aria-label="天空盒 · 0 个天空盒"',
+  ]
+  for (const one of rail) {
+    assert(
+      defaultAssetsViewer.html.includes(one),
+      `左栏少了这一格：${one}——导轨得照旧五格齐全，只是每格都空着`,
+    )
+  }
+  assert(
+    defaultAssetsViewer.html.includes('tdm-lib-empty'),
+    '宫格没落到空态那一句上——空分类该给「这一类暂时还没有模型」',
+  )
   const srcs = thumbSrcs(defaultAssetsViewer.html)
-  assert(srcs.length > 0, '编辑态左栏一个缩略图都没有——模型库没拿到条目')
   assert(
-    srcs.includes(expected),
-    `左栏没拼出内置清单的地址。期望含 ${expected}，实得 ${JSON.stringify(srcs.slice(0, 3))}`,
+    srcs.length === 0,
+    `不传素材配置时不该有缩略图，实得 ${JSON.stringify(srcs.slice(0, 3))}——` +
+      '那说明清单又被塞回库里了',
   )
-  return `一行不写就渲染出 ${srcs.length} 个缩略图，地址取自库内置那份`
-})
-
-check('assetBaseUrl 只换根地址，清单不变', () => {
-  /**
-   * 「只换地址」是刻意收窄的签名：宿主换的多半是镜像（同一套目录换个域名），
-   * 所以这一条要同时断言**换了**与**清单还是那一份**——只断前者的话，
-   * 一个「连清单一起清空」的实现照样过。
-   */
-  const srcs = thumbSrcs(mirrorViewer.html)
-  assert(
-    srcs.includes('/mirror/floor/tile1/tile1.png'),
-    `assetBaseUrl 没生效。实得 ${JSON.stringify(srcs.slice(0, 3))}`,
-  )
-  assert(
-    !mirrorViewer.html.includes(`${DEFAULT_EDITOR_ASSETS.baseUrl}floor/`),
-    'assetBaseUrl 生效了，但默认地址**同时**还在——那是两份清单混在一起',
-  )
-  return '根地址换成 /mirror/，条目仍是库内置那一份'
+  return '五类导轨齐全、每格 0 条、宫格空态'
 })
 
 check('插件选项仍然能整份换掉素材', () => {
@@ -526,6 +669,51 @@ check('assetBaseUrl 压过插件选项的地址', () => {
   return 'prop > 插件选项 > 库内置'
 })
 
+check('iconBaseUrl 声明成了 prop（否则会漏到根节点上）', () => {
+  /**
+   * 这一条**只能这样验**，原因值得写下来：图标那一路的整条链路
+   * （`useCategoryIcons` 探服务器 → 探到了才渲染遮罩）全在 `onMounted` 里，
+   * 而 SSR 不跑生命周期。于是「探到的图标出不出图」一行都盖不到
+   * （归 DESIGN.md 目视清单 160）。
+   *
+   * 能在 SSR 下断的只有**声明本身**，而它恰好是个真问题：**没在 `props` 里
+   * 声明过的属性会被 Vue 当成普通 attr 往下落**，一路落到 `SceneEditor` 的根元素上，
+   * 产物里多出一个 `iconbaseurl="/icon/"`，而图标那一格**照旧读默认地址**
+   * ——不生效、不报错、只在 DOM 里留个痕迹。所以断言的是它**没有**出现在 HTML 里。
+   *
+   * 与 `assetBaseUrl` 那条是同一类（那句注释里叫「`attrBaseUrl` 那种形态」），
+   * 只是那条还有缩略图当正面证据，这条只有反面证据。
+   */
+  assert(
+    !/iconbaseurl/i.test(iconBasePropViewer.html),
+    'iconBaseUrl 没被 Vue 当成 prop 收走，漏到根节点上了——' +
+      '说明 src/types.ts 的 SceneViewerProps 里少了它，地址不会生效也不会报错',
+  )
+  return 'iconBaseUrl 是声明过的 prop，没有以属性形态漏出去'
+})
+
+check('两个根地址各自的两极（有值 / 空串）都在', () => {
+  /**
+   * 两个根地址是**两个独立的口子**，所以「默认那一份」与「关掉那一份」都得
+   * 各有一个非空断言，不能只断一个——只断 `baseUrl` 的话，`iconBaseUrl`
+   * 哪天被写成 `''`（或整个字段被删掉）会一路溜到运行时：图标全退回内置，
+   * 而界面上那正是**服务器上还没放图标**的样子，两者分不开。
+   *
+   * 空串那一极的语义见 `assets.ts`：`baseUrl: ''` 是「关掉模型库」，
+   * `iconBaseUrl: ''` 是「不探服务器图标、全用内置那五个」。两者都不是
+   * 「忘了填」——`EMPTY_EDITOR_ASSETS` 是宿主明确表达那两个意图用的。
+   */
+  assert(
+    typeof DEFAULT_EDITOR_ASSETS.iconBaseUrl === 'string' && DEFAULT_EDITOR_ASSETS.iconBaseUrl !== '',
+    'DEFAULT_EDITOR_ASSETS.iconBaseUrl 不是非空字符串——默认那份指不出图标服务器',
+  )
+  assert(
+    EMPTY_EDITOR_ASSETS.iconBaseUrl === '',
+    'EMPTY_EDITOR_ASSETS.iconBaseUrl 不是空串——「关掉模型库」那一份里它必须也是关的',
+  )
+  return 'DEFAULT 两份地址都有值、EMPTY 两份都是空串'
+})
+
 check('显式传空表仍然是空（关得掉模型库）', () => {
   /**
    * 这条守的是那条**判据必须是 `??` 而不是真假**。
@@ -543,6 +731,26 @@ check('显式传空表仍然是空（关得掉模型库）', () => {
     '显式传空表把整个左栏弄没了——「关掉模型库」的含义是空态，不是没有面板',
   )
   return '传 EMPTY_EDITOR_ASSETS 后宫格空、导轨仍在'
+})
+
+check('库不再内置任何条目', () => {
+  /**
+   * **这一条是这次改造的核心判据**：清单搬到服务器上之后，库里那五类一条
+   * 资产都不该剩下。剩下的每一条都是「改了服务器没用、得重新打包」的那部分，
+   * 而这个 bug 在屏幕上完全看不出来——它只是让服务器上删掉的那件资产
+   * 阴魂不散（宿主升级库之前一直摆着）。
+   *
+   * 断言的是**条数**而不是某个地址在不在：将来换一个内置条目名字，
+   * 按名字断的那条会漏过去。
+   */
+  assert(
+    DEFAULT_EDITOR_ASSETS.categories.length === 0,
+    `库内置的默认里还有 ${DEFAULT_EDITOR_ASSETS.categories.length} 类条目——` +
+      '清单该只在服务器上那份 index.json 里',
+  )
+  // 地址要留着：宿主一行不写时，它是编辑器唯一知道该去哪读的东西
+  assert(DEFAULT_EDITOR_ASSETS.baseUrl !== '', '库内置的默认连地址都没了——一行不写的宿主会彻底没有模型库')
+  return '内置零条目、只剩一个地址'
 })
 
 check('内置素材表是冻结的', () => {
@@ -586,6 +794,65 @@ check('作用域约束样式存在', () => {
   assert(css.includes('.tdm-root'), '缺少 .tdm-root 作用域')
   assert(css.includes('.tdm-toolbar button.is-active'), '缺少工具栏激活态样式')
   return '.tdm-root 与激活态样式均存在'
+})
+
+check('服务器上没有分类图标时导轨照旧是内置那五个', () => {
+  /**
+   * 导轨那五格现在有两条路：服务器上的 `<分类 key>.svg`（当 CSS 遮罩）与内置的
+   * 描边 `<svg>`。走哪条由 `useCategoryIcons.ts` 在 `onMounted` 里**探**一次决定，
+   * 而 **SSR 不跑 `onMounted`**——所以这份 HTML 天然就是「一个都没探到」那一档，
+   * 也就是**今天服务器上那个目录还是空的时候**的样子。
+   *
+   * 这一条守的正是那一档：**探不到要退回内置图标，不能是一格空白**。
+   * 而它同时是一条反向断言——遮罩那一支（`--mask`）在 SSR 里**一个都不该出现**，
+   * 出现了就说明有人在渲染期直接拼了服务器地址，把「探一次再决定」那一步跳过了
+   * （那样在服务器上还没放图标的今天，导轨会是五格全白）。
+   *
+   * 样式那一半一起断在这里：模板与规则分居两个文件，缺哪一半都是「图标不见了」
+   * 而两边都不报错。**必须用长属性**——`mask:` 简写会把行内那个 `mask-image`
+   * 重置成 `none`，图标全透明且控制台一声不响，所以这里查的是长属性在不在。
+   * `-webkit-` 前缀同理：仓库没有 browserslist 配置，不做前缀补全。
+   */
+  const html = defaultAssetsViewer.html
+  /*
+    逐格断，而不是断整份 HTML 里 `<svg class="tdm-rail-icon">` 的总数：
+    那个类名右栏的导轨也在用，总数恒大于 5（今天 12 个），
+    拿它当断言的判据会跟着右栏的图标数一起漂。
+    所以先按 `</button>` 切块，再找那一块里带这句 `aria-label` 的——
+    与上面那一条用的是同一句提示文案（导轨上唯一的落点）。
+  */
+  const buttons = html.split('</button>')
+  const rail = [
+    '地板 · 0 个模型',
+    '墙壁 · 0 个模型',
+    '门 · 0 个模型',
+    '窗 · 0 个模型',
+    '天空盒 · 0 个天空盒',
+  ]
+  for (const one of rail) {
+    const segment = buttons.find((piece) => piece.includes(`aria-label="${one}"`))
+    assert(segment, `左栏少了这一格：${one}`)
+    assert(
+      segment.includes('<svg class="tdm-rail-icon"'),
+      `${one} 那一格没画内置图标——探不到服务器图标时它必须退回内置那套，不能是空白`,
+    )
+  }
+  assert(
+    !html.includes('tdm-rail-icon--mask'),
+    'SSR 里出现了服务器图标那一支：探测那一步（onMounted）被跳过了，' +
+      '而服务器上那个目录今天还是空的，导轨会整片空白',
+  )
+
+  assert(css.includes('.tdm-rail-icon--mask'), '缺少 .tdm-rail-icon--mask 规则')
+  assert(
+    /background-color:\s*currentColor/.test(css),
+    '遮罩那一档没有 background-color: currentColor——颜色接不到 activated/hover 的 color，图标不会跟着变色',
+  )
+  assert(
+    /mask-position:\s*center/.test(css) && /-webkit-mask-size:\s*contain/.test(css),
+    '遮罩那一档缺长属性或 -webkit- 前缀（`mask:` 简写会把行内 mask-image 重置成 none）',
+  )
+  return '五项都退回内置 <svg>、遮罩那一支不出现，两边样式规则齐全'
 })
 
 check('未泄漏全局 reset（preflight 必须关闭）', () => {
@@ -1324,10 +1591,31 @@ check('公开契约里有物体级 API', () => {
       素材那一组。`assetBaseUrl` 只有声明了才会被 Vue 当成 prop——
       漏了它，宿主写上去的属性会落到根 div 上（`attrBaseUrl` 那种形态），
       地址不生效也**不报错**。
+
+      `iconBaseUrl` 与它并列、不是它的附属：两个地址在服务器上是同级的两个
+      目录，由其中一个拼不出另一个，所以必须是两个口子（见设计决定 54）。
     */
     'assetBaseUrl',
+    'iconBaseUrl',
     'DEFAULT_EDITOR_ASSETS',
     'EMPTY_EDITOR_ASSETS',
+    /*
+      清单那一路。它进公开面与上面那组同一条理由的**反面**：
+      `assetBaseUrl` 是「漏了声明就静默失效」，这两个是「不导出宿主就没法
+      自己读同一份清单」——宿主想在别处也列一遍素材，就得照同一个约定拼地址、
+      按同一套规则认格式，各写一遍的下场是两边对同一份 json 理解不一致
+      （一边认 `file:''`、另一边当成漏填丢掉）。
+    */
+    'assetManifestUrl',
+    'parseAssetManifest',
+    'AssetManifestParse',
+    /*
+      图标地址那一路，与上面同一条理由：「服务器上那张 `<分类 key>.svg` 在不在」
+      是宿主做体检 / 自己搭一栏时迟早要算的，不导出就得照抄一遍拼法。
+      注意它与清单**不是同一个根**（服务器上同级的两个目录），所以它是一条
+      独立的导出，不是 `assetManifestUrl` 的兄弟。
+    */
+    'assetIconUrl',
   ]
   const missing = needed.filter((name) => !both.includes(name))
   assert(missing.length === 0, `类型声明里缺少：${missing.join(', ')}`)

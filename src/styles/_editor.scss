@@ -1320,6 +1320,32 @@
 }
 
 /*
+  服务器上的分类图标走这一档：一张 svg 当遮罩铺在这一格的底色上。
+  颜色由 background-color 给（而不是让那张图自己带色）——遮罩只取「有没有像素」，
+  图里的颜色全被忽略，于是这里能拿 currentColor 接住上面 `.tdm-rail-item` 的
+  color，激活/悬停照旧只改一处就整体变色。这与上面那条注释说的是同一件事：
+  **这两个分支的颜色都来自 currentColor**，区别只是描边对遮罩。
+
+  两条坑，都试过才知道：
+
+  1. **不能写 `mask:` 简写。** 简写会把 mask-image 重置回 none，
+     而行内 style 里的那张图是先于这条规则落下的，于是整个图标变透明——
+     表现是「图标不见了」，而控制台一声不响。必须用长属性。
+  2. **`-webkit-` 前缀要留着。** 仓库没有 browserslist 配置（硬性约束里那条
+     「没有 lint / formatter」的同类），构建不做前缀补全，Safari 15.4 之前
+     只认带前缀的那一份。
+*/
+.tdm-rail-icon--mask {
+  background-color: currentColor;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
+
+/*
   悬停提示。
   刻意做成 .tdm-inspector 的绝对定位子元素而不是 .tdm-rail 的子元素：
   导轨是滚动容器，提示挂在里面就要额外操心被裁剪，挂在外层则完全没这问题。

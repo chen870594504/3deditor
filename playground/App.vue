@@ -4,7 +4,7 @@ import AppHeader from './components/AppHeader.vue'
 import { useConfigIO } from './composables/useConfigIO'
 import { SceneViewer } from '../src'
 import { pushEvent } from '../src/editor/composables/useEditorState'
-import { ASSET_BASE } from './utils/editorAssets'
+import { ASSET_BASE, ICON_BASE } from './utils/editorAssets'
 
 /*
   宿主外壳。
@@ -14,10 +14,10 @@ import { ASSET_BASE } from './utils/editorAssets'
   右边改属性、W/E/R 与 Esc 与 ⌘Z 全在库里面。
 
   它同时是这个仓库最诚实的一份用法示例：**库的公开面在这里被完整地用了一遍**
-  （一个 prop 决定形态、一个 prop 换素材地址、`getSceneData()` 取数据落盘），
+  （一个 prop 决定形态、两个 prop 换两台地址、`getSceneData()` 取数据落盘），
   没有一处走后门 import 内部模块——`useEditorState` 那几条是公开导出，
   宿主自己画顶栏时按的就是同一组状态。**素材清单则一个字都不在这里**：
-  那是库内置的，这一页只在开发期把根地址换成同源代理前缀。
+  那是库内置的，这一页只在开发期把两个根地址换成同源代理前缀。
 
   **左右栏的宿主页（`sideTabs` / `inspectorTabs`）这一页不摆样例。** 原先左栏
   挂过一页「设备」、右栏挂过一页「说明」，现在都撤了：那是**宿主自己该写的**
@@ -78,15 +78,27 @@ onUnmounted(() => {
       `height="100%"`：`.tdm-app` 是一条竖排 flex，顶栏之外剩下的高度全给它。
       不写的话组件根会用默认的 480px，底下一大片空白。
 
-      `asset-base-url` 只在**开发期**有值：那时把素材根地址换成同源代理前缀，
-      绕开那台服务器不发 CORS 头的问题（见 `utils/editorAssets.ts`）。
-      生产构建下它是 `undefined`，也就是**不覆盖**——清单和地址都取库内置那份，
-      这一页一个字都不用配。所以这一行同时是「库内置默认」与「只换地址」
-      两条路各自的示例。
+      `asset-base-url` 与 `icon-base-url` 都只在**开发期**有值：那时把两个根地址
+      各换成一条同源代理前缀，绕开那台服务器不发 CORS 头的问题
+      （见 `utils/editorAssets.ts`）。生产构建下它们都是 `undefined`，也就是
+      **不覆盖**——一路落到库内置那两个地址去，这一页一个字都不用配。
+      所以这一行同时是「库内置默认」与「只换地址」两条路各自的示例：两条路读的
+      **都是服务器上那份 `index.json`**（图标读的是服务器上那五个 `<key>.svg`），
+      差别只在去哪台服务器读。
+
+      **为什么是两个 prop 不是一个**：素材根与图标根在服务器上是同级的两个目录，
+      由其中一个拼不出另一个。图标那一个还得留意——它拼出来的地址会被当
+      **CSS 遮罩**用，而**遮罩走 CORS**（`<img>` 那条豁免不适用），所以它比素材
+      更离不开同源代理。见 DESIGN.md 设计决定 54。
 
       编辑态的一切（三栏、事件弹窗、绘制工具、快捷键）都在这个组件里面。
       它没有插槽——左右栏的宿主页这一页不摆样例（理由见上面那段注释）。
     -->
-    <SceneViewer editable height="100%" :asset-base-url="ASSET_BASE" />
+    <SceneViewer
+      editable
+      height="100%"
+      :asset-base-url="ASSET_BASE"
+      :icon-base-url="ICON_BASE"
+    />
   </div>
 </template>
