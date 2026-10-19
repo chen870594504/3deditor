@@ -44,6 +44,23 @@ export const DEFAULT_WALL_HEIGHT = 3.9
  */
 export const DEFAULT_WALL_THICKNESS = 0.18
 
+/**
+ * 全屋最高的墙，米。一面墙都没有时退回 `DEFAULT_WALL_HEIGHT`。
+ *
+ * 这是**渲染端**的口径，与编辑器那个「墙高」字段（读 `walls[0]`）刻意分开，
+ * 两者不能合成一个：
+ *
+ * - 编辑器保证「改一次全改、新墙沿用第一面墙」，所以面板上显示第一面墙的值
+ *   就是全部墙的值（`useInspectorSchema.ts` 那段注释讲的就是这件事）。
+ * - 渲染端不能信这个前提。导入的配置完全可能给出高低不一的墙，而房间名标签
+ *   要压过**最高的那一面**才不会被墙顶挡住——按第一面墙算，在那种配置里标签
+ *   会藏进更高的墙后面，且不报任何错。
+ */
+export function maxWallHeight(walls: readonly FloorplanWall[]): number {
+  if (walls.length === 0) return DEFAULT_WALL_HEIGHT
+  return walls.reduce((max, wall) => Math.max(max, wall.height), 0)
+}
+
 /** 门洞默认宽高，米 */
 export const DOOR_WIDTH = 0.9
 export const DOOR_HEIGHT = 2.1

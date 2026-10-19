@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { DoubleSide, Euler, Shape, Vector3 } from 'three'
 import { polygonCenter } from '../utils/floorplan'
 import { createLabelTexture, labelTextureAspect } from '../utils/labelTexture'
+import type { LabelTextureOptions } from '../utils/labelTexture'
 import type { FloorplanRoom } from '../types'
 
 defineOptions({ name: 'TdmSceneFloorplanRoom' })
@@ -16,9 +17,16 @@ defineOptions({ name: 'TdmSceneFloorplanRoom' })
  * 多边形是「点封闭区域」那一刻算出来的**快照**（见 `FloorplanRoom` 的注释），
  * 之后不随墙变动，所以这里也不需要在墙变化时重算什么。
  */
-const props = defineProps<{
-  room: FloorplanRoom
-}>()
+const props = withDefaults(
+  defineProps<{
+    room: FloorplanRoom
+    /** 全屋最高的墙（米）：3D 档的标签要压过墙顶 */
+    wallHeight: number
+    /** 2D 正俯视档：标签不跟着抬高，理由见 `LABEL_Y_2D` */
+    plan?: boolean
+  }>(),
+  { plan: false },
+)
 
 /**
  * 色块离地面的高度。
@@ -35,8 +43,86 @@ const props = defineProps<{
  */
 const FLOOR_Y = 0.035
 
-/** 房间名悬浮的高度。取墙高的一半：3D 里从墙外斜看过去不会被墙顶盖住 */
-const LABEL_Y = 1.4
+/**
+ * 2D 档的房间名高度。
+ *
+ * 2D 是 110 米高的**透视**相机（`useViewMode` 的 `TOP_DISTANCE`），不是正交相机：
+ * 世界高度越高，投影到屏幕上离画面中心越远。把标签从 1.4 抬到墙顶（4.5 左右）
+ * 会让它相对地面色块产生径向视差——离原点 20 米时约 5–6 px，越远越大，看起来
+ * 就是「标签没对准房间」。所以 2D 保持这个高度，只有 3D 抬高（见 `labelY`）。
+ */
+const LABEL_Y_2D = 1.4
+
+/**
+ * 3D 档标签高出墙顶的余量，米。
+ *
+ * 贴着墙顶时标签会与墙顶压在一个视觉平面上，斜看时分不清哪个是墙、哪个是字；
+ * 留 0.6 米让它明确地「浮在上面」。
+ */
+const LABEL_CLEARANCE = 0.6
+
+/**
+ * 标签的世界高度。
+ *
+ * 3D 档必须压过**最高**的墙。原先固定 1.4 米，而默认墙高是 3.9 米——标签整个
+ * 躲在墙里，斜视根本读不到房间名（2D 正俯视才看得见，所以这个缺陷一直没被
+ * 2D 的使用路径暴露出来）。
+ *
+ * `Math.max(..., LABEL_Y_2D)` 是给「墙被改得很矮」的配置留的：墙高 0.5 米时
+ * 标签不该低于 1.4 米，否则它会掉进地面色块里、和色块糊成一片。
+ */
+const labelY = computed(() =>
+  props.plan ? LABEL_Y_2D : Math.max(props.wallHeight + LABEL_CLEARANCE, LABEL_Y_2D),
+)
+
+/**
+ * 3D 档房间名背后的徽标底。
+ *
+ * 配色是**固定的**，不跟随 `room.color`：那个颜色是用户取色器改的，可能深到
+ * 深色字不可读。而标签背后的三样东西明度横跨两端——场景底 `#0b1020`（近黑）、
+ * 墙近白、地面 `#334155`（深灰）——所以选「浅底 + 深字 + 中性描边」：浅底压过
+ * 深色背景，描边勾出它在浅色墙上的边界。
+ *
+ * `padding` 比默认的 18 大：徽标是一块面，四周只留 9 像素会显得字顶到边上。
+ * 2D 档不传这一份，仍是透明底纯文字（见 `labelMap`）。
+ */
+const LABEL_BADGE: LabelTextureOptions = {
+  color: '#0f172a',
+  haloColor: '#f8fafc',
+  background: '#f8fafc',
+  borderColor: '#64748b',
+  borderWidth: 4,
+  radius: 20,
+  padding: 28,
+}
+
+/**
+ * 指引线的粗细，米。
+ *
+ * 直径 4 厘米：10–30 米的视距下大约 2–6 像素，细得像一条标注线；再粗就像柱子。
+ */
+const GUIDE_RADIUS = 0.02
+
+/**
+ * 圆柱的径向分段。4 厘米粗的柱子 8 段已经看不出棱，再多只是白付三角形。
+ */
+const GUIDE_RADIAL_SEGMENTS = 8
+
+/**
+ * 指引线底端的高度，米。
+ *
+ * 落在色块顶面（`FLOOR_Y`）上方 1 厘米：与色块共面会逐像素抢深度（闪），
+ * 而 1 厘米在 3D 视距下看不出来悬空。
+ */
+const GUIDE_BOTTOM_Y = FLOOR_Y + 0.01
+
+/**
+ * 指引线的颜色。
+ *
+ * 不用 `room.color`：房间色可能同时撞上深色场景底和浅色墙，固定一个中性灰
+ * 在三种背景上都立得住。与徽标描边同色，读起来是一套标注。
+ */
+const GUIDE_COLOR = '#64748b'
 
 /**
  * 房间名在屏幕上的大小（`sizeAttenuation: false`，见模板那段注释）。
@@ -111,14 +197,46 @@ const geometryArgs = computed<[Shape]>(() => {
 const FLOOR_POSITION = new Vector3(0, FLOOR_Y, 0)
 
 /**
- * 形心。**只给房间名用**——色块用的是自己的局部坐标（见 `FLOOR_POSITION`）。
+ * 形心。**只给房间名与指引线用**——色块用的是自己的局部坐标（见 `FLOOR_POSITION`）。
  *
- * `Vector3` 而不是数组（同上），而且每次重算返回**新实例**是必要的：
- * TresJS 按引用比较，原地改同一只会被当成「没变」。
+ * 两处共用同一个 x / z：各算一次的话，改 `polygonCenter` 的算法时它们会悄悄错开，
+ * 表现是「字在房间中心、线却偏了一点」。
+ *
+ * 数组而不是 `Vector3`：下面两处要把 x / z 拆开用，各自造新的 `Vector3`
+ * （那里需要新实例，理由见 `labelPosition`）。
  */
-const labelPosition = computed(() => {
-  const center = polygonCenter(props.room.polygon)
-  return new Vector3(center[0], LABEL_Y, center[1])
+const labelCenter = computed(() => polygonCenter(props.room.polygon))
+
+/**
+ * 标签的位置。
+ *
+ * 每次重算返回**新实例**是必要的：TresJS 按引用比较，原地改同一只
+ * 会被当成「没变」。
+ */
+const labelPosition = computed(
+  () => new Vector3(labelCenter.value[0], labelY.value, labelCenter.value[1]),
+)
+
+/**
+ * 指引线的几何参数。
+ *
+ * 写进 computed 是为了**引用稳定**：TresJS 在 args 换引用时会重建几何体
+ * （`SceneGround.vue:54-60` 的注释是这条约定的出处），模板里直接写数组字面量
+ * 会每次渲染都重建一遍。只有 `labelY` 变（改墙高）时才需要换。
+ */
+const guideGeometryArgs = computed<[number, number, number, number]>(() => [
+  GUIDE_RADIUS,
+  GUIDE_RADIUS,
+  labelY.value - GUIDE_BOTTOM_Y,
+  GUIDE_RADIAL_SEGMENTS,
+])
+
+/**
+ * 指引线的位置。圆柱以**自身中心**为原点，所以 y 取上下端的中点。
+ */
+const guidePosition = computed(() => {
+  const [x, z] = labelCenter.value
+  return new Vector3(x, (GUIDE_BOTTOM_Y + labelY.value) / 2, z)
 })
 
 /**
@@ -127,8 +245,16 @@ const labelPosition = computed(() => {
  * 没有 DOM 时 `createLabelTexture` 返回 `null`（库会被 `renderToString`
  * 跑一遍，那时没有 document），模板里的 `v-if` 于是整个跳过标签——
  * 少一个房间名，而不是让整棵场景渲染不出来。
+ *
+ * **2D 档不传 `LABEL_BADGE`**，保持透明底纯文字：正俯视下文字压在房间色块上
+ * 本来就清楚，而徽标会盖掉色块、让「这一片是哪个房间」更难读。同理，切档时
+ * 两档各用各的贴图（缓存键带了底色那几个字段），不会串。
  */
-const labelMap = computed(() => (hasArea.value ? createLabelTexture(props.room.name) : null))
+const labelMap = computed(() =>
+  hasArea.value
+    ? createLabelTexture(props.room.name, props.plan ? undefined : LABEL_BADGE)
+    : null,
+)
 
 /**
  * 标签的缩放。
@@ -168,6 +294,30 @@ const labelScale = computed(
   </TresMesh>
 
   <!--
+    指引线：从徽标中心垂到房间地面色块上，**只在 3D 档画**。
+    2D 是 110 米高的透视相机，竖直的线在正俯视里投影成几个像素的点，
+    既读不出「指向地面」又把俯视图弄脏，所以整条不画。
+
+    顶端落在 `labelY`（徽标中心）就行，**不要试图停在徽标下沿**：标签开着
+    `size-attenuation=false`，它的世界尺寸随相机距离变（5 米处半高约 15 厘米、
+    20 米处约 60 厘米），没有固定的世界下沿可躲。靠标签最后绘制盖住线顶。
+
+    渲染顺序是「色块（默认 0）→ 线（1）→ 标签（2）」：
+    - 线必须 `transparent` 才能进透明队列；否则不透明队列先画、半透明色块后画，
+      线在下方那一段会被洗上一层房间色。
+    - 线 `depth-write=false`：圆柱前表面比标签平面更靠近相机，写了深度就会把
+      徽标中心那一块挖掉，看起来像线从字中间穿出去。
+    - `depth-test` 保持默认：线被墙挡住时要正确消失。
+
+    用细圆柱而不是 cientos 的 `Line2`：5.9.0 里 `LineMaterial.resolution` 的
+    watcher 没取 `.value`、永远不触发，屏幕像素线宽失效（见设计决定 55）。
+  -->
+  <TresMesh v-if="!plan && labelMap" :position="guidePosition" :render-order="1">
+    <TresCylinderGeometry :args="guideGeometryArgs" />
+    <TresMeshBasicMaterial :color="GUIDE_COLOR" :transparent="true" :depth-write="false" />
+  </TresMesh>
+
+  <!--
     房间名。
 
     用 Sprite 而不是贴在房间地面上的平面：Sprite 永远正对相机，俯视（2D 档，
@@ -181,8 +331,11 @@ const labelScale = computed(
     代价是房间里多的时候标签不会随距离缩小，可能挤在一起。
 
     贴图周围是透明的，所以必须 `transparent`，否则透明区会渲染成黑色。
+
+    `render-order=2` 把它排在指引线（1）之后画：徽标会完整盖住线的顶端，
+    两者交汇处不会露出半截圆柱（理由见上面那段）。
   -->
-  <TresSprite v-if="labelMap" :position="labelPosition" :scale="labelScale">
+  <TresSprite v-if="labelMap" :position="labelPosition" :scale="labelScale" :render-order="2">
     <TresSpriteMaterial
       :map="labelMap"
       :size-attenuation="false"

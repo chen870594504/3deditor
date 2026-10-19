@@ -5,7 +5,7 @@ import SceneFloorplanRoom from './SceneFloorplanRoom.vue'
 import SceneFloorplanWall from './SceneFloorplanWall.vue'
 import SceneFloorplanWallSkin from './SceneFloorplanWallSkin.vue'
 import SceneFloorplanOpeningModel from './SceneFloorplanOpeningModel.vue'
-import { openingFilledByModel } from '../utils/floorplan'
+import { maxWallHeight, openingFilledByModel } from '../utils/floorplan'
 import type { FloorplanConfig, FloorplanOpening, FloorplanWall } from '../types'
 
 defineOptions({ name: 'TdmSceneFloorplan' })
@@ -59,6 +59,15 @@ const props = defineProps<{
    */
   plan?: boolean
 }>()
+
+/**
+ * 房间名标签要压过的高度：全屋最高的那一面墙。
+ *
+ * 取值口径与编辑器那个「墙高」字段不同，理由写在 `maxWallHeight` 上：
+ * 编辑器读第一面墙，渲染端要按最高的那面兜底，否则导入一份高低不一的配置时，
+ * 标签会藏进更高的墙后面。
+ */
+const wallHeight = computed(() => maxWallHeight(props.floorplan.walls))
 
 /**
  * 有外观的墙，**按地址分组**。
@@ -162,7 +171,13 @@ const openingModels = computed<
     所以不可能同一面墙两边都画——那会是同一个包围盒上的两组共面几何，
     逐像素 z-fighting。
   -->
-  <SceneFloorplanRoom v-for="room in floorplan.rooms" :key="room.id" :room="room" />
+  <SceneFloorplanRoom
+    v-for="room in floorplan.rooms"
+    :key="room.id"
+    :room="room"
+    :wall-height="wallHeight"
+    :plan="plan"
+  />
 
   <SceneFloorplanWallSkin
     v-for="group in styled"

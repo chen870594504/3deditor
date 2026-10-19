@@ -20,13 +20,30 @@ export interface LabelTextureOptions {
   fontSize?: number
   /** 四周留白（canvas 像素） */
   padding?: number
+  /**
+   * 徽标底色。**不传＝透明底纯文字**，与改造前逐像素一致（2D 档走这一支）。
+   *
+   * 底色必须画进同一张 canvas：`SpriteMaterial.color` 是整张贴图的乘法，
+   * 会把字一起染色；在 Sprite 背后垫一块平面又跟不上它「永远正对相机」的朝向，
+   * 一转动就错开。
+   */
+  background?: string
+  /** 圆角半径（canvas 像素）。只在给了 `background` 时生效 */
+  radius?: number
+  /** 徽标描边色。只在给了 `background` 时生效 */
+  borderColor?: string
+  /** 徽标描边宽度（canvas 像素），0 = 不描边 */
+  borderWidth?: number
 }
 
-const DEFAULTS: Required<LabelTextureOptions> = {
+const DEFAULTS = {
   color: '#f8fafc',
   haloColor: '#0f172a',
   fontSize: 64,
   padding: 18,
+  radius: 20,
+  borderColor: '#64748b',
+  borderWidth: 0,
 }
 
 /**
@@ -44,6 +61,35 @@ const CACHE_LIMIT = 32
 const cache = new Map<string, CanvasTexture>()
 
 /**
+ * 圆角矩形路径。
+ *
+ * 不用 `CanvasRenderingContext2D.roundRect`：它 Chrome 99 / Safari 16.4 /
+ * Firefox 112 才有，而库是嵌进宿主页面的，宿主的 WebView 不保证跟得上；
+ * 缺这个方法时是**运行时 TypeError**，不是降级。`arcTo` 从 canvas 2D 早期
+ * 就有，手写这十行没有维护成本。
+ *
+ * 半径按短边夹取：徽标高度由字号决定，名字很短时宽度可能比两倍圆角还窄，
+ * 不夹的话四段圆弧会互相穿透、轮廓自交。
+ */
+function roundRectPath(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number,
+): void {
+  const r = Math.max(0, Math.min(radius, width / 2, height / 2))
+  context.beginPath()
+  context.moveTo(x + r, y)
+  context.arcTo(x + width, y, x + width, y + height, r)
+  context.arcTo(x + width, y + height, x, y + height, r)
+  context.arcTo(x, y + height, x, y, r)
+  context.arcTo(x, y, x + width, y, r)
+  context.closePath()
+}
+
+/**
  * 造一张（或取一张缓存的）文字贴图。
  *
  * **没有 DOM 时返回 `null`**，不是抛错：这个模块会被 `renderToString` 跑一遍
@@ -56,8 +102,22 @@ export function createLabelTexture(
 ): CanvasTexture | null {
   if (typeof document === 'undefined') return null
 
-  const { color, haloColor, fontSize, padding } = { ...DEFAULTS, ...options }
-  const key = `${text}|${color}|${haloColor}|${fontSize}|${padding}`
+  const {
+    color,
+    haloColor,
+    fontSize,
+    padding,
+    background,
+    radius,
+    borderColor,
+    borderWidth,
+  } = { ...DEFAULTS, ...options }
+  /*
+   * **新增字段必须全部进键。** 漏掉的表现是 2D 与 3D 串用同一张贴图：
+   * 先渲染哪一档，另一档就跟着变（切到 3D 没有徽标 / 切回 2D 冒出徽标），
+   * 而且不报任何错——缓存命中时根本没有绘制这一步。
+   */
+  const key = `${text}|${color}|${haloColor}|${fontSize}|${padding}|${background ?? ''}|${radius}|${borderColor}|${borderWidth}`
 
   const cached = cache.get(key)
   if (cached) return cached
@@ -87,6 +147,26 @@ export function createLabelTexture(
   context.textAlign = 'center'
   context.textBaseline = 'middle'
   context.lineJoin = 'round'
+
+  /*
+   * 圆角底与描边。`background` 不传时**这一段完全不执行**——2D 档的贴图
+   * 与改造前逐像素一致，不需要另一条代码路径。
+   *
+   * 描边以路径为中心向两侧各画一半，所以路径要内缩半个线宽，否则外侧那半条
+   * 会被 canvas 边界裁掉，看起来比设定的细一半。
+   */
+  if (background) {
+    const inset = borderWidth / 2
+    roundRectPath(context, inset, inset, width - borderWidth, height - borderWidth, radius)
+    context.fillStyle = background
+    context.fill()
+
+    if (borderWidth > 0) {
+      context.lineWidth = borderWidth
+      context.strokeStyle = borderColor
+      context.stroke()
+    }
+  }
 
   // 先描边再填字：反过来的话描边会盖掉半个笔画
   context.lineWidth = Math.max(4, fontSize * 0.16)
