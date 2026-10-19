@@ -24,7 +24,7 @@ createApp(App).use(createThreeDMaker()).mount('#app')
 
 ## 核心概念
 
-- **`editable` 一个总闸决定形态**：`true` 是完整编辑器（左栏挑料 ｜ 画布 ｜ 右栏属性），`false` 是只读画布，不传是旧行为。
+- **`editable` 一个总闸决定形态**：`true` 是完整编辑器（左栏挑料 ｜ 画布 ｜ 右栏属性），`false` 是只读画布，不传是旧行为。`mode="model"` 是第二种编辑形态「编辑模型」：`editable` 不写也进编辑器，左栏只放你给的 `extraSections`，点一格是**替换**场景里那个模型（保留位置、缩放与事件），中栏固定 3D、右栏只留操作历史。
 - **场景数据住在 store 里，组件自己不落盘**：取用 `getSceneData()`，装载用 `loadSceneData()` 或 `initialScene` prop。
 - **左栏那五类模型由服务器给**：库内置的只是一个地址，清单是素材服务器**根目录**那一份 `index.json`（加模型只改服务器，不用升级库）；换服务器给 `assetBaseUrl`，换整套目录走插件选项 `assets`。
 
@@ -33,16 +33,18 @@ createApp(App).use(createThreeDMaker()).mount('#app')
 | Prop            | 类型                       | 默认值    | 说明                                     |
 | --------------- | -------------------------- | --------- | ---------------------------------------- |
 | `editable`      | `boolean`                  | —         | 预览 / 编辑总闸                          |
+| `mode`          | `'scene' \| 'model'`       | `'scene'` | `'model'` = 编辑模型页（本身即编辑形态） |
 | `height`        | `string \| number`         | `'480px'` | 组件高度，数字按 px                      |
 | `autoRotate`    | `boolean`                  | `false`   | 自动旋转视角                             |
 | `draco`         | `boolean`                  | `false`   | 模型是否 Draco 压缩（写在当前选中项上）  |
 | `initialScene`  | `DeepPartial<SceneConfig>` | —         | 挂载时装载一份场景，只装一次             |
 | `sideTabs`      | `EditorPanelTab[]`         | `[]`      | 往左栏导轨末尾追加的页                   |
 | `inspectorTabs` | `EditorPanelTab[]`         | `[]`      | 往右栏导轨末尾追加的页                   |
+| `extraSections` | `ExtraLibrarySection[]`    | `[]`      | 左栏追加的模型分类（`mode="model"` 时是唯一内容） |
 | `assetBaseUrl`  | `string`                   | —         | 只换模型库的根地址，清单仍从这台服务器上读 |
 | `iconBaseUrl`   | `string`                   | —         | 只换左栏那五个分类图标的根地址             |
 
-追加的页正文走具名插槽 `#side-tab-<key>` / `#inspector-tab-<key>`；末尾四个 prop 只在 `editable` 为真时有落点。
+追加的页正文走具名插槽 `#side-tab-<key>` / `#inspector-tab-<key>`；`sideTabs` / `inspectorTabs` / `extraSections` / `iconBaseUrl` 只在编辑形态有落点（`editable` 或 `mode="model"`）。
 
 两个地址 prop 都是「跨域就拿不到」的那一类（模型走 `fetch`、图标当 CSS 遮罩，都受 CORS 管），**指向你自己已配好同源代理的那台服务器**。
 
@@ -72,3 +74,4 @@ createApp(App).use(createThreeDMaker()).mount('#app')
 | `groundPointAt(x, y)` | 屏幕坐标 → 地面上的 `[x, z]`             |
 | `getSceneData()`      | 取一份场景配置深拷贝，交给你的接口       |
 | `loadSceneData(data)` | 用一份数据初始化场景（会清空撤销栈）     |
+| `exportModel(id?, options?)` | 场景配置 + 模型配置 + 零件表 + 自动取景 PNG 封面 |

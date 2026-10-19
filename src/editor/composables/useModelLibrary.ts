@@ -486,11 +486,17 @@ export function useLibrarySections(): ComputedRef<LibrarySection[]> {
  * key 的类型是 `string` 而不是 `LibrarySectionKey`：追加分类的 key 是运行时的，
  * 而字面量联合拦不住它。兜底仍然落在内置那一侧——宿主把某个追加分类撤掉、
  * 而左栏正停在它上面时，落回的是内置分类而不是空白。
+ *
+ * **空表时返回 `undefined`，类型也如实这么写。** 模型编辑页可以把一张空表传进来
+ * （宿主没给 `extraSections`，而那一页又没有内置五类），此时这里一条兜底都没有。
+ * 早先签名写的是 `T`、实际却会返回 `undefined`——那是个假的类型，调用方拿到的
+ * `.key` 一起变成 `undefined`，而 `undefined` 当 key 用是静默的（导轨一格不亮、
+ * 宫格一片空白），所以这里宁可让编译器先把调用方逼着判一次。
  */
 export function resolveLibrarySection<T extends { key: string; entries: readonly unknown[] }>(
   key: string,
   sections: readonly T[],
-): T {
+): T | undefined {
   return (
     sections.find((section) => section.key === key) ??
     sections.find((section) => section.entries.length) ??

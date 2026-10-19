@@ -7,11 +7,16 @@ import ScenePicker from './ScenePicker.vue'
 import SceneSelection from './SceneSelection.vue'
 import SceneToolbar from './SceneToolbar.vue'
 import { useSceneStore } from '../stores/scene'
+import { parseModelParts } from '../utils/modelParts'
 import { resolveSceneSwitches } from '../utils/sceneSwitches'
 import type {
   CameraChangePayload,
   DeepPartial,
   ModelBounds,
+  ModelConfig,
+  ModelExportGeometry,
+  ModelExportOptions,
+  ModelExportResult,
   ModelPickPayload,
   ModelTransformPayload,
   ObjectClickPayload,
@@ -198,7 +203,8 @@ function onCameraChange(payload: CameraChangePayload) {
 }
 
 /**
- * 画布内部的内容组件，用来取它的 `captureCamera` / `measureModel` / `modelObjectOf`。
+ * 画布内部的内容组件，用来取它的 `captureCamera` / `measureModel` / `modelObjectOf` /
+ * `captureModelThumbnail`。
  *
  * 隔着 TresCanvas 拿模板引用是可行的——TresJS 换的是渲染器，
  * 组件仍然由 Vue 创建和挂载。
@@ -217,6 +223,7 @@ const contentRef = useTemplateRef<{
   measureModel: (id: string) => ModelBounds | null
   modelObjectOf: (id: string) => Object3D | null
   groundPointAt: (clientX: number, clientY: number) => [number, number] | null
+  captureModelThumbnail: (id: string, size?: number) => string | null
 }>('contentRef')
 
 /**
@@ -321,15 +328,75 @@ function getSceneData(): SceneConfig {
 }
 
 /**
+ * 取一个模型的零件表：`url` 来源与内置示例一律 `null`。
+ *
+ * 判据的顺序与渲染端**逐字一致**（`SceneModelNode.vue` 里 `v-if="model.url"` →
+ * `v-else-if="model.partsJson"`）：`url` 优先。两处一旦反过来，「配置里写的是
+ * 程序生成的模型、导出的却是零件表」这种自相矛盾不会有任何报错。
+ *
+ * `partsJson` 为空串也返回 `null`：空串是合法但不产生几何的输入，
+ * 把它当成「有几何数据」会让宿主多存一份假数据。
+ */
+function geometryOf(model: ModelConfig): ModelExportGeometry | null {
+  if (model.url) return null
+  const partsJson = model.partsJson
+  if (!partsJson) return null
+  return { ...parseModelParts(partsJson), partsJson }
+}
+
+/**
+ * 导出一个模型：整份配置 + 这一条模型 + 零件表 + 自动取景封面。
+ *
+ * ## 目标选择
+ *
+ * `id` 省略时直接复用 store 的 `replacementTarget()`（选中项 → 第 0 个 → -1）——
+ * 与模型编辑页「点一格替换谁」是**同一个策略**，不在这里另写一份。两份写在两个
+ * 地方时，「用户没选中任何东西」这一档最可能漂移，而漂移的表现是导出了别的模型，
+ * 宿主那边只会觉得保存按钮时灵时不灵。
+ *
+ * 显式给了 `id` 则严格按它找，找不到返回 `null`：**不回退**到第 0 个。
+ * 写错 id 却拿到一份「看起来正常」的数据，比拿到 `null` 难查得多。
+ *
+ * ## 为什么先拍配置再画图
+ *
+ * `scene.exportConfig()` 是深拷贝，之后缩略图那一步会把模型临时借到别的场景里
+ * （同步完成、随即还原），不会影响这份快照。反过来先画图再取配置也没有区别，
+ * 但先取配置能让「数据三样一定在」与「封面可能缺席」这件事在代码顺序上就可读。
+ */
+function exportModel(id?: string, options?: ModelExportOptions): ModelExportResult | null {
+  const config = scene.exportConfig()
+  const index =
+    id === undefined
+      ? scene.replacementTarget()
+      : config.models.findIndex((model) => model.id === id)
+
+  /*
+    这里多写一次 `!model` 不是为了 `noUncheckedIndexedAccess` 好看：
+    `replacementTarget()` 读的是 store，而 `config` 是随后拍的快照。两者理论上
+    同步，但把「下标与数组对不上」的兜底写在这里，比让它变成 `undefined.config`
+    那样的运行时异常便宜得多。
+  */
+  const model = index >= 0 ? config.models[index] : undefined
+  if (!model) return null
+
+  return {
+    config,
+    model,
+    geometry: geometryOf(model),
+    thumbnail: contentRef.value?.captureModelThumbnail(model.id, options?.size) ?? null,
+  }
+}
+
+/**
  * 用一份场景数据初始化场景，返回是否用上了。
  *
  * **实现只有一份，在 store 的 `loadSceneData` 里**（先 `migrateConfig`、
  * 再 `applyConfig`、最后 `clearHistory`，理由写在那边）。这一层只做转发，
- * 与上面四个方法同形——`SceneViewerApi` 声明这 5 个方法四层都在，
+ * 与上面四个方法同形——`SceneViewerApi` 声明这 6 个方法四层都在，
  * 少了它这一层的类型契约就断了。
  *
  * 不在这里直接调 store、而是留一个转发函数，也是为了让 `defineExpose` 的
- * 五条形状完全一致：四层里那一层长得不一样，正是「改一处返回值另三处不报错」
+ * 六条形状完全一致：四层里那一层长得不一样，正是「改一处返回值另三处不报错」
  * 的温床（见 `SceneViewerApi` 上方那段）。
  */
 function loadSceneData(data: DeepPartial<SceneConfig>): boolean {
@@ -337,7 +404,7 @@ function loadSceneData(data: DeepPartial<SceneConfig>): boolean {
 }
 
 /*
-  显式写上 `SceneViewerApi` 而不是让它推断：这一层是那 5 个方法的**起点**，
+  显式写上 `SceneViewerApi` 而不是让它推断：这一层是那 6 个方法的**起点**，
   上游三层都按同一个类型转手。让它推断的话，这里改一个返回值只有直接调用
   它的地方报错，转手那几层（`EditorStage` → `SceneEditor` → `SceneViewer`）
   因为拿的是宽类型，会安安静静地把新形状透出去。
@@ -348,6 +415,7 @@ defineExpose<SceneViewerApi>({
   groundPointAt,
   getSceneData,
   loadSceneData,
+  exportModel,
 })
 </script>
 

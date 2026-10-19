@@ -43,7 +43,7 @@ pnpm preview      # 预览构建产物
 几条容易踩的：
 
 - **没有 lint / formatter 配置**（无 ESLint / Prettier / Biome / EditorConfig）。不要凭空引入，也不要假设某个风格工具会兜住格式问题。
-- **没有测试框架**。`scripts/smoke.mjs` 是唯一的自动化测试，且**不支持筛选用例**——一次跑全部 111 条。想单点验证某个纯函数，写一个临时 node 脚本 `import('../dist/index.js')`（必须先 `pnpm build:only`），用完删掉。
+- **没有测试框架**。`scripts/smoke.mjs` 是唯一的自动化测试，且**不支持筛选用例**——一次跑全部 114 条。想单点验证某个纯函数，写一个临时 node 脚本 `import('../dist/index.js')`（必须先 `pnpm build:only`），用完删掉。
 - `pnpm smoke` 读的是 `dist/index.js`，改完 `src/` 不重新构建就测的是旧产物。
 - **验证 playground 构建必须另给 outDir**。仓库没有 `build:playground` 脚本，裸跑 `vite build` 会用默认 `outDir: dist` **覆盖库产物**。正确做法：
 
@@ -87,21 +87,23 @@ pnpm preview      # 预览构建产物
 
 ```
 SceneCanvas.vue  由合并后的 SceneViewer.vue 改名而来，收窄成**内部签名**：8 个 prop /
-                 12 个 emits / 5 个方法。编辑器与纯画布共用，宿主永远碰不到——公开面上
+                 12 个 emits / 6 个方法。编辑器与纯画布共用，宿主永远碰不到——公开面上
                  那几组「场景长什么样」的 prop 桥（`background` / `wireframe` / 分组配置…）
                  全删了，它们本来就住在 `store.config` 里；这里只留能决定画布本身的那些
                  与编辑器自己的手感偏好（`toolbar` / `gizmoMode` / `cameraTransition`）
      ↑
 SceneEditor.vue  三栏工作台 = SidePanel | EditorStage | InspectorPanel + 事件绑定弹窗
      ↑
-SceneViewer.vue  公开面：九个 prop（editable / height / autoRotate / draco / initialScene / sideTabs / inspectorTabs / assetBaseUrl / iconBaseUrl）
+SceneViewer.vue  公开面：十一个 prop（editable / mode / height / autoRotate / draco / initialScene / sideTabs / inspectorTabs / extraSections / assetBaseUrl / iconBaseUrl）
 ```
 
 `SceneCanvas` 里面才是 `SceneContent`（`TresCanvas` 内部，组装各 `Scene*` + 相机 + 控制器 +
 物体级变换与拾取）与其余 `Scene*.vue`。
 
 `SceneViewer` **只有一个公开组件，不拆壳**：「预览还是编辑」由它的 `editable` 一个 prop 决定，
-`editable` 为真时渲染整个编辑器（三栏），**顶栏留给宿主**。三级规则
+`editable` 为真时渲染整个编辑器（三栏），**顶栏留给宿主**。`mode="model"` 是第二档编辑形态
+（「编辑模型」）：它**本身就隐含编辑态**，左栏只放宿主 `extraSections`、右栏只留历史与宿主页、
+中栏固定 3D，点模型是**替换**而不是追加——见 DESIGN.md 设计决定 57。三级规则
 `生效值 = 分开关 ?? editable ?? 旧默认`（`src/utils/sceneSwitches.ts` 是这条规则的唯一实现，
 并从 `index.ts` 导出）**没有变**，只是它的输入面从公开 prop 挪进了内部签名——编辑器给
 `SceneCanvas` 喂的就是 `:toolbar="false"` 配一档 `editable`（自绘界面，所以内置工具栏让位）。
@@ -113,8 +115,8 @@ SceneViewer.vue  公开面：九个 prop（editable / height / autoRotate / drac
 `gizmoMode` 同样收进了内部签名：手柄模式是编辑器的手感偏好，公开面上没有它的位置。
 
 `SceneViewer` 的对外面有两层：**props / emits**（声明式，「场景长什么样」）与
-**`defineExpose` 出来的 5 个方法**（命令式，「此刻画布上是什么情况」：`captureCamera` / `measureModel` /
-`groundPointAt` / `getSceneData` / `loadSceneData`）。加新能力时先判这两层归哪一层——
+**`defineExpose` 出来的 6 个方法**（命令式，「此刻画布上是什么情况」：`captureCamera` / `measureModel` /
+`groundPointAt` / `getSceneData` / `loadSceneData` / `exportModel`）。加新能力时先判这两层归哪一层——
 「在画布上拖出一个物理量」走 props+emits（库自己写回，宿主一行不写也能用），
 「取一份数据交给宿主」走 `defineExpose`（库只产出，不做策略）。
 两层的名字都不带策略含义：叫 `getSceneData` 而不是 `saveScene`，因为**组件本身并不保存**。
@@ -244,7 +246,7 @@ host 这一层。
 
 ## 验证到哪一步（不要补的测试）
 
-`pnpm verify` 的 111 条断言**跑在 SSR 下**（`createSSRApp` + `renderToString`），
+`pnpm verify` 的 114 条断言**跑在 SSR 下**（`createSSRApp` + `renderToString`），
 而 `TresCanvas` 的 children 在 SSR 下根本不渲染。所以下列内容**测不到**，
 不要为它们补冒烟用例（只会得到一条永远为真的断言）：
 
@@ -253,9 +255,10 @@ host 这一层。
 - 天空盒的**面到轴映射**（错了不报错，只是天整体转到别的方向）
 - 模板 ref 指向 three 对象时的浅引用陷阱（dev 下只是一条警告，生产里静默失效）
 - 那段 `new Function` 执行器（库自身从不执行配置里的任何 `code`）
-- **`SceneViewer` 那 5 个 `defineExpose` 方法**——它的失效原因与上面几条不同，值得单独记着：
+- **`SceneViewer` 那 6 个 `defineExpose` 方法**——它的失效原因与上面几条不同，值得单独记着：
   `renderToString` 只产出 HTML 字符串，**拿不到组件实例**，`ref` 上没有 `.value`，
-  所以返回值语义（什么时候给 `null`、`loadSceneData` 会不会清空撤销栈）**一行断言都写不出来**。
+  所以返回值语义（什么时候给 `null`、`loadSceneData` 会不会清空撤销栈、`exportModel`
+  的封面什么时候缺席）**一行断言都写不出来**。
   往里加方法时必须同时补一条目视清单条目。
 - **宿主面板页的正文**：那一页点开才渲染，而 SSR 里点不了。能断言的只有「那一格进了导轨」
   （`aria-label` 在不在、分隔线在不在）；正文到不到得了、点回内置页会不会留下空白，
@@ -284,7 +287,7 @@ host 这一层。
 | 文件 | 读者 | 内容 |
 |---|---|---|
 | `README.md` | 用这个库的宿主 | **一份精简卡片（≤80 行）**：一句话简介、安装、快速开始、三条核心概念、props / 事件 / 对外方法三张表 |
-| `DESIGN.md` | 改这个仓库的人 | 编辑器的设计、**56 条编号设计决定**、162 条**目视清单**、目录结构、发布流程、待办 |
+| `DESIGN.md` | 改这个仓库的人 | 编辑器的设计、**58 条编号设计决定**、164 条**目视清单**、目录结构、发布流程、待办 |
 
 `README.md` 是一份**面向宿主的用法卡片**，结构是固定的（**总长 ≤80 行**）：一句话简介 →
 安装（一条命令）→ 快速开始（一个最小示例）→ 核心概念（最多 3 条）→ props / 事件 / 对外方法

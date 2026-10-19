@@ -14,8 +14,10 @@ import type {
   ObjectClickPayload,
   SceneConfig,
   SceneViewerApi,
+  SceneViewerMode,
 } from '../../types'
 import { useSceneStore } from '../../stores/scene'
+import type { ExtraLibrarySection } from '../composables/useModelLibrary'
 import { useAssetManifest } from '../composables/useAssetManifest'
 import { useEditorShortcuts } from '../composables/useEditorShortcuts'
 import {
@@ -48,11 +50,23 @@ defineOptions({ name: 'TdmSceneEditor' })
 const props = withDefaults(
   defineProps<{
     height?: string | number
+    /**
+     * 编辑场景还是编辑模型。默认 `'scene'`，与本组件出现之前逐字一致。
+     *
+     * 它是**字符串**而不是布尔：布尔 prop 缺失会被 Vue 转成 `false`，
+     * 而这里「不传」与 `'scene'` 本来就是一回事，写成布尔反而要把那条特例
+     * 再抄一遍（见 `SceneViewer` 里 `editable: undefined` 那段）。
+     */
+    mode?: SceneViewerMode
     sideTabs?: EditorPanelTab[]
     inspectorTabs?: EditorPanelTab[]
+    /** 宿主追加的模型分类。scene 模式追加在五类之后，model 模式是左栏的全部内容 */
+    extraSections?: ExtraLibrarySection[]
   }>(),
-  { height: '480px' },
+  { height: '480px', mode: 'scene' },
 )
+
+const isModelMode = computed(() => props.mode === 'model')
 
 const workbenchHeight = computed(() =>
   typeof props.height === 'number' ? `${props.height}px` : props.height,
@@ -89,10 +103,18 @@ useEditorShortcuts()
 */
 const sourceAssets = useEditorAssets()
 
-provide(EDITOR_ASSETS_KEY, useAssetManifest(sourceAssets))
+/*
+  模型编辑页**一条素材请求都不发**：那一页左栏只放宿主给的 `extraSections`，
+  服务器清单与分类图标都用不上。`remote: false` 只是不让它去读清单；
+  下面 `SidePanel` 那一支还会关掉图标探测（另一个口子、另一条代理前缀）。
+
+  按**页面级**使用来判断：mode 是挂载时就定下的形态，运行中从 model 切回 scene
+  不保证补发请求（`useAssetManifest` 的 watcher 只盯地址）。宿主换页面请换实例。
+*/
+provide(EDITOR_ASSETS_KEY, useAssetManifest(sourceAssets, { remote: !isModelMode.value }))
 
 /*
-  12 个事件与 5 个方法在**这一层也要再声明一次**。
+  12 个事件与 6 个方法在**这一层也要再声明一次**。
 
   `SceneViewer` 是拿本组件当黑盒用的（它只认 `SceneEditor` 这个引用），所以
   中栏那两层（本组件 → `EditorStage` → `SceneCanvas`）每多一层的插槽 / 事件 /
@@ -122,6 +144,7 @@ defineExpose<SceneViewerApi>({
   groundPointAt: (clientX, clientY) => stageRef.value?.groundPointAt(clientX, clientY) ?? null,
   getSceneData: () => stageRef.value?.getSceneData() ?? scene.exportConfig(),
   loadSceneData: (data: DeepPartial<SceneConfig>) => stageRef.value?.loadSceneData(data) ?? false,
+  exportModel: (id, options) => stageRef.value?.exportModel(id, options) ?? null,
 })
 </script>
 
@@ -138,13 +161,18 @@ defineExpose<SceneViewerApi>({
       而一个没被用到的插槽是**合法**的——塞错了不报错，只在将来 `$slots`
       多出一个名字时莫名其妙（左栏的 `railButtons` / `ModelLibrary` 都在读 `$slots`）。
     -->
-    <SidePanel :tabs="sideTabs">
+    <SidePanel
+      :tabs="sideTabs"
+      :model-mode="isModelMode"
+      :extra-sections="extraSections"
+    >
       <template v-for="name in panelSlotNames($slots, SIDE_TAB_PREFIX)" #[name]="scope">
         <slot :name="name" v-bind="scope" />
       </template>
     </SidePanel>
     <EditorStage
       ref="stage"
+      :model-mode="isModelMode"
       @loaded="emit('loaded')"
       @progress="emit('progress', $event)"
       @error="emit('error', $event)"
@@ -166,7 +194,7 @@ defineExpose<SceneViewerApi>({
         <slot name="scene" />
       </template>
     </EditorStage>
-    <InspectorPanel :tabs="inspectorTabs">
+    <InspectorPanel :tabs="inspectorTabs" :model-mode="isModelMode">
       <template v-for="name in panelSlotNames($slots, INSPECTOR_TAB_PREFIX)" #[name]="scope">
         <slot :name="name" v-bind="scope" />
       </template>

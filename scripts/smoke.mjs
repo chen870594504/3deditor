@@ -588,6 +588,78 @@ check('分隔线只画在有第二组的地方', () => {
 })
 
 /**
+ * 模型编辑页（`mode="model"`）那两次渲染。
+ *
+ * 一条**不传 `editable`**：`mode` 本身就该进入编辑形态，宿主只写这一个 prop
+ * 拿到一块纯画布是最容易踩的空转，而且不报错。
+ *
+ * 另一条带宿主分类：这一页左栏的内置五类不出现，只放 `extraSections`，
+ * 所以它同时是「内置分类真的让位了」与「宿主分类进得了宫格」两条证据。
+ * 服务器清单与分类图标在一条 `onMounted` 里，SSR 盖不到（归目视清单 163）。
+ */
+const modelModeViewer = await tryRenderViewer('渲染模型编辑页', { mode: 'model' })
+
+const MODEL_SECTIONS = [
+  {
+    key: 'chair',
+    label: '椅子',
+    kind: 'model',
+    entries: [{ key: '/chair.glb', label: '木椅', url: '/chair.glb', thumb: '' }],
+  },
+]
+
+const modelSectionsViewer = await tryRenderViewer('渲染带宿主分类的模型编辑页', {
+  mode: 'model',
+  extraSections: MODEL_SECTIONS,
+})
+
+check('mode="model" 本身就是编辑形态，且中栏没有视角切换、右栏只剩历史', () => {
+  /**
+   * 这一条一次钉住四件事，每一件单独看都不报错：
+   *
+   * 1. **`mode` 隐含编辑态**：`editable` 一个字没传，三栏容器必须出现。
+   *    只写 `mode` 却拿到纯画布，是这一页最常见的空转。
+   * 2. **中栏没有 2D / 3D 切换**（`.tdm-view` 那一块整块不渲染）。
+   * 3. **右栏没有「模型属性」、有「操作历史」**：其余六页改的都是场景，
+   *    这一页编辑的是「场景里那一个模型」。
+   * 4. **空分类的整栏空态**在这条路上出现（没给 `extraSections`）。
+   *
+   * 查的是 `class="tdm-view"` 这个完整属性值而不是子串 `tdm-view`——
+   * 后者会被 `tdm-viewport` 命中，那条断言就永远为真。
+   */
+  const html = modelModeViewer.html
+  assert(html.includes('tdm-body'), 'mode="model" 没有进入编辑形态——只写 mode 拿到了纯画布')
+  assert(!html.includes('class="tdm-view"'), '模型编辑页还渲染了 2D / 3D 切换')
+  assert(!html.includes('aria-label="模型属性"'), '模型编辑页右栏还留着「模型属性」那一页')
+  assert(html.includes('aria-label="操作历史"'), '模型编辑页右栏少了「操作历史」那一页')
+  assert(
+    html.includes('tdm-model-empty'),
+    '没给宿主分类时左栏没有整栏空态——那一页本来就没有内置五类',
+  )
+  return '三栏在、无 2D/3D、右栏只剩历史、空分类有整栏空态'
+})
+
+check('模型编辑页的左栏只放宿主分类，内置五类让位', () => {
+  /**
+   * 宫格那一格的 `aria-label` 同时说明三件事：这个分类画出来了、名字接对了、
+   * 数量是 1（`椅子 · 1 个模型`）。内置那五格必须**一格都不在**——
+   * 只断「宿主的在」的话，一个把两边都渲染出来的实现照样过；
+   * 而两边的分类一旦混排，用户点「地板」就会去替换场景里的模型。
+   */
+  const html = modelSectionsViewer.html
+  assert(
+    html.includes('aria-label="椅子 · 1 个模型"'),
+    '宿主分类没进导轨——`extraSections` 没到得了 SidePanel',
+  )
+  assert(html.includes('tdm-lib-cell'), '宿主分类进了导轨，宫格里却没有格子')
+  assert(
+    !html.includes('aria-label="地板 ·'),
+    '模型编辑页还画着内置「地板」那一类——那一页只该显示宿主给的分类',
+  )
+  return '宿主那一类在、格子在，内置五类一格都没有'
+})
+
+/**
  * 宿主页的**正文**（`#side-tab-<key>` / `#inspector-tab-<key>` 那一段内容）
  * 在这里断言不了：它要点开那一页才渲染，而 SSR 里点不了。
  *
@@ -1866,6 +1938,112 @@ check('addModel 是追加而不是替换', () => {
   // 与 setModel 一样，追加一个带地址的模型要顺带进入加载态
   assert(scene.loading === true, '追加带地址的模型没有进入加载态')
   return '两个模型并存，选中项落在新追加的那个上'
+})
+
+check('replaceModel 换的是「是什么」而不是「在哪」，同源重复点不留历史', () => {
+  /**
+   * 模型编辑页的核心动作。四件事一起钉住：
+   *
+   * 1. **模型数不变**（替换不是追加）；
+   * 2. **id 换了**（`SceneModelNode` 靠它重挂、重新加载），
+   *    而姿态 / 事件 / 可见性这些**物体级字段原样保留**——用户调好的东西
+   *    不该因为换一件外观就丢掉；
+   * 3. **同源同名的第二次是 no-op**：id 不换、历史不增。带 label 的 `commit`
+   *    会绕过「没有实际变化就不记录」的闸门，所以 no-op 必须在那之前返回；
+   * 4. **`url` 优先**：从零件表换到 url 模型时，`partsJson` 必须被**删掉**
+   *    （`patchModel` 的 `deepAssign` 跳过 `undefined`，删不掉它）。
+   */
+  const scene = withModel('/old.glb')
+  scene.patchModel({
+    position: [1, 2, 3],
+    rotation: [0, 0.5, 0],
+    scale: [2, 2, 2],
+    visible: false,
+    events: { click: { enabled: true, code: 'console.log(1)' } },
+  })
+
+  const before = scene.models[0]
+  const beforeId = before.id
+  /*
+    历史在同一份 store 上贴着上限（50 条）跑，再 push 一条长度也不变
+    （`commit` 先 shift 再 push）。所以判「多了一条」看**最新那条的 id**
+    而不是 `length`——后者在满仓时会稳定地报「一条都没多」。
+  */
+  const beforeLastId = scene.history[scene.historyIndex].id
+
+  scene.replaceModel(0, { url: '/new.glb', name: '新模型' }, '替换模型 · 新模型')
+
+  const after = scene.models[0]
+  assert(scene.models.length === 1, `替换后模型数变成了 ${scene.models.length}，应当仍是 1`)
+  assert(after.id !== beforeId, '替换后 id 没变——SceneModelNode 不会重载新资源')
+  assert(after.url === '/new.glb', `替换后的地址是 "${after.url}"`)
+  assert(after.name === '新模型', `替换后的名字是 "${after.name}"`)
+  assert(
+    JSON.stringify(after.position) === '[1,2,3]',
+    `替换把位置改成了 ${JSON.stringify(after.position)}——那是「在哪」，不该动`,
+  )
+  assert(
+    JSON.stringify(after.scale) === '[2,2,2]',
+    '替换把缩放改掉了——那是「在哪」，不该动',
+  )
+  assert(after.visible === false, '替换把可见性改掉了')
+  assert(
+    after.events.click.enabled === true && after.events.click.code === 'console.log(1)',
+    '替换把事件绑定清掉了',
+  )
+  assert(scene.selectedIndex === 0, `替换后选中项是 ${scene.selectedIndex}`)
+  assert(
+    scene.history[scene.historyIndex].id !== beforeLastId &&
+      scene.history[scene.historyIndex].label === '替换模型 · 新模型',
+    '替换没有记成一条历史（或标签不是这次给出的那个）',
+  )
+
+  // 同一件东西再点一次：id 不动、历史不增
+  const sameId = after.id
+  const sameHistoryId = scene.history[scene.historyIndex].id
+  scene.replaceModel(0, { url: '/new.glb', name: '新模型' }, '替换模型 · 新模型')
+  assert(scene.models[0].id === sameId, '同源同名重复点击换了 id——会白白重载一次资源')
+  assert(
+    scene.history[scene.historyIndex].id === sameHistoryId,
+    '同源同名重复点击多记了一条历史——no-op 必须在那之前返回',
+  )
+
+  /*
+    partsJson → url：`url` 非空时 `partsJson` 必须被删掉，而不只是被忽略。
+    留着的话它平时不显形（渲染端 url 优先），导出物里却带着两份来源。
+  */
+  scene.replaceModel(0, { url: '', partsJson: '{"parts":[]}' })
+  assert(
+    scene.models[0].partsJson === '{"parts":[]}',
+    '空地址 + 零件表没有写进配置',
+  )
+  scene.replaceModel(0, { url: '/third.glb' })
+  assert(
+    !('partsJson' in scene.models[0]),
+    '换到 url 模型之后 partsJson 还留在配置里——两份来源同时存在',
+  )
+
+  /*
+    目标策略：有选中 → 选中项；取消选中（-1）→ 第 0 个；空场景 → -1（调用方追加）。
+    这一条与左栏宫格、拖放两条路共用，各写一遍的错法是「点格子换 1 号、
+    拖文件换 2 号」，而这一页右栏没有模型列表，用户查不出来。
+  */
+  scene.addModel('/fourth.glb')
+  scene.selectModel(1)
+  assert(scene.replacementTarget() === 1, '有选中时没有落在选中项上')
+  scene.clearSelection()
+  assert(scene.replacementTarget() === 0, '取消选中后没有退回第 0 个')
+  scene.resetConfig()
+  assert(scene.replacementTarget() === -1, '空场景没有返回 -1（调用方该改为追加）')
+
+  /*
+    这一段与上一段共用同一个 store，而下面几条用例接着用「两个模型」这个前置。
+    把交回去的状态复原成与上文一致：一个内置几何体 + 一个带地址的模型。
+  */
+  scene.addModel()
+  scene.addModel('/second.glb')
+
+  return '数量不变、id 换、姿态与事件保留；重复点 no-op；partsJson 被清；目标策略正确'
 })
 
 check('新追加的模型带全套默认字段且引用独立', () => {

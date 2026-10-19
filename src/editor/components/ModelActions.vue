@@ -14,6 +14,21 @@ import type { IconPath } from '../composables/useInspectorSchema'
 
 defineOptions({ name: 'ModelActions' })
 
+const props = withDefaults(
+  defineProps<{
+    /**
+     * 模型编辑页（`SceneViewer` 的 `mode="model"`）：**藏掉「复制」**。
+     *
+     * 那一页的语义是「场景里只有一个模型、点什么都替换它」，而复制走的是
+     * `addModel`——它是这一页里唯一还能把模型变成两个的入口，与左侧宫格
+     * 「只替换不追加」直接矛盾。其余五个动作都是作用在**这一个物体**上的，
+     * 留着不冲突。
+     */
+    modelMode?: boolean
+  }>(),
+  { modelMode: false },
+)
+
 const scene = useSceneStore()
 
 /**
@@ -137,7 +152,7 @@ const ICON_REMOVE: IconPath[] = [
       <span class="tdm-action-tip" aria-hidden="true">聚焦</span>
     </button>
 
-    <button type="button" class="tdm-action" aria-label="复制：原地再摆一个一样的" @click="duplicateModel">
+    <button v-if="!modelMode" type="button" class="tdm-action" aria-label="复制：原地再摆一个一样的" @click="duplicateModel">
       <svg class="tdm-action-icon" viewBox="0 0 24 24" aria-hidden="true">
         <path v-for="(part, i) in ICON_DUPLICATE" :key="i" :d="part.d" :fill="part.fill ? 'currentColor' : 'none'" />
       </svg>

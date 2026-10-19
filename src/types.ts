@@ -3,6 +3,8 @@ import type { Object3D } from 'three'
 import type { EditorAssets } from './editor/assets'
 import type { EditorHooks } from './editor/hooks'
 import type { IconPath } from './editor/composables/useInspectorSchema'
+import type { ExtraLibrarySection } from './editor/composables/useModelLibrary'
+import type { ModelPartsResult } from './utils/modelParts'
 
 /**
  * 天空盒的六个面。
@@ -219,6 +221,25 @@ export interface ModelConfig {
    * 五个键分别是：单击 / 双击 / 鼠标经过 / 鼠标移出 / 右击。
    */
   events: Record<ModelEventType, ModelEventHandler>
+}
+
+/**
+ * 替换模型时给的**新来源**。
+ *
+ * `replaceModel` 只换「这个物体是什么」，不动物体位姿与事件绑定；
+ * 所以这里只有几何来源与显示名，`position` / `rotation` / `scale` 那些字段
+ * **刻意不在**——它们属于「那个坑位」，不属于「这一次换上来的东西」。
+ *
+ * 与 `ModelConfig` 同一条互斥规则：`url` 非空时 `partsJson` 被忽略，
+ * 且替换时会把它从配置里删掉（`url` 优先）。
+ */
+export interface ModelSource {
+  /** glTF / GLB 地址；空串表示内置示例几何体 */
+  url: string
+  /** 程序生成的零件表（一段 JSON 文本）；只在 `url` 为空串时生效 */
+  partsJson?: string
+  /** 显示名；不传则保留原来的名字 */
+  name?: string
 }
 
 /**
@@ -742,6 +763,18 @@ export interface EditorPanelTab {
  * 「拿一份存好的场景 JSON 把场景渲染出来」这件事由 {@link SceneViewerProps.initialScene} 承接，
  * 那是**整份配置**的入口，与「一个 GLB」是两件事。
  */
+/**
+ * `SceneViewer` 的两种编辑形态。
+ *
+ * - `'scene'`（默认）——编辑**场景**：左栏挑料、中栏画布、右栏改属性；
+ * - `'model'`——编辑**模型**：左栏只出现宿主提供的分类，点一格**替换**场景里那一个模型
+ *   而不是追加；右栏只留操作历史与宿主追加页；中栏固定 3D。
+ *
+ * 它只有两种取值，刻意不做成布尔：布尔漏写默认值会被 Vue 转成 `false`，
+ * 而这个枚举的默认值必须是「编辑场景」。
+ */
+export type SceneViewerMode = 'scene' | 'model'
+
 export interface SceneViewerProps {
   /** 画布高度，数字按 px 处理，默认 '480px' */
   height?: string | number
@@ -766,6 +799,24 @@ export interface SceneViewerProps {
    * `height="100%"`。
    */
   editable?: boolean
+
+  /**
+   * 编辑形态：`'scene'`（默认）编辑整个场景，`'model'` 编辑**单个模型**。
+   *
+   * **`'model'` 本身就进入编辑形态**，不必再写 `editable`——只写 `mode` 却拿到
+   * 一块纯画布是最容易踩的空转。两种形态的布局相同（三栏），差别全在内容：
+   *
+   * - 左栏**只**显示 `extraSections` 里那几个分类，服务器清单一条都不读、图标也不探；
+   * - 点一格是**替换**场景里选中的那个模型（没有选中就替换第 0 个，空场景才追加），
+   *   位姿、阴影、事件绑定全部保留；
+   * - 右栏只剩「操作历史」与 `inspectorTabs` 追加的页；
+   * - 中栏没有 2D/3D 切换，进入时若机位在 2D 档会切回 3D（历史里留一条记录）；
+   *   画墙/门/窗工具与「复制」不出现，拖入 .glb 也是替换而不是追加。
+   *
+   * 它按**页面级**使用：期望在一个 `SceneViewer` 实例的生命周期里保持不变。
+   * 运行中改它时界面会跟着变，但清单与分类图标不会补发请求（见 DESIGN.md 设计决定 57）。
+   */
+  mode?: SceneViewerMode
 
   /** 是否自动旋转视角，默认 false */
   autoRotate?: boolean
@@ -819,6 +870,20 @@ export interface SceneViewerProps {
    * （`createThreeDMaker({ assets })` 的 `sections`），两条路管的是两件事。
    */
   sideTabs?: EditorPanelTab[]
+
+  /**
+   * 往**左栏模型库**追加分类：内置五类之外还要有几类、每类里有什么东西。
+   *
+   * 只能追加、不能覆盖内置五类——与 `createThreeDMaker({ assets })` 是两条路：
+   * 那一条换的是「内置五类的条目从哪来」，这一条是「在内置之外再加几类」。
+   *
+   * **`mode="model"` 时它是左栏的唯一内容**：模型编辑页只显示宿主提供的分类，
+   * 服务器上那份清单不读、内置五类也不出现。这正好适合宿主用自己的一套模型
+   * （或者让 AI 产出 `partsJson`）来做替换。
+   *
+   * 每一项的 `icon` 是描边路径数组（与右栏导轨同一套格式）；不写时退回立方体占位图。
+   */
+  extraSections?: ExtraLibrarySection[]
 
   /**
    * 往**右栏**导轨末尾追加的页，内容走 `#inspector-tab-<key>` 插槽。
@@ -903,7 +968,58 @@ export interface SceneViewerProps {
 }
 
 /**
- * `SceneViewer` 用 `defineExpose` 交出去的那 5 个方法。
+ * `exportModel()` 的选项。
+ */
+export interface ModelExportOptions {
+  /**
+   * 缩略图的正方形边长（像素），默认 512。
+   *
+   * 夹取到 `[64, 1024]`，**不乘 `devicePixelRatio`**：缩略图是给列表用的封面，
+   * 要的是稳定的输出尺寸，而不是跟着宿主的屏幕走。上限压在 1024 是因为
+   * 回读用的是同步 `readPixels`，2048² 已经在主线程上能感到顿一下了。
+   */
+  size?: number
+}
+
+/**
+ * 零件表来源的几何数据。
+ *
+ * 就是 `parseModelParts` 的结果再加一段原文。**没有第三种字段**：`url` 来源的
+ * 模型不在这里给顶点或 glTF——库不导出几何体（见 DESIGN.md 设计决定 58），
+ * 那些模型 `geometry` 就是 `null`，要几何得自己从 `url` 拿。
+ */
+export interface ModelExportGeometry extends ModelPartsResult {
+  /** 配置里那一段原文，原样带出来，宿主不必再去 `model.partsJson` 读一次 */
+  partsJson: string
+}
+
+/**
+ * `exportModel()` 的返回值。
+ *
+ * 四样东西是「保存一个模型」要的全部：整份场景（存回后端）、这一条模型配置
+ * （更新列表里那一行）、零件表（拿到几何的来历）、缩略图（封面）。
+ *
+ * `config` 与 `model` 来自同一次 `exportConfig()` 深拷贝，`model` 就是
+ * `config.models` 里那一项——**同一对象引用**。分开给只是让宿主少写一次下标；
+ * 改 `model` 会同时反映在 `config` 里。
+ */
+export interface ModelExportResult {
+  /** 整份 SceneConfig 深拷贝，与 `getSceneData()` 同形 */
+  config: SceneConfig
+  /** 被导出的那一条模型配置，即 `config.models[下标]` */
+  model: ModelConfig
+  /** 仅 `partsJson` 来源有值；`url` 来源与内置示例是 `null` */
+  geometry: ModelExportGeometry | null
+  /**
+   * 自动构图的方形 PNG，`data:` URL；没画出来时是 `null`。
+   *
+   * 不是当前视口截图——机位、画面里其他东西都不参与。见设计决定 58。
+   */
+  thumbnail: string | null
+}
+
+/**
+ * `SceneViewer` 用 `defineExpose` 交出去的那 6 个方法。
  *
  * 单独写成一个类型，是因为**同一条签名要走四层**：宿主持模板引用调它、`SceneViewer`
  * 转给 `SceneEditor`（编辑态）或 `SceneCanvas`（画布态），而 `SceneEditor` 下面还隔着
@@ -916,7 +1032,9 @@ export interface SceneViewerProps {
  *
  * 几条返回值语义要背下来（它们没有自动化防线，见 DESIGN.md 目视清单）：
  * 前四条要隔着挂载好的画布问，画布没就绪时一律退化成「现在拿不到」（`false` / `null`）；
- * `getSceneData` 是例外，它只读 store，**承诺不返回 `null`**。
+ * `getSceneData` 是例外，它只读 store，**承诺不返回 `null`**；
+ * `exportModel` 的**数据那三样**也直接来自 store，只有 `thumbnail` 要问画布，
+ * 所以画布没挂上时它返回的是「没有缩略图的那一份」，而不是 `null`。
  */
 export interface SceneViewerApi {
   /** 抓取当前机位并写回配置，返回是否抓到了（自动旋转开着时相机一直在动，只能主动取） */
@@ -929,6 +1047,20 @@ export interface SceneViewerApi {
   getSceneData: () => SceneConfig
   /** 用一份场景数据初始化场景（内部走 `migrateConfig` 并清空撤销栈），返回是否用上了 */
   loadSceneData: (data: DeepPartial<SceneConfig>) => boolean
+  /**
+   * 导出一个模型：配置 + 零件表 + 自动取景缩略图。
+   *
+   * `id` 省略时取「选中项，没有选中就第 0 个」——与模型编辑页的替换目标
+   * 是同一个 `replacementTarget()`。显式给 `id` 却找不到时返回 `null`，
+   * **不回退**到第 0 个：写错 id 不该看起来像成功。
+   *
+   * 返回 `null` 的另一种情形是场景里一个模型都没有。缩略图画不出来**不会**
+   * 让整次调用失败，只是 `thumbnail` 为 `null`。
+   */
+  exportModel: (
+    id?: string,
+    options?: ModelExportOptions,
+  ) => ModelExportResult | null
 }
 
 /** 相机位置变更载荷，由用户拖动视图后回传 */

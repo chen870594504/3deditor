@@ -63,7 +63,9 @@ import { BUILTIN_KEYS } from './useModelLibrary'
  * `IconPath[]` 给的（那条路是 `IconPath`，不是 SVG 文件），也不在那台服务器的
  * 命名约定里。返回的那个函数对任何不在 `BUILTIN_KEYS` 里的 key 直接返回 `null`。
  */
-export function useCategoryIcons(): (categoryKey: string) => string | null {
+export function useCategoryIcons(
+  options: { enabled?: boolean } = {},
+): (categoryKey: string) => string | null {
   const assets = useEditorAssets()
 
   /** 探到的 key。用数组而不是 Set：最多五个，`includes` 比多包一层省事 */
@@ -85,6 +87,13 @@ export function useCategoryIcons(): (categoryKey: string) => string | null {
     const mine = ++token
 
     found.value = []
+
+    /*
+      模型编辑页（`SidePanel` 传 `enabled: false`）：导轨上根本没有内置那五类，
+      图标探测一条都不该发。放在清空之后、拼地址之前，与下面那条空地址
+      同一个位置——两者都是「不探」，只是理由不同。
+    */
+    if (options.enabled === false) return
 
     // 空串是「不探服务器图标」：与「那个目录是空的」表现一致，**一条请求都不发**
     // （拼出来会是打向本站根的 `/floor.svg`，那个坑写在 `utils/assetIcon.ts` 上）

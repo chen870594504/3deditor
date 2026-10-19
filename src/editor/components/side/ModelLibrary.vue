@@ -28,23 +28,38 @@ import ModelMeasureProbe from '../ModelMeasureProbe.vue'
 defineOptions({ name: 'ModelLibrary' })
 const scene = useSceneStore()
 
-const props = defineProps<{
-  /**
-   * 左栏那张**合并表**：内置五类 + 宿主追加的那些（`SidePanel.vue` 建的表）。
-   *
-   * 不传就是内置五类本身，于是这个组件单独用时与改造前完全一样——
-   * 它自己**不造表**，只是把拿到的表当「有哪些分类」用。
-   *
-   * 表的来路只有 `SidePanel` 一个，所以导轨高亮与这里的宫格读的是同一个
-   * `resolveLibrarySection`、同一张表（那条老约束：两边各写各的时，一个对不上的
-   * key 会让导轨亮着这一类而面板里是另一类，两边都不报错）。
-   *
-   * 没有 `withDefaults` 的默认值：内置那五类现在是 `useLibrarySections()` 算出来的
-   * （条目来自宿主注入的素材），拿不到一个能写在 prop 默认值里的常量。
-   * 兜底改成下面那个 `table`。
-   */
-  sections?: MergedLibrarySection[]
-}>()
+const props = withDefaults(
+  defineProps<{
+    /**
+     * 左栏那张**合并表**：内置五类 + 宿主追加的那些（`SidePanel.vue` 建的表）。
+     *
+     * 不传就是内置五类本身，于是这个组件单独用时与改造前完全一样——
+     * 它自己**不造表**，只是把拿到的表当「有哪些分类」用。
+     *
+     * 表的来路只有 `SidePanel` 一个，所以导轨高亮与这里的宫格读的是同一个
+     * `resolveLibrarySection`、同一张表（那条老约束：两边各写各的时，一个对不上的
+     * key 会让导轨亮着这一类而面板里是另一类，两边都不报错）。
+     *
+     * 没有 `withDefaults` 的默认值：内置那五类现在是 `useLibrarySections()` 算出来的
+     * （条目来自宿主注入的素材），拿不到一个能写在 prop 默认值里的常量。
+     * 兜底改成下面那个 `table`。
+     */
+    sections?: MergedLibrarySection[]
+
+    /**
+     * 模型编辑页（`SceneViewer` 的 `mode="model"`）。
+     *
+     * 两个差别，都在「这一页只有一条主路」上：
+     *
+     * - **点一格是替换场景里的模型，不是追加**（`replaceOrAdd`）；
+     * - **不认任何配料工具**（`cellIntent` 恒为 `null`）：这一页不画墙、不铺地，
+     *   那些工具本来也被 `EditorStage` 藏掉了，但状态是模块级的、可能从别的页面
+     *   带进来，所以不能只靠「按钮不在」来保证。
+     */
+    modelMode?: boolean
+  }>(),
+  { modelMode: false },
+)
 
 /** 内置五类，条目来自宿主注入的素材。只在这个组件没拿到合并表时用 */
 const builtinSections = useLibrarySections()
@@ -76,6 +91,18 @@ const table = computed<MergedLibrarySection[]>(() => props.sections ?? builtinSe
 const section = computed(() => resolveLibrarySection(librarySection.value, table.value))
 
 /**
+ * 当前分类的 key 与条目，**空表时各有自己的空值**。
+ *
+ * 模型编辑页可以把一张空表传进来（宿主没给 `extraSections`），那时
+ * `resolveLibrarySection` 返回 `undefined`。宫格那几支原本直接读 `section.key`
+ * / `section.entries`，在这一档上会炸——`SidePanel` 已经用整栏空态拦住，
+ * 但组件单独用时（不传 `sections`）与将来别的调用点都要自己站得住，
+ * 所以模板一律读这两个兜过底的 computed。
+ */
+const sectionKey = computed(() => section.value?.key ?? '')
+const sectionEntries = computed(() => section.value?.entries ?? [])
+
+/**
  * 当前这一类是不是**宿主追加**的（不在内置五类里）。
  *
  * 判据是「在不在 `BUILTIN_KEYS` 里」，不新造常量、也不看这个 prop 是谁给的：
@@ -84,7 +111,9 @@ const section = computed(() => resolveLibrarySection(librarySection.value, table
  * 它的用处只有一个——决定 `#list` 插槽管不管得着这一类（见模板）。**内置分类
  * 永远走内置宫格**，插槽管不到：那是「插槽只用于追加、不作为覆盖」这条约定的落点。
  */
-const isExtraSection = computed(() => !BUILTIN_KEYS.includes(section.value.key))
+const isExtraSection = computed(
+  () => !!section.value && !BUILTIN_KEYS.includes(section.value.key),
+)
 
 /**
  * 这一栏里点的格子，现在是「选来当料用」还是「替换一个已选中的东西」。
@@ -130,13 +159,21 @@ type CellIntent =
   | { mode: 'replace'; target: ReplaceTarget }
 
 const cellIntent = computed<CellIntent | null>(() => {
+  /*
+    模型编辑页**没有配料工具这一说**（见 prop 注释）。结构化地在这里返回 `null`，
+    而不是指望「进页面时工具已经被取消」那个时序：`floorplanTool` 是模块级状态，
+    从上一个页面带进来、或者宿主在别处开着工具，都会让这一页莫名其妙地
+    变成「选料」而不是「替换」。
+  */
+  if (props.modelMode) return null
+
   const rule = TOOL_ASSET_RULES[floorplanTool.value]
-  if (rule && rule.section === section.value.key) {
+  if (rule && rule.section === sectionKey.value) {
     return { mode: 'pick', tool: floorplanTool.value, purpose: rule.purpose }
   }
 
   const target = replaceTarget.value
-  if (target && target.section === section.value.key) {
+  if (target && target.section === sectionKey.value) {
     return { mode: 'replace', target }
   }
 
@@ -270,6 +307,17 @@ function describeEntry(entry: LibraryEntry): string {
     return isAppliedSkybox(entry)
       ? `正在使用「${entry.label}」，再点一次关闭天空盒`
       : `把场景背景换成「${entry.label}」`
+  }
+
+  /*
+    模型编辑页：这一下是**替换**，无障碍名字也得这么说。
+    读屏用户听到「追加」会以为场景里会多一个东西，而这一页恰恰不会。
+    天空盒那一支在上面、照旧（它与「场景里摆什么」无关）。
+  */
+  if (props.modelMode) {
+    if (entry.partsJson) return `把场景里的模型换成「${entry.label}」（由 JSON 生成）`
+    if (!entry.url) return '把场景里的模型换成内置示例几何体'
+    return `把场景里的模型换成「${entry.label}」`
   }
 
   if (entry.partsJson) return `追加「${entry.label}」（由 JSON 生成）到场景`
@@ -413,18 +461,30 @@ const ICON_NO_PREVIEW: IconPath[] = [
  * 追加本身是**追加**而不是替换，点同一条两次会得到两个独立模型——
  * 这对于「同一个模型摆两种姿态对比」是常用用法。
  *
+ * **模型编辑页是这条规则的唯一例外**（`modelMode`）：那一页点一格只会**替换**
+ * 场景里那一个（见 `replaceOrAdd`），上面这一整段「三种意思」在那里退化成
+ * 「天空盒照旧、其余全是替换」——配料工具被结构化地关掉（`cellIntent` 恒 `null`），
+ * 所以选料与替换洞口那两条分支都走不到。
+ *
  * **宿主追加的分类只有「追加」这一种意思**：它的 key 不在 `TOOL_ASSET_RULES` 里，
  * 于是 `cellIntent` 恒为 `null`，点一下就是追加到场景。这是设计如此——
  * 选料这件事不开放给宿主（理由在 `useModelLibrary.ts` 顶上那一节）：
  * 工具只从内置那四类里挑料，宿主加的分类既点不到工具、也不进量尺寸那条链。
  * 条目形状是同一个（`LibraryEntry`），所以「已在场景里」的底色高亮、空态文案、
  * 缩略图 404 兜底在这里一样生效。
+ * （模型编辑页里宿主分类同样是「追加」的反面——那一页没有内置分类，
+ * 宿主给的每一格都是替换目标。）
  *
  * **由 JSON 生成的模型（`partsJson`）要先读一遍再决定追加不追加**，见 `addGenerated`。
  */
 function add(entry: LibraryEntry) {
   if ('skybox' in entry) {
     toggleSkybox(entry)
+    return
+  }
+
+  if (props.modelMode) {
+    replaceOrAdd(entry)
     return
   }
 
@@ -529,28 +589,48 @@ function add(entry: LibraryEntry) {
  * 会盖过 `partsJson`（两个来源互斥时 `url` 优先，见 `ModelConfig.partsJson`）。
  */
 function addGenerated(entry: LibraryEntry): void {
-  // 调用处判过它非空（`add` 里那条分支），这里再取一次是为了让这个函数自己站得住：
+  const json = readGenerated(entry)
+  if (json === null) return
+
+  const index = scene.addModel('')
+  scene.patchModel({ partsJson: json, name: entry.label }, `添加模型 · ${entry.label}`, index)
+
+  pushEvent(`已追加模型「${entry.label}」（由 JSON 生成，场景中第 ${index + 1} 个）`)
+}
+
+/**
+ * 读一遍零件表，读得出来就返回它，读不出来就记一条日志、返回 `null`。
+ *
+ * 抽出来是因为**两条路都要它**：编辑场景页是「追加」，编辑模型页是「替换」。
+ * 两份实现迟早会在一条边上走散——比如一处判了 `dropped`、另一处没判，
+ * 用户在那一条路上就会以为零件表本来就是那几件。
+ *
+ * 日志里说的是「没有使用」而不是「没有追加」：替换那条路上根本没打算追加，
+ * 说成追加会把人指去查历史里为什么多了一行。
+ */
+function readGenerated(entry: LibraryEntry): string | null {
+  // 调用处判过它非空（`add` 里那两条分支），这里再取一次是为了让这个函数自己站得住：
   // 它不该假设调用方一定先判过——`parseModelParts('')` 会自己给出一句人话
   const json = entry.partsJson ?? ''
   const result = parseModelParts(json)
 
   if (result.problem) {
-    pushEvent(`「${entry.label}」的零件表读不出来，没有追加：${result.problem}`)
-    return
+    pushEvent(`「${entry.label}」的零件表读不出来，没有使用：${result.problem}`)
+    return null
   }
 
   /*
-    一件都没读出来时也不追加。
+    一件都没读出来时也不使用。
 
     与「整份读不出来」分开说：这一种的 JSON 本身是对的、只是里面每一件都不合格，
     原因完全不同（要去看 `shape` / 尺寸 / `count` 那些字段），
     合成一句话会让人以为是格式坏了。
-    不追加的理由与上面一样：一个画不出任何东西的模型条目摆进场景，
+    不使用的理由与上面一样：一个画不出任何东西的模型摆进场景，
     在右栏列表里占一行、在视口里是空的，而它看起来与「模型没加载出来」没区别。
   */
   if (!result.parts.length) {
-    pushEvent(`「${entry.label}」的零件表里一件都读不出来，没有追加`)
-    return
+    pushEvent(`「${entry.label}」的零件表里一件都读不出来，没有使用`)
+    return null
   }
 
   if (result.dropped > 0) {
@@ -559,10 +639,68 @@ function addGenerated(entry: LibraryEntry): void {
     )
   }
 
-  const index = scene.addModel('')
-  scene.patchModel({ partsJson: json, name: entry.label }, `添加模型 · ${entry.label}`, index)
+  return json
+}
 
-  pushEvent(`已追加模型「${entry.label}」（由 JSON 生成，场景中第 ${index + 1} 个）`)
+/**
+ * 模型编辑页点一格：**换掉场景里那个模型**，场景空着时才是添加。
+ *
+ * ## 换哪一个
+ *
+ * `replacementTarget()`——有选中就换选中的，没有就换第 0 个，空场景返回 -1。
+ * 那条规则写在 store 里而不是这里：拖放那条路（`EditorStage` 的 `onDrop`）
+ * 用的是同一个函数，各写一遍的代价是「点格子换的是 1 号、拖文件换的是 2 号」。
+ *
+ * ## 替换保留什么
+ *
+ * 位置 / 旋转 / 缩放 / 事件那些一律原样留着（细节与理由在 `replaceModel` 上），
+ * 这里只把「换成什么」交给它：地址、零件表、名字。
+ *
+ * ## 空场景走添加，而且分两条
+ *
+ * `partsJson` 模型的地址是空串，名字得**和零件表一起**写进去（`patchModel`
+ * 一次调用 = 一条历史、一份快照）；联网模型的地址本身会触发重新加载，
+ * 名字照旧单独写。内置示例几何体（地址空、也没有零件表）不写名字——
+ * 与 `add` 里那条 `if (entry.url)` 同一条老规矩。
+ */
+function replaceOrAdd(entry: LibraryEntry): void {
+  let partsJson: string | undefined
+  if (entry.partsJson) {
+    const json = readGenerated(entry)
+    if (json === null) return
+    partsJson = json
+  }
+
+  const target = scene.replacementTarget()
+
+  if (target < 0) {
+    const index = scene.addModel(entry.url)
+
+    if (partsJson !== undefined) {
+      scene.patchModel(
+        { partsJson, name: entry.label },
+        `添加模型 · ${entry.label}`,
+        index,
+      )
+    } else if (entry.url) {
+      scene.patchModel({ name: entry.label }, `添加模型 · ${entry.label}`, index)
+    }
+
+    pushEvent(`已添加模型「${entry.label}」（场景中第 ${index + 1} 个）`)
+    return
+  }
+
+  scene.replaceModel(
+    target,
+    { url: entry.url, partsJson, name: entry.label },
+    `替换模型 · ${entry.label}`,
+  )
+
+  /*
+    带上「第几个」：模型编辑页右栏没有模型列表，用户没法核对换掉的是哪个。
+    这一句是唯一能说清目标的反馈——空场景走上面那支，所以这里恒是 `>= 1`。
+  */
+  pushEvent(`已替换模型「${entry.label}」（场景中第 ${target + 1} 个）`)
 }
 
 /**
@@ -695,7 +833,7 @@ function toggleSkybox(entry: LibraryEntry) {
     三分支（宿主接管 / 内置宫格 / 空态）仍是紧挨着的 `v-if` / `v-else-if` / `v-else`，
     下面那个探针继续当最后一个根节点。
   -->
-  <slot v-if="isExtraSection && !!$slots.list" name="list" :section="section" />
+  <slot v-if="section && isExtraSection && !!$slots.list" name="list" :section="section" />
 
   <!--
     宫格**自己就是那个滚动口**（.tdm-list--grow + .tdm-scroll），是左栏唯一的滚动列表，
@@ -718,8 +856,8 @@ function toggleSkybox(entry: LibraryEntry) {
     `v-if` 那一族分支当根是合法的（先例 InspectorField.vue），这里没有
     attrs 要透传；父级 `.tdm-side-body` 是 flex 列，所以撑满 / 贴顶的行为与改造前一致。
   -->
-  <div v-else-if="section.entries.length" :key="section.key" class="tdm-list tdm-list--grow tdm-scroll tdm-lib-grid">
-    <button v-for="entry in section.entries" :key="entry.key" type="button" class="tdm-item tdm-lib-cell"
+  <div v-else-if="sectionEntries.length" :key="sectionKey" class="tdm-list tdm-list--grow tdm-scroll tdm-lib-grid">
+    <button v-for="entry in sectionEntries" :key="entry.key" type="button" class="tdm-item tdm-lib-cell"
       :class="{ 'tdm-item--active': isInScene(entry), 'tdm-lib-cell--picked': isPicked(entry) }"
       :aria-label="describeEntry(entry)" @click="add(entry)">
       <!--

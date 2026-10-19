@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, shallowRef, watch } from 'vue'
 import type { ComponentPublicInstance } from 'vue'
-import { useTresContext } from '@tresjs/core'
+import { isWebGLRenderer, useTresContext } from '@tresjs/core'
 import { OrbitControls } from '@tresjs/cientos'
 import { Plane, Raycaster, Spherical, Vector2, Vector3 } from 'three'
 import type { Object3D, PerspectiveCamera, Vector3 as Vector3Type } from 'three'
@@ -12,6 +12,7 @@ import SceneShadows from './SceneShadows.vue'
 import SceneSkybox from './SceneSkybox.vue'
 import SceneSun from './SceneSun.vue'
 import { viewModeOf } from '../utils/viewMode'
+import { normalizeThumbnailSize, renderModelThumbnail } from '../utils/modelThumbnail'
 import type {
   CameraChangePayload,
   CameraConfig,
@@ -635,21 +636,52 @@ function modelObjectOf(id: string): Object3D | null {
   return measurers.value.get(id)?.group ?? null
 }
 
+/**
+ * 给某个模型画一张方形封面，画不出来返回 `null`。
+ *
+ * 与 `modelObjectOf` 是同一条路：从注册表拿活对象，而不是另建一份数据。
+ * 真正的渲染在 `utils/modelThumbnail.ts` 里，这里只做三件事——确认渲染器是
+ * WebGL（WebGPU 渲染器还没接这条路）、确认模型挂上了、把尺寸收进合法区间。
+ *
+ * `isWebGLRenderer` 那道守卫不能省：TresJS 的 `renderer.instance` 是
+ * `WebGLRenderer | WebGPURenderer` 的联合，而缩略图用的 `WebGLRenderTarget`
+ * 与 `readRenderTargetPixels` 只有前者有。少了它，换渲染器那天不是「没有图」，
+ * 而是**打开模型编辑页就报错**。
+ */
+function captureModelThumbnail(id: string, size?: number): string | null {
+  const instance = renderer.instance
+  if (!instance || !isWebGLRenderer(instance)) return null
+
+  const object = modelObjectOf(id)
+  if (!object) return null
+
+  return renderModelThumbnail(
+    object,
+    tresScene.value,
+    instance,
+    normalizeThumbnailSize(size),
+  )
+}
+
 // ---------- 屏幕坐标 → 地面坐标 ----------
 
 /**
- * 取 `camera` / `renderer` 是**这个组件成为第二个 `useTresContext` 消费者**的原因。
+ * 取 `camera` / `renderer` / `scene` 是**这个组件成为第二个 `useTresContext` 消费者**
+ * 的原因。
  *
  * 做这件事需要两样东西：当前生效的相机，以及画布元素的 `getBoundingClientRect()`。
  * 两者都只有TresCanvas 内部拿得到——`ScenePicker.vue` 先走了一步，这里是第二处。
  * （DESIGN.md 设计决定 4 里那句「`useTresContext()` 的消费者」的**数量**要跟着改；
  * 它现在写的是三个，指的就是 `ScenePicker` / 这里 / `SceneSkybox`。）
  *
+ * `scene` 是后加的第三样，只服务缩略图：它要抄环境贴图，还要把模型**借**到一个
+ * 临时场景里单独渲染（理由见 `utils/modelThumbnail.ts`）。
+ *
  * 为什么不自己 `document.querySelector('canvas')`：一个页面上可能挂着多个
  * 画布（宿主自己的 + 我们的），那样会量到错的那个，而且错得**不报错**——
  * 射线落在地上会整体偏移一个画布的位置。
  */
-const { camera: tresCamera, renderer } = useTresContext()
+const { camera: tresCamera, renderer, scene: tresScene } = useTresContext()
 
 /**
  * 一套复用的射线工具，不每次调用新建。
@@ -712,7 +744,7 @@ function groundPointAt(clientX: number, clientY: number): [number, number] | nul
   return [hit.x, hit.z]
 }
 
-defineExpose({ captureCamera, measureModel, modelObjectOf, groundPointAt })
+defineExpose({ captureCamera, measureModel, modelObjectOf, groundPointAt, captureModelThumbnail })
 
 // ---------- 阴影烘焙 ----------
 

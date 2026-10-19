@@ -69,13 +69,24 @@ import { BUILTIN_KEYS } from './useModelLibrary'
  * 存在的目的本身——被浏览器缓存吃掉的话，人只会以为「改了没用」。
  * （并成一份之后，改任何一类都会让**整份**重新下载——那也就是几 KB。）
  */
-export function useAssetManifest(source: EditorAssets): EditorAssets {
+export function useAssetManifest(
+  source: EditorAssets,
+  options: { remote?: boolean } = {},
+): EditorAssets {
   const fetched = ref<EditorAssetCategory[]>([])
 
   /** 过期守卫：只有最后一次发出的那一次能落地 */
   let token = 0
 
   function wantsRemote(): boolean {
+    /*
+      `options.remote === false` 是**模型编辑页**那一档：那一页左栏只放宿主给的
+      `extraSections`，服务器清单用不上，一条请求都不该发。
+
+      写成「显式 false 才关」而不是「显式 true 才开」：调用方一共两处，
+      而 `SceneEditor` 是唯一传 options 的那个；漏传 = 维持原来的行为。
+    */
+    if (options.remote === false) return false
     return source.categories.length === 0 && source.baseUrl !== ''
   }
 

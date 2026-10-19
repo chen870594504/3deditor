@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { provide, useTemplateRef, watch } from 'vue'
+import { computed, provide, useTemplateRef, watch } from 'vue'
 import SceneCanvas from './SceneCanvas.vue'
 import SceneEditor from '../editor/components/SceneEditor.vue'
 import { EDITOR_ASSETS_KEY, useEditorAssets } from '../editor/assets'
@@ -23,13 +23,15 @@ import type {
 /*
   公开面。宿主只看得到这一个组件，`TdmSceneViewer` 这个全局名也归它。
 
-  它按 `editable` 选一种形态渲染：
+  它按 `editable` / `mode` 选一种形态渲染：
 
-  - `true` → `SceneEditor`（三栏工作台，含左右栏与事件弹窗）
+  - `editable === true`，或 `mode === 'model'` → `SceneEditor`（三栏工作台，
+    含左右栏与事件弹窗）。`mode="model"` 是「编辑模型」页：左栏只显示宿主给的
+    `extraSections`、点模型只替换不追加、右栏只留历史与宿主页、中栏固定 3D。
   - 其余 → `SceneCanvas`（纯画布；`false` 是四个开关全关的只读态，
     **不传**则走旧默认——内置工具栏还开着，那是 `editable` 出现之前的形状）
 
-  两种形态共用同一块画布（`SceneCanvas`），所以 `defineExpose` 那 5 个方法
+  两种形态共用同一块画布（`SceneCanvas`），所以 `defineExpose` 那 6 个方法
   与 12 个事件在哪种形态下都成立。区别只在「谁来喂画布那几个内部值」：
   画布态下面没有别人，走 `SceneCanvas` 自己的默认；编辑态由 `EditorStage` 喂
   （内置工具栏让位、手柄模式、相机过渡时长）。见 DESIGN.md 设计决定 47。
@@ -50,6 +52,11 @@ const props = withDefaults(defineProps<SceneViewerProps>(), {
     详细后果与冒烟测试的落点写在 `SceneCanvas` 里那段注释上，两处守的是同一件事。
   */
   editable: undefined,
+  /*
+    `mode` 的默认值是**字符串**，不涉及上面那条布尔特例。
+    `'scene'` 与「不传」在行为上等价，但显式写出来让 `isEditor` 那一行读得懂。
+  */
+  mode: 'scene',
   autoRotate: false,
   draco: false,
   /*
@@ -61,7 +68,7 @@ const props = withDefaults(defineProps<SceneViewerProps>(), {
 
 /*
   事件与 `SceneCanvas` 完全一致，**一个不删**。它们是宿主已经在用的公开面，
-  与方法那 5 条不同——方法可以按形态转发，事件是两条路都要接上的。
+  与方法那 6 条不同——方法可以按形态转发，事件是两条路都要接上的。
 */
 const emit = defineEmits<{
   (e: 'loaded'): void
@@ -79,6 +86,20 @@ const emit = defineEmits<{
 }>()
 
 const scene = useSceneStore()
+
+/**
+ * 走不走三栏编辑器。
+ *
+ * 两条路都算：`editable === true`（编辑场景）与 `mode === 'model'`（编辑模型）。
+ * 后者**本身就能进入编辑形态**，不必再写 `editable`——只写 `mode` 却拿到一块
+ * 纯画布是最容易踩的空转，而那种空转不报错。
+ *
+ * 它同时是模板 `v-if` 与 `activeApi()` 的判据。**两处必须用同一个值**：
+ * 早先 `activeApi` 只认 `editable`，模型模式下面 `SceneCanvas` 根本没挂载，
+ * 6 个 `defineExpose` 方法会整片退化成 `false` / `null`，而宿主那边看起来
+ * 只是「方法调用成功、拿到空值」。
+ */
+const isEditor = computed(() => props.editable === true || props.mode === 'model')
 
 /*
   `autoRotate` 与 `draco` 是两条 prop → store 桥。它们与删掉的那些
@@ -207,17 +228,17 @@ const forwarded = {
   `api` 那个 computed 而不是在 `defineExpose` 里写 `editable ? … : …`：
   `defineExpose` 的对象在组件实例上是**静态**的一份（它的成员被逐条读，不重新求值），
   把条件写在字段里会让「切换形态后方法还指向旧那个」这类问题无从察觉；
-  收成一个 computed 之后，5 个方法只有一处分支。
+  收成一个 computed 之后，6 个方法只有一处分支。
 */
 const canvasRef = useTemplateRef<SceneViewerApi>('canvasRef')
 const editorRef = useTemplateRef<SceneViewerApi>('editorRef')
 
 function activeApi(): SceneViewerApi | null {
-  return (props.editable === true ? editorRef.value : canvasRef.value) ?? null
+  return (isEditor.value ? editorRef.value : canvasRef.value) ?? null
 }
 
 /*
-  5 个方法转发。三条要隔着画布问（`?? ` 兜底成「现在拿不到」，与原实现同值），
+  6 个方法转发。四条要隔着画布问（`?? ` 兜底成「现在拿不到」，与原实现同值），
   另外两条落到 store：`getSceneData` 只读 store、**承诺不返回 `null`**；
   `loadSceneData` 的实现本来就在 store 里（`SceneCanvas` 那一层也只转发），
   所以画布没挂上时本组件自己调一次同样成立——**挂载前调也能用**。
@@ -231,6 +252,7 @@ defineExpose<SceneViewerApi>({
   getSceneData: () => activeApi()?.getSceneData() ?? scene.exportConfig(),
   loadSceneData: (data: DeepPartial<SceneConfig>) =>
     activeApi()?.loadSceneData(data) ?? scene.loadSceneData(data),
+  exportModel: (id, options) => activeApi()?.exportModel(id, options) ?? null,
 })
 </script>
 
@@ -240,11 +262,13 @@ defineExpose<SceneViewerApi>({
     宿主写一次 `height="100%"` 在两种形态下都铺满。
   -->
   <SceneEditor
-    v-if="editable === true"
+    v-if="isEditor"
     ref="editorRef"
     :height="height"
+    :mode="mode"
     :side-tabs="sideTabs"
     :inspector-tabs="inspectorTabs"
+    :extra-sections="extraSections"
     v-on="forwarded"
   >
     <!--

@@ -1,6 +1,6 @@
 # 设计决定与验证清单
 
-这个文件是 `3deditor` 仓库的**内部文档**：编辑器的设计、56 条编号设计决定、验收用的目视清单，
+这个文件是 `3deditor` 仓库的**内部文档**：编辑器的设计、58 条编号设计决定、验收用的目视清单，
 以及仓库目录结构与发布流程。给宿主看的用法在 [README.md](README.md) 里，两者刻意分开——
 README 回答「怎么用这个库」，这里回答「为什么这么写、改了要重新验什么」。
 
@@ -1208,7 +1208,7 @@ skybox/bak38/{back,down,front,left,right,top}.jpg
   写 `default: undefined` 是关掉那条特例的办法（`hasDefault` 为真即跳过转换），产物里能查到 `editable: { type: Boolean, default: void 0 }`。
   **这五处现在都在内部签名里**（`SceneCanvas` 的 props），公开的 `SceneViewer` 只剩 `editable` 一个布尔。机制一字未变，只是位置从公开面挪进了 `src/components/SceneCanvas.vue`；冒烟里「一个开关都不传仍然有内置工具栏」那一条守的仍然是它。
 - **为什么是「默认值提供者」而不是「模式开关」**：若 `editable: true` 一律**强制**打开四个开关，编辑器那种「编辑 + 自绘界面」就表达不出来；若把默认值定成 `false`，就是上面那条灾难；定成 `true` 则会给所有不传它的宿主凭空加出手柄来。三态（不传 / `true` / `false`）是唯一既能表达全部组合、又不动已发布宿主行为的形状。
-- **为什么不拆成两个组件**：拆过一次（`ScenePreview` / `SceneEditor` 两个薄壳，各自把一组旗标钉死），代价立刻显出来——两套公开面要各自声明全部 prop、各自转发 12 个事件与 5 个方法，**漏一处都是静默失效**；而「钉死」本身还得靠「被固定的旗标仍然必须出现在 `defineProps` 里」这种反直觉的规矩撑着（不声明就会被 `$attrs` 透传下去、顶掉模板里的硬编码值，实测过）。一个 prop 把这些账全免了：公开面只有一份。
+- **为什么不拆成两个组件**：拆过一次（`ScenePreview` / `SceneEditor` 两个薄壳，各自把一组旗标钉死），代价立刻显出来——两套公开面要各自声明全部 prop、各自转发 12 个事件与 6 个方法，**漏一处都是静默失效**；而「钉死」本身还得靠「被固定的旗标仍然必须出现在 `defineProps` 里」这种反直觉的规矩撑着（不声明就会被 `$attrs` 透传下去、顶掉模板里的硬编码值，实测过）。一个 prop 把这些账全免了：公开面只有一份。
   > 后来真拆出的那两个组件（`SceneCanvas` / `SceneEditor`）守的恰好是另一条线：它们**都在 `src/` 内部**，`SceneViewer` 是唯一入口，公开面仍然只有一份。见设计决定 47。
 - **规则只能有一份实现**：`resolveSceneSwitches` 从 `index.ts` 导出，组件与宿主用的是同一份。宿主自绘工具栏时若自己写一份判断，两处迟早不一致，症状是「按钮亮着可点、画布上却点不中」。
 - **模板里一律读 `switches`，不要直接读 prop。** 直接读 `props.pickable` 不报错，只是总闸整个失效——画面上表现为「传了 `editable` 没反应」。
@@ -1223,12 +1223,12 @@ skybox/bak38/{back,down,front,left,right,top}.jpg
 
 ```
 SceneCanvas.vue   由合并后的 SceneViewer.vue 改名而来，收窄成**内部签名**：
-                  8 个 prop / 12 个 emits / 5 个方法。编辑器与纯画布共用，宿主永远碰不到
+                  8 个 prop / 12 个 emits / 6 个方法。编辑器与纯画布共用，宿主永远碰不到
      ↑
 SceneEditor.vue   三栏工作台 = SidePanel | EditorStage | InspectorPanel ＋ 事件绑定弹窗
                   中栏 EditorStage 内渲染 SceneCanvas，喂给它编辑器自己的值
      ↑
-SceneViewer.vue   公开面。九个 prop，按 editable 选一种形态渲染
+SceneViewer.vue   公开面。十一个 prop，按 editable / mode 选一种形态渲染
 ```
 
 **为什么砍这些 prop**：
@@ -1745,7 +1745,7 @@ No 'Access-Control-Allow-Origin' header is present on the requested resource.
 配置里标签会藏进更高的墙后面，且不报任何错。这条规则写成纯函数 `maxWallHeight`
 （`src/utils/floorplan.ts`，一面墙都没有时退回 `DEFAULT_WALL_HEIGHT`），**不从 `index.ts`
 导出**：它是渲染端口径，宿主手里没有「要摆一个房间名」这件事，公开面多一个函数只会多一份
-要维护的承诺（冒烟也因此仍是 111 条）。
+要维护的承诺（冒烟也因此仍是 114 条）。
 
 **3D 档另有两样「标签效果」**（都在 `SceneFloorplanRoom.vue`，2D 档一样都不加）：
 
@@ -1794,11 +1794,98 @@ No 'Access-Control-Allow-Origin' header is present on the requested resource.
   新模型，所以 -1 不会一直挂着；而 `removeSelectedModel` / 拾取那条路在没有选中项时
   本来就以 `undefined` 为守卫，行为不变。
 
+**57. 「编辑模型」是同一个 `SceneViewer` 的第二档，不是第二个组件；`mode="model"` 本身就进入编辑形态**
+
+公开面只加两个 prop：`mode?: 'scene' | 'model'`（默认 `'scene'`）与 `extraSections?:
+ExtraLibrarySection[]`。三栏布局、插槽转发、事件桥全部复用编辑态那一套——模型页与场景页
+的差别只在「编辑的是什么」，拆成第二个组件会让 `SceneViewer` 上那五组 prop 桥、12 条事件
+与 6 个 `defineExpose` 方法各有一份拷贝，两份悄悄不一致是不报错的那类 bug。
+
+- **`mode` 隐含编辑态**：`isEditor = editable === true || mode === 'model'`。宿主只写
+  `mode="model"`、忘了配 `editable` 时不该拿到一块纯画布——那是最容易踩的空转，而且不报错。
+  `activeApi()` 必须与模板用**同一个** `isEditor`：`SceneCanvas` 在模型页里没挂载，
+  只按 `editable` 判的话 6 个公开方法会一起退化成 `false` / `null`。
+- **左栏只放 `extraSections`**：内置五类与服务器清单在模型页整块让位（那一页的「模型」由
+  宿主声明）。`sections` 为空时给整栏空态，而不是让 `resolveLibrarySection(...)` 在
+  `[]` 上取 `.key` 崩掉——顺手把它「空表时返回 `undefined`」这件事写进签名，旧签名是假的。
+  导轨上仍保留宿主 `sideTabs` 那一组；分组线的 `groupStart` 改成「内置那组非空时才画第一格」，
+  否则模型页导轨顶部会多一道没有上文的孤线。
+- **右栏只留「操作历史」 + 宿主 `inspectorTabs`**：其余六页改的都是场景（背景、相机、
+  地面、日照、阴影、平面图）。`visibleBuiltinTabs` 只做显示层裁剪，`builtinTabs` 本身不裁。
+  两处**不能顺手写 `activeTab`**：它是模块级状态、跨实例保留，模型页里点一下历史，
+  退出到普通编辑页右栏会莫名停在那里。`litBuiltinKey` 在 `activeTab` 不在可见集合里时
+  退回第一可见页，否则模型页首次进入导轨一格都不亮、正文却是历史。
+- **中栏固定 3D**：视角切换与户型工具都不渲染（它们改的是场景）。进页面时 `onMounted`
+  清两件模块级残留——预览态与户型工具（`previewMode` / `floorplanTool` 跨实例保留，
+  带着进来会表现为「模型页不能拖模型」或「点不中模型」）；若当前是从机位推导出的 2D
+  （`viewModeOf`），再 `setViewMode('3d')`。**这一下会留一条「切回 3D 透视视角」历史**，
+  这是知情的：那与用户自己点 3D 按钮产生的是同一条，而这一页没有切回来的按钮；
+  正常从 3D 进页面一行历史都不多。
+- **选择即替换，替换目标是策略且只有一份实现**（`store.replacementTarget()`）：有选中 →
+  选中项；没有选中但有模型 → 第 0 个；场景空 → `-1`（调用方改为首次追加）。左栏宫格与
+  拖入 `.glb` 走同一个函数——各写一遍的错法是「点格子换 1 号、拖文件换 2 号」，而模型页
+  右栏没有模型列表，用户根本核对不了。日志里带上「场景中第 N 个」，那是唯一的目标提示。
+- **`replaceModel(index, source, label?)` 换的是「是什么」而不是「在哪」**：`position` /
+  `rotation` / `scale` / `repeat` / `visible` / 阴影 / `events` / `draco` 原样保留，
+  只改 `id` / `url` / `partsJson` / `name`。**源真的变了才换 `id`**（`SceneModelNode`
+  按 id 重挂、重新加载）；源与名字都相同的第二次点击是 no-op，**必须在 `commit` 之前返回**
+  ——带 label 的 `commit` 绕过「没有实际变化就不记录」的闸门，否则每点一次同一格就多一条空历史。
+  `url` 优先：`url` 非空时 `partsJson` 必须**直接 `delete`**（`patchModel` 走 `deepAssign`，
+  写 `undefined` 的语义是「本次不改」，删不掉），否则导出物里带着两份来源。
+- **「复制」在模型页消失**：`duplicateModel()` 走 `addModel`，是那一页唯一还能把模型变成
+  两个的入口，与「只替换不追加」直接矛盾。拖入也不再追加。
+- **模型页不发服务器素材请求**：`useAssetManifest(source, { remote: false })` 与
+  `useCategoryIcons({ enabled: false })` 各加一个显式开关。这是**页面级**假设：运行中把
+  `mode` 从 `model` 切回 `scene` 不保证补发请求（与 `mode` 本来就是「整页形态」的定位一致）。
+- **SSR 能断 / 断不到什么**：能断的是「`mode="model"` 一渲染就是三栏」「中栏没有
+  `.tdm-view`」「右栏无「模型属性」有「操作历史」」「无宿主分类时的整栏空态」「宿主分类进了
+  宫格而内置五类一格不在」。断不到的是 `onMounted` 里那三件复位（切 3D、退预览、取消工具）
+  与点击替换本身——SSR 不跑 `onMounted`、也点不了，归目视清单 163。store 层的替换语义
+  （数量、id、姿态与事件保留、no-op、`partsJson` 清除、目标策略）有冒烟断言守着。
+
+**58. `exportModel()` 只带零件表，封面是离屏重画的，不是主画布截图**
+
+保存一个「由 AI 画出来的模型」需要四样东西：整份场景、这一条模型配置、它的几何来历、一张封面。
+公开面为此新增第六个方法 `exportModel(id?, options?)`，**`getSceneData()` 一个字节都不改**——
+已有宿主的方法与返回值保持原样，新能力是加法。
+
+- **几何只有零件表，没有第三种形式**。`url` 来源的模型 `geometry: null`：库不做 glTF 导出，
+  引入 `GLTFExporter` 会把一整条本可以不存在的构建链路（以及 CJS/ESM 的双份加载器）拖进产物。
+  零件表来源则给出 `{ parts, dropped, problem, partsJson }`——前三个直接来自 `parseModelParts`，
+  第四个是配置里的原文。判据顺序与渲染端逐字一致：`url` 非空就 `null`，空串 `partsJson` 也 `null`。
+- **目标策略复用 `store.replacementTarget()`**（选中项 → 第 0 个 → `-1`），不另写一份。
+  显式给 `id` 却找不到时返回 `null`，**不回退到第 0 个**：写错 id 拿到一份看起来正常的数据，
+  比拿到 `null` 难查得多。`config` 与 `model` 来自同一次 `exportConfig()`，`model` 是 `config.models`
+  里的同一对象引用。
+- **封面是离屏渲染，不是 `canvas.toDataURL()`**。主画布上是用户此刻的机位、别的模型与背景；
+  拿它当封面，同一个模型每次保存的图都不一样。缩略图在临时 `Scene` 里单独画：方形、透明底、
+  固定 35° 视角与 3/4 方向、按包围球自动取景、4× MSAA、默认 512（夹在 64–1024，不乘 DPR）。
+- **环境贴图抄、灯光不抄**。`environment` / `environmentIntensity` / `environmentRotation` 从主场景
+  引用复制——缺了它，AI 零件表里最常见的金属与光滑材质会黑成一片。另加一盏固定的半球光与
+  平行光：缩略图要的是「每次导出来都长一样」的封面，跟着场景太阳走会让同一个模型在阴天与正午
+  得到两张明显不同的图。
+- **借活对象，不 clone 树**。three 的克隆入口 `three/examples/jsm/utils/SkeletonUtils.js` 只有 ESM，
+  静态 import 进 CJS 产物会变成 `require()` 一个 ESM 文件，Node 20 宿主在加载模块那一刻就崩
+  （而这条链与缩略图毫无关系）。改用 `tempScene.attach(object)` 把活的模型组借到临时场景，
+  画完在 `finally` 里 `parent.attach(object)` 还回去——`attach` 保留世界变换，蒙皮绑定不受影响，
+  也不需要处理「克隆出来的几何与贴图是共享的、不能 dispose」。这是同步调用，渲染循环插不进来；
+  隐藏的模型也会临时置为可见，画完恢复。
+- **颜色全是手算的**。three 对非 XR 渲染目标强制工作色彩空间并关掉色调映射，读回的像素是
+  线性 sRGB、**已预乘 alpha**、左下原点。编码顺序固定为：反预乘 → 按 `renderer.toneMapping`
+  做色调映射（本库默认 `NoToneMapping`）→ 线性转 sRGB；再逐行翻转 Y。三步任何一步漏掉都不报错，
+  只得到偏亮、偏灰或边缘发黑的封面。
+- **失败是局部失败**。缩略图画不出来（SSR、WebGPU 渲染器、模型还没加载完、显卡内存不足）
+  只让 `thumbnail` 为 `null`，配置与零件表照常返回；整个方法返回 `null` 只有两种情形：
+  场景里一个模型都没有、或显式 id 找不到。**同步**回读只有几毫秒到几十毫秒，但不要每帧调。
+- **SSR 一行断言都写不了**：`exportModel` 与其余五个方法一样长在组件实例上，而 `renderToString`
+  拿不到实例；缩略图那半条路还要 WebGL 与 `document`。防线只有目视清单 164。四层转发的签名
+  由 `SceneViewerApi` 钉住，漏一层 `typecheck` 会红。
+
 ---
 
 ## 验证覆盖到哪一步
 
-`pnpm verify` 会跑 `scripts/smoke.mjs`，直接加载 `dist/index.js` 在真实 Vue 应用里安装插件并渲染，覆盖 111 项：
+`pnpm verify` 会跑 `scripts/smoke.mjs`，直接加载 `dist/index.js` 在真实 Vue 应用里安装插件并渲染，覆盖 114 项：
 
 - **导出面与安装**：具名导出、install、全局组件注册（3 个）、Pinia 复用/补建
 - **素材与清单那一路**（设计决定 50 立起来、52 与 53 改写过）：不传素材配置时左栏是**空态**——
@@ -1824,7 +1911,7 @@ No 'Access-Control-Allow-Origin' header is present on the requested resource.
   `iconBaseUrl` 哪天被写成空串只会表现为「全用内置图标」，而那与「服务器上还没放图标」分不开）。
   **「真去服务器拉一份清单 / 探那些图标」这件事测不到**：`fetch`、`onMounted` 与 `new Image()`
   在 SSR 下都不跑，归目视清单第 156-160 条
-- **真实渲染**：组件树能渲染、store id 带前缀、根节点文案齐全。`editable: true` 那一档改判**编辑器外壳自己的类名**（`.tdm-body` 三栏容器 + `.tdm-col--left` / `.tdm-col--right` 两根栏，**带标签名一起断**——它们的根必须是 `div`，退回 `aside` 会被宿主的全局样式整片压住，见设计决定 2 与目视清单第 153 条），并且要求**内置工具栏不在**——编辑器自绘界面时它让了位，走的正是「分开关优先于总闸」那一支。另有一档**带宿主页**的渲染：两份 `tabs` 各给一页、插槽也一起给，验「宿主追加的页进了两根导轨」（`aria-label` 两边都在）与「分隔线只画在有第二组的地方」（有宿主页时有、没有时没有）
+- **真实渲染**：组件树能渲染、store id 带前缀、根节点文案齐全。`editable: true` 那一档改判**编辑器外壳自己的类名**（`.tdm-body` 三栏容器 + `.tdm-col--left` / `.tdm-col--right` 两根栏，**带标签名一起断**——它们的根必须是 `div`，退回 `aside` 会被宿主的全局样式整片压住，见设计决定 2 与目视清单第 153 条），并且要求**内置工具栏不在**——编辑器自绘界面时它让了位，走的正是「分开关优先于总闸」那一支。另有一档**带宿主页**的渲染：两份 `tabs` 各给一页、插槽也一起给，验「宿主追加的页进了两根导轨」（`aria-label` 两边都在）与「分隔线只画在有第二组的地方」（有宿主页时有、没有时没有）。再有两档**模型编辑页**（设计决定 57）：`{ mode: 'model' }` 不传 `editable` 也必须是三栏、中栏没有 `class="tdm-view"`、右栏无「模型属性」有「操作历史」、没给宿主分类时是整栏空态；带上一条 `extraSections` 时宿主那一类进了导轨与宫格，而内置「地板」那一格不出现
 - **编辑模式总闸**：`resolveSceneSwitches` 的 6 组组合逐一比对（不传 = 旧默认、`false` = 全关、`true` = 全开，以及两条「分开关压过总闸」），`DEFAULT_SCENE_SWITCHES` 的四个字段与「已冻结」；真实渲染里拿 SSR 看得见的那个差别（`editable: false` 没有内置工具栏、`true` 有三栏外壳）把三种写法各断一次，其中**不传时不带任何总闸的旧行为**那一条同时守着「五个布尔必须显式 `undefined`」这个机制（漏了就是全体宿主进只读）。**点选 / 包围框 / 手柄一律不写断言**：它们在 `TresCanvas` 里，SSR 下不渲染，写了只会得到永远为真的假断言（见 CLAUDE.md），那三条只归目视清单 144-146。**宿主页的正文也测不到**（点开才渲染、SSR 里点不了）——能测的只有「那一格进了导轨」，正文到不到得了靠目视清单 147-151
 - **样式产物**：组件样式类齐全、作用域样式存在、无全局 reset 泄漏、无 playground 样式混入
 - **配置模型**：`models` 是数组且默认为空、新造出来的条目字段齐全、5 类事件各自是独立对象（防别名）、store 是深拷贝（不会污染 `DEFAULT_SCENE_CONFIG`）、深合并不清空未提及的分支、`undefined` 被跳过、导出往返幂等
@@ -1853,12 +1940,13 @@ No 'Access-Control-Allow-Origin' header is present on the requested resource.
 > 执行器**全部**测不到——它们要么依赖真实指针事件，要么依赖 DOM 挂载，SSR 下连运行机会都没有。
 > 别为它们补冒烟用例（只会得到一条永远为真的断言），它们唯一的防线是 `pnpm dev` 目视清单。
 
-> **`defineExpose` 出来的 5 个方法同样测不到**，理由和上面那条不同：冒烟测试走的是
+> **`defineExpose` 出来的 6 个方法同样测不到**，理由和上面那条不同：冒烟测试走的是
 > `createSSRApp` + `renderToString`，而 `renderToString` 只产出 HTML 字符串，
-> **拿不到组件实例**——`ref` 上没有 `.value`，五个方法一个都够不着。
-> 所以 `captureCamera` / `measureModel` / `groundPointAt` / `getSceneData` / `loadSceneData`
-> 的返回值语义（什么时候给 `null`、`loadSceneData` 会不会清空撤销栈）**一行断言都没有**，
-> 唯一的防线是目视清单第 142、143 条。往里加方法时请同时补一条清单条目，
+> **拿不到组件实例**——`ref` 上没有 `.value`，六个方法一个都够不着。
+> 所以 `captureCamera` / `measureModel` / `groundPointAt` / `getSceneData` / `loadSceneData` /
+> `exportModel` 的返回值语义（什么时候给 `null`、`loadSceneData` 会不会清空撤销栈、
+> `exportModel` 的封面什么时候缺席）**一行断言都没有**，
+> 唯一的防线是目视清单第 142、143、164 条。往里加方法时请同时补一条清单条目，
 > 否则它就是一个谁都没验过的公开面。
 > 与之对照：`migrateConfig` 是**纯函数**（不依赖 three、不依赖 DOM），
 > 属于**够得着**冒烟测试的那一类——它眼下还没有断言，要补随时可以补。
@@ -2596,6 +2684,52 @@ No 'Access-Control-Allow-Origin' header is present on the requested resource.
        是选中态，提示消失；撤销 / 重做一次 → 选中态不跟着历史变（它是界面状态）；
        ⑤ 取消选中后点画布**空白处** → 选中态**保持不变**（拾取只报命中，不报落空）；
        点画布上任意一个模型 → 它被选中。
+  163. **`mode="model"`：只替换不追加，左栏只有宿主分类，右栏只有历史**（见设计决定 57）：
+       临时在 playground 的 `App.vue` 上给 `<SceneViewer>` 加 `mode="model"` 与两条
+       `extraSections`（用完撤掉，样例不留在宿主里）。要验九件事：
+       ① **`mode` 一个人就进了编辑形态**——`editable` 一个字不写，也是三栏；
+       ② **左栏只有那两类**：内置五类（地板 / 天空 / 家具 / 门窗 / 其他）一格都不在，
+       服务器清单一个请求都不发（Network 里没有 `index.json`、也没有 `/3d-icons/` 的探测）；
+       宿主分类点开有格子、缩略图正常；
+       ③ **点一格的语义是替换**：场景里始终只有一个模型；位置 / 旋转 / 缩放 / 可见性 /
+       事件绑定**原样保留**，换的只是外观与名字；每次替换**只多一条历史**；
+       同一格再点一次 → 画面不重载、历史不增；
+       ④ **取消选中之后点格**（普通编辑页里再点行取消选中，然后进这一页）→ 替换的是第 0 个；
+       **空场景第一次点**是添加而不是替换，且日志里说得清「第 1 个」；
+       ⑤ 左栏**一个宿主分类都没给**时整栏是一句空态，不是崩溃、也不是内置五类；
+       ⑥ **右栏只有「操作历史」与宿主那一页**（宿主 AI 对话页走 `inspectorTabs` +
+       `#inspector-tab-<key>`，与普通编辑页同一套链路）；「模型属性」「背景」「相机」
+       「地面」「日照」「阴影」「平面图」全不在；**退出到普通编辑页后右栏仍停在用户原先
+       那一页**（模型页里点历史不该把跨实例的 `activeTab` 带走）；
+       ⑦ **中栏没有 2D / 3D 按钮、没有画墙 / 地基 / 门窗工具与提示行**，相机在透视档；
+       从普通编辑页**2D 档**进来 → 自动切回 3D，历史里多一条「切回 3D 透视视角」；
+       从预览态或拿着画墙工具进来 → 两样都被复位（不能拖模型 / 点不中模型才是 bug）；
+       ⑧ **操作胶囊里没有「复制」**，拖入 `.glb` 是替换；把选中的模型删掉再拖入 → 是添加；
+       ⑨ 换回普通 `editable` 页面 → 一切如常（左栏五类与服务器清单回来、右栏七页回来、
+       2D / 3D 与户型工具回来），两页之间来回切多次也不会把模块级状态串过去。
+  164. **`exportModel()`：零件表、目标选择与自动取景封面**（见设计决定 58）：
+       临时在 playground 的 `App.vue` 上拿到 `SceneViewer` 的 `ref`，在控制台或一个临时按钮里调用
+       （用完撤掉，样例不留在宿主里）。要验八件事：
+       ① **`url` 模型**：`geometry` 是 `null`；`config` 与 `getSceneData()` 深相等；`model` 是
+       `config.models` 里同一项（改 `model.name` 后 `config` 里也跟着变）；
+       ② **`partsJson` 模型**：`geometry.parts` 与配置里的件数对得上，`dropped` / `problem` 跟
+       `parseModelParts` 一致，`partsJson` 与配置原文逐字相同；坏一份 JSON 再导出 → `problem`
+       有话说、`parts` 为空，而**其余三样照常返回**；
+       ③ **目标选择**：有选中项导出选中的那个；取消选中 → 第 0 个；空场景 → `null`；
+       给一个不存在的 id → `null`（**不能**静默给第 0 个）；
+       ④ **封面构图**：正方形、透明底（不是白底）、模型完整不切边、四周留白大致均匀；
+       把模型换成长条 / 扁片 / 很小的物件各导出一次 → 都自动装进画面，不出现「占满一角」或
+       「小成一个点」；模型**转 180°** 再导出 → 朝向跟着变（说明取景读的是当前世界变换）；
+       ⑤ **颜色与朝向**：封面与主画布大体一致（不是发灰、发白或整体偏暗）；**上下不颠倒**
+       （拿一把带靠背的椅子看：靠背在上）；MSAA 边缘不发黑（半透明边缘被预乘过，
+       漏了反预乘会有一圈暗边）；
+       ⑥ **隐藏的模型也能出图**：把模型隐藏后导出 → `thumbnail` 仍有值，封面里模型是可见的；
+       导出之后主画布上它仍然是隐藏的（`visible` 被恢复）；
+       ⑦ **不影响主画布**：导出前后机位、画面、其他模型的位置都不变；导出时模型**不会闪**
+       到别的位置（借走与归还在同一帧内完成）；连续导出两次 → 两张封面一致；
+       ⑧ **参数**：`size: 32` 得到 64×64；`size: 128` 得到 128×128；不传是 512×512；
+       模型还在加载时调用 → 只让 `thumbnail` 为 `null`，配置与零件表照常；画布没挂上时
+       （例如卸载后的实例）调用 → `thumbnail` 为 `null` 而不是抛异常。
 - 编辑器的交互（拖放导入、快捷键、导入导出文件、**空档里点选门窗并沿墙拖动**、
   **左栏点一格替换选中的洞口或墙**、**「保存」取数据交给宿主**）
   没有自动化测试，只有类型检查和构建覆盖——上面那组「洞口落点」断言验的是它
@@ -2614,7 +2748,11 @@ No 'Access-Control-Allow-Origin' header is present on the requested resource.
 而「真去服务器拉一份 json 回来填进宫格」根本跑不到（SSR 不跑 `onMounted`），
 图标那一路同理（`new Image()` 也不会在 SSR 里跑起来）——端到端的防线是目视清单第 156-160 条。）
 取消选中那一次（设计决定 56）的 toggle 住在 `ModelList.vue` 里，SSR 下点不到，防线是第 162 条；
-store 那两半本身只是两行赋值，所以没有为它补冒烟断言——断言数仍是 111。
+store 那两半本身只是两行赋值，所以当时没有为它补冒烟断言。
+模型编辑页那一次（设计决定 57）**本轮另加 3 条**：两次渲染各断一件事（`mode` 隐含编辑态、
+左栏只放宿主分类），store 那条把替换语义（数量 / id / 姿态与事件保留 / no-op / `partsJson`
+清除 / 目标策略）整组钉住（断言数因此 111 → 114）——`onMounted` 里那三件复位与点击替换本身
+仍然只有目视清单 163 一条防线。
 
 ---
 
@@ -2651,8 +2789,8 @@ src/                     库源码，会被打包发布
 │   ├── _canvas.scss     画布作用域约束、内置工具栏、加载与错误态
 │   └── _editor.scss     编辑器那一整层（三栏外壳、两根导轨、属性面板、绘制工具）
 ├── components/          画布与公开组件
-│   ├── SceneViewer.vue     **公开面**：九个 prop，按 editable 选形态（画布 / 三栏编辑器）
-│   ├── SceneCanvas.vue     内部签名：8 个 prop / 12 个 emits / 5 个方法，编辑器与纯画布共用
+│   ├── SceneViewer.vue     **公开面**：十一个 prop，按 editable / mode 选形态（画布 / 三栏编辑器）
+│   ├── SceneCanvas.vue     内部签名：8 个 prop / 12 个 emits / 6 个方法，编辑器与纯画布共用
 │   ├── SceneContent.vue    TresCanvas 内部：组装下面四个 + 相机 + 控制器 + 物体级变换与拾取
 │   ├── ScenePicker.vue     TresCanvas 内部：画布级点选（pickable 打开时才存在）
 │   ├── SceneSun.vue        环境贴图与三盏灯

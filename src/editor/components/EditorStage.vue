@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref, useTemplateRef, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, useTemplateRef, watch } from 'vue'
 import { useSceneStore } from '../../stores/scene'
 import type {
   CameraChangePayload,
@@ -23,6 +23,7 @@ import {
   pushEvent,
 } from '../composables/useEditorState'
 import {
+  cancelFloorplanTool,
   floorplanEnabled,
   floorplanHint,
   onFloorplanContextMenu,
@@ -33,11 +34,31 @@ import {
   onFloorplanPointerUp,
 } from '../composables/useFloorplanTool'
 import { commitTransform, selectPickedModel } from '../composables/useModelActions'
+import { exitPreview } from '../composables/useSceneActions'
 import { useEditorHooks } from '../hooks'
 import { setViewMode, viewModeOf } from '../composables/useViewMode'
 import type { ViewMode } from '../composables/useViewMode'
 
 defineOptions({ name: 'TdmEditorStage' })
+
+const props = withDefaults(
+  defineProps<{
+    /**
+     * 模型编辑页（`SceneViewer` 的 `mode="model"`）。
+     *
+     * 中栏在这一档上只剩一块 3D 视口：
+     *
+     * - 2D / 3D 切换与平面图工具（画墙 / 地基 / 门窗、以及底部那行提示）都不渲染
+     *   ——它们改的是**场景**，这一页编辑的是「场景里那一个模型」；
+     * - 拖入 `.glb` 是**替换**当前模型（与左栏点一格同一条规则），不是追加；
+     * - 进页面时把两个模块级状态复位：预览态（`previewMode`）与户型工具
+     *   （`floorplanTool`）。它们跨实例保留，不清的话这一页可能一进来就是
+     *   「预览中」或者「正拿着画墙工具」，而两种表现都不报错。
+     */
+    modelMode?: boolean
+  }>(),
+  { modelMode: false },
+)
 
 /*
   12 个事件原样透出去，一个不删——它们是宿主已在用的公开面，
@@ -64,6 +85,33 @@ const emit = defineEmits<{
 }>()
 
 const scene = useSceneStore()
+
+/**
+ * 模型编辑页一进来：清掉两件**模块级**的残留，并要求 3D 视角。
+ *
+ * 三件都不是「顺手加一下」，各自对应一种不报错的错法：
+ *
+ * - `exitPreview()`：预览态是模块级的（`useEditorState`），从别的页面带着
+ *   `true` 进来时，这一页会整块变成只读、连手柄都没有。用户看到的是
+ *   「模型编辑页不能拖模型」。
+ * - `cancelFloorplanTool()`：同理，`floorplanTool` 带着 `'wall'` 进来时，
+ *   视口会按「正在绘制」处理，指针事件全被户型那条链吃掉，点模型点不中。
+ *   `ModelLibrary` 的 `cellIntent` 也按 model 模式返回了 `null`，两处合起来
+ *   才算「这一页没有配料工具」。
+ * - 强制 3D：这一页没有视角切换按钮，2D 又是一份**从机位推导**的档位
+ *   （`viewModeOf`），不切回来的话用户会困在俯视图里且没有任何出口。
+ *   切回 3D 会留一条「切回 3D 透视视角」的历史——**这是知情的**：那条记录
+ *   与用户自己点 3D 按钮产生的是同一条，撤销它就会退回俯视，而这一页没有
+ *   切回来的按钮。所以只在「进来时真是 2D」时才写，正常进页面一行历史都不多。
+ */
+onMounted(() => {
+  if (!props.modelMode) return
+
+  exitPreview()
+  cancelFloorplanTool()
+
+  if (viewModeOf(scene.config.camera) === '2d') void setViewMode('3d')
+})
 
 /**
  * 执行某类模型事件绑定的代码——这件事**不由库来做**。
@@ -114,15 +162,16 @@ function onPicked(payload: ModelPickPayload): void {
 }
 
 /**
- * 画布对外那 5 个方法，逐条转给 `SceneCanvas`。
+ * 画布对外那 6 个方法，逐条转给 `SceneCanvas`。
  *
  * 转手是本组件在「编辑态」这一支上的唯一职责——`SceneViewer` 只认一个入口，
  * 它拿到的是 `SceneEditor` 的实例，所以中间两层都得把同一组方法再交一遍。
  * 方法名与签名由 `SceneViewerApi` 定死，漏一条 `typecheck` 会红。
  *
- * 四条要隔着挂载好的画布问的，用 `?? ` 兜成「现在拿不到」（与原实现同值）；
- * `getSceneData` 那一条**只在画布没挂上时才可能走兜底**，而它只读 store，
- * 所以这里给出的是商店里那份配置，而不是 `null`。
+ * 四条要隔着挂载好的画布问的（`captureCamera` / `measureModel` / `groundPointAt` /
+ * `exportModel`），用 `?? ` 兜成「现在拿不到」（与原实现同值）；
+ * `getSceneData` 与 `loadSceneData` **只在画布没挂上时才可能走兜底**，而它们
+ * 都只读 / 只写 store，所以这里给出的是商店里那份配置，而不是 `null`。
  */
 const viewerRef = useTemplateRef<SceneViewerApi>('viewer')
 
@@ -132,6 +181,7 @@ defineExpose<SceneViewerApi>({
   groundPointAt: (clientX, clientY) => viewerRef.value?.groundPointAt(clientX, clientY) ?? null,
   getSceneData: () => viewerRef.value?.getSceneData() ?? scene.exportConfig(),
   loadSceneData: (data) => viewerRef.value?.loadSceneData(data) ?? false,
+  exportModel: (id, options) => viewerRef.value?.exportModel(id, options) ?? null,
 })
 
 /**
@@ -184,10 +234,14 @@ canvasApi.getSceneData = () => viewerRef.value?.getSceneData() ?? null
 /**
  * 拖入过的本地文件的 object URL。
  *
- * 存一个列表而不是「最后一个」：现在每次拖入都是往场景里**追加**一个模型，
+ * 存一个列表而不是「最后一个」：编辑场景页每次拖入都是往场景里**追加**一个模型，
  * 旧的模型还留在场景里，它的贴图与几何体仍然从这个 URL 上取。
  * 只记住最后一个就等于把先前那些模型的资源提前释放掉，画面会在下次渲染时塌掉。
  * 全部留到卸载时统一回收。
+ *
+ * （模型编辑页是替换，被换掉那一个的 URL 确实已经没人用了——但**分不清**哪一条
+ * 还在被谁引用：撤销可以把它换回来，多个实例也可能共用同一个地址。
+ * 所以照旧全留到卸载，那点内存不值得换一类只在撤销时才发作的 bug。）
  */
 const dropUrls: string[] = []
 
@@ -265,6 +319,26 @@ function onDrop(event: DragEvent) {
   // 用 blob URL 交给 GLTFLoader 就地上传，本地文件不必先起一个静态服务
   const url = URL.createObjectURL(file)
   dropUrls.push(url)
+
+  /*
+    模型编辑页：拖入是**替换**，与左栏点一格同一条规则、同一个目标函数
+    ——各写一遍的代价是「点格子换的是选中的那个、拖文件换的是第一个」，
+    而这一页右栏没有模型列表，用户根本核对不了。
+  */
+  if (props.modelMode) {
+    const target = scene.replacementTarget()
+
+    if (target < 0) {
+      const index = scene.addModel(url)
+      pushEvent(`从本地拖入模型：${file.name}（场景中第 ${index + 1} 个）`)
+      return
+    }
+
+    scene.replaceModel(target, { url, name: file.name }, `替换模型 · ${file.name}`)
+    pushEvent(`从本地拖入模型替换：${file.name}（场景中第 ${target + 1} 个）`)
+    return
+  }
+
   const index = scene.addModel(url)
   pushEvent(`从本地拖入模型：${file.name}（场景中第 ${index + 1} 个）`)
 }
@@ -499,8 +573,11 @@ const viewMode = computed(() => viewModeOf(scene.config.camera))
 
         与手柄条不同，它**没有 v-if**：它管的是相机而不是模型，
         空场景里同样有意义。预览模式下跟着其余编辑控件一起由 CSS 关掉。
+
+        **模型编辑页例外**：那一页固定 3D（进页面时 `onMounted` 会切回来），
+        没有任何切换需要，于是整块不渲染。
       -->
-      <div class="tdm-view" role="group" aria-label="视角模式">
+      <div v-if="!modelMode" class="tdm-view" role="group" aria-label="视角模式">
         <button
           v-for="item in VIEW_MODES"
           :key="item.mode"
@@ -519,7 +596,7 @@ const viewMode = computed(() => viewModeOf(scene.config.camera))
         选中某个模型时才出现的操作胶囊。放在 .tdm-dropzone 之前只是因为
         阅读顺序上它属于视口内容，实际由 z-index 决定谁在上面（30 > 10）。
       -->
-      <ModelActions />
+      <ModelActions :model-mode="modelMode" />
 
       <!--
         绘制工具：竖排贴在视口左边缘中部。
@@ -536,7 +613,7 @@ const viewMode = computed(() => viewModeOf(scene.config.camera))
         所以下面那条 CSS 的预览规则与它有一部分是重叠的——留着是因为同一条
         CSS 还要管提示行，而提示行与工具条不是一回事（画不了的原因照样得说出来）。
       -->
-      <FloorplanTools />
+      <FloorplanTools v-if="!modelMode" />
 
       <!--
         绘制提示行：视口底部居中的一条细横条。
@@ -546,9 +623,11 @@ const viewMode = computed(() => viewModeOf(scene.config.camera))
         而「斜着点不落点」这类**拒绝**如果没有一句话说明，表现出来就是
         「点了没反应」——编辑器没有 toast 体系，只有这里能说。
       -->
-      <p v-if="floorplanHint" class="tdm-draw-hint">{{ floorplanHint }}</p>
+      <p v-if="!modelMode && floorplanHint" class="tdm-draw-hint">{{ floorplanHint }}</p>
 
-      <div v-if="dropping" class="tdm-dropzone">释放以载入 glTF / GLB</div>
+      <div v-if="dropping" class="tdm-dropzone">
+        {{ modelMode ? '释放以替换模型（glTF / GLB）' : '释放以载入 glTF / GLB' }}
+      </div>
     </div>
   </div>
 </template>

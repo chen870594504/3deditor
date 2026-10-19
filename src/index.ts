@@ -210,6 +210,16 @@ export { DEFAULT_EDITOR_ASSETS } from './editor/defaultAssets'
 export type { EditorAssetCategory, EditorAssetEntry, EditorAssets } from './editor/assets'
 
 /**
+ * 宿主追加的模型分类（`SceneViewer` 的 `extraSections`）。
+ *
+ * 导出它的理由很直接：宿主要么用 `ref<ExtraLibrarySection[]>` 管这一份声明，
+ * 要么在内联数组上拿到推断——前者绕不过这个类型名。条目本身的类型不单独导出，
+ * 用 `ExtraLibrarySection['entries'][number]` 就够（它比 `LibraryEntry` 少一层
+ * 「分类里的条目」这个上下文）。
+ */
+export type { ExtraLibrarySection } from './editor/composables/useModelLibrary'
+
+/**
  * 素材清单的地址拼法与格式校验。
  *
  * 清单住在素材服务器上，**整个素材根只有一份**（`<根>/index.json`，顶层是对象、

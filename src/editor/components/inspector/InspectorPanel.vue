@@ -32,8 +32,17 @@ const props = withDefaults(
      * 溢出（内置那几页都是 `tdm-scroll` + 定宽控件这么做的）。
      */
     tabs?: EditorPanelTab[]
+
+    /**
+     * 模型编辑页（`SceneViewer` 的 `mode="model"`）。
+     *
+     * 为真时内置那七页只剩「操作历史」：其余六页改的全是**场景**（背景、相机、
+     * 地面、日照、阴影、平面图），而这一页编辑的是「场景里那一个模型」。
+     * 宿主页（`tabs`）照旧全在——AI 对话那一页就是从这条口子接进来的。
+     */
+    modelMode?: boolean
   }>(),
-  { tabs: () => [] },
+  { tabs: () => [], modelMode: false },
 )
 
 /**
@@ -47,6 +56,17 @@ const props = withDefaults(
  * 「`current.sections` 在宿主页上不存在」这件事藏进类型里。
  */
 const builtinTabs = createInspectorTabs()
+
+/**
+ * 这一页真正画到导轨上的内置页。
+ *
+ * 模型编辑页只留「操作历史」——理由在 prop 注释里。`builtinTabs` 本身**不裁**：
+ * schema 构建一次、别的页还要用，而且裁出来的数组会让 `current` 的兜底
+ * 也只剩一页（那正是这里想要的，但要在下面显式写出来，不能靠数组变短）。
+ */
+const visibleBuiltinTabs = computed(() =>
+  props.modelMode ? builtinTabs.filter((tab) => tab.key === 'history') : builtinTabs,
+)
 
 /**
  * 当前停在哪个**宿主页**。`null` = 没停在宿主页上（导轨亮的是内置那一格）。
@@ -73,8 +93,19 @@ const activeHostTab = computed(() => props.tabs.find((tab) => tab.key === hostTa
 
 /**
  * 当前该亮哪一格。宿主页优先——判定顺序与正文那支链一致（见模板里那段注释）。
+ *
+ * **内置那一支要过一遍「这一页在不在可见集合里」**：`activeTab` 是模块级状态、
+ * 跨实例保留，从别的编辑页面带着 `'model'` 进来是常态。直接拿它当亮灯判据的话，
+ * 模型编辑页一进来**导轨一格都不亮**、正文却是「操作历史」——两边对不上，
+ * 而且不报错。不在可见集合里就退回第一可见页（模型页里恒是「历史」）。
  */
-const litKey = computed(() => activeHostTab.value?.key ?? activeTab.value)
+const litBuiltinKey = computed(() => {
+  const visible = visibleBuiltinTabs.value
+  if (visible.some((tab) => tab.key === activeTab.value)) return activeTab.value
+  return visible[0]?.key ?? activeTab.value
+})
+
+const litKey = computed(() => activeHostTab.value?.key ?? litBuiltinKey.value)
 
 /**
  * 当前停在哪个**内置页**。
@@ -87,7 +118,10 @@ const litKey = computed(() => activeHostTab.value?.key ?? activeTab.value)
  * 所以它退到哪里都不会画错东西。
  */
 const current = computed(
-  () => builtinTabs.find((tab) => tab.key === litKey.value) ?? builtinTabs[0]!,
+  () =>
+    builtinTabs.find((tab) => tab.key === litKey.value) ??
+    visibleBuiltinTabs.value[0] ??
+    builtinTabs[0]!,
 )
 
 /**
@@ -106,7 +140,12 @@ const activeHostSlot = computed(() => `${INSPECTOR_TAB_PREFIX}${activeHostTab.va
  */
 function openBuiltinTab(key: InspectorTab): void {
   hostTabKey.value = null
-  activeTab.value = key
+  /*
+    模型编辑页**不写 `activeTab`**：它是模块级的、跨实例保留。在这一页点一下
+    「操作历史」之后退出到普通编辑页，右栏会莫名其妙停在那——用户没在那里点过它。
+    正文与高亮都靠 `current`（上面那句兜底已经指向历史），不写也照常工作。
+  */
+  if (!props.modelMode) activeTab.value = key
 }
 
 /** 点宿主那一格：`activeTab` 不动，理由见 `hostTabKey` */
@@ -186,7 +225,7 @@ const { tip, showTip, hideTip } = useRailTip(() => inspectorRef.value)
       -->
       <div class="tdm-rail" @mouseleave="hideTip">
         <button
-          v-for="tab in builtinTabs"
+          v-for="tab in visibleBuiltinTabs"
           :key="tab.key"
           type="button"
           class="tdm-rail-item"

@@ -10,7 +10,7 @@ import {
   migrateConfig,
 } from '../utils/config'
 import { createModelId } from '../utils/modelId'
-import type { DeepPartial, HistoryEntry, ModelConfig, SceneConfig } from '../types'
+import type { DeepPartial, HistoryEntry, ModelConfig, ModelSource, SceneConfig } from '../types'
 
 /** 历史栈上限，超出后丢弃最早的记录 */
 const HISTORY_LIMIT = 50
@@ -420,6 +420,92 @@ export const useSceneStore = defineStore('tdm-scene', () => {
     selectedIndex.value = -1
   }
 
+  /**
+   * 「编辑模型」页该替换哪一个：有选中就替换选中的，没有就替换第 0 个，
+   * 场景空着时返回 `-1`（调用方应当改为追加）。
+   *
+   * **它是策略，不是算术**，但只有一份实现：左栏宫格与拖放两条路都用它。
+   * 各写一遍的代价不是报错，而是「点格子替换的是 1 号、拖文件替换的是 2 号」
+   * 这种没人会想到去查的错配。
+   *
+   * 选中态可能是 `-1`（列表里再点一次取消选中，见设计决定 56），那时
+   * `config.models[-1]` 是 `undefined`，于是落到第 0 个——模型编辑页右边没有
+   * 模型列表，用户没法先点一行，这条兜底是那里唯一能用的目标。
+   */
+  function replacementTarget(): number {
+    if (config.models.length === 0) return -1
+    return config.models[selectedIndex.value] ? selectedIndex.value : 0
+  }
+
+  /**
+   * 把**某个坑位**上的模型换成另一个来源（模型编辑页的主动作）。
+   *
+   * ## 它替换的是「是什么」，不是「在哪」
+   *
+   * `position` / `rotation` / `scale` / `repeat` / `visible` / 阴影 / `events`
+   * 全部原样保留——用户在「编辑模型」页调好的姿态与事件绑定，不该因为换一个
+   * 模型外观就丢掉。只改 `id` / `url` / `partsJson` / `name` 四样。
+   *
+   * ## 为什么不能拿 `setModel` 凑
+   *
+   * 它只处理 `url`：换到程序生成的模型时旧 `partsJson` 会留下来（`url` 优先，
+   * 平时不显形，导出时却带着两份），而且空场景时它会自己走追加，与这里
+   * 「已经算好了目标下标」的前提不一致。
+   *
+   * ## 源真的变了才换 id
+   *
+   * `SceneModelNode` 以 id 为 key 重挂、重新加载；重复点同一格（面板失焦、
+   * 宿主重放 prop）不该产生新 id，也不该往历史里塞一条空记录。
+   * 带 `label` 的 `commit` 会绕过「没有实际变化就不记录」的闸门，所以 no-op
+   * 必须在 commit 之前返回。
+   *
+   * ## `partsJson` 的清除只能直接 delete
+   *
+   * `patchModel` 走 `deepAssign`，而它对 `undefined` 的语义是「本次不改」——
+   * 在上面写 `{ partsJson: undefined }` 删不掉任何东西。于是这里绕过补丁，
+   * 按 `url` 优先的规则直接删。
+   *
+   * 目标下标越界时什么都不做（与 `patchModel` / `removeModel` 同一条惯例）。
+   */
+  function replaceModel(index: number, source: ModelSource, label?: string) {
+    const model = config.models[index]
+    if (!model) return
+
+    /*
+     * url 优先：非空时忽略 partsJson，而且要**删掉**配置里可能残留的那一份。
+     * 反过来 url 为空、partsJson 也没有时，结果是内置示例几何体——这是合法的。
+     */
+    const url = source.url
+    const partsJson = url === '' ? source.partsJson : undefined
+
+    const sameSource =
+      model.url === url &&
+      (url === '' ? model.partsJson : undefined) === partsJson
+    const sameName = source.name === undefined || model.name === source.name
+
+    if (sameSource && sameName) {
+      // 同一件东西再点一次：只把选中项指过去，不换 id、不留历史
+      selectedIndex.value = index
+      return
+    }
+
+    if (!sameSource) {
+      model.id = createModelId()
+      model.url = url
+      if (partsJson === undefined) delete model.partsJson
+      else model.partsJson = partsJson
+      startLoading(url !== '')
+    }
+
+    if (source.name !== undefined) model.name = source.name
+    selectedIndex.value = index
+
+    if (label) {
+      if (pendingCommit) clearTimeout(pendingCommit)
+      commit(label)
+    }
+  }
+
   /** 导出当前配置的深拷贝，可直接 JSON 序列化 */
   function exportConfig(): SceneConfig {
     return cloneConfig(config)
@@ -575,6 +661,8 @@ export const useSceneStore = defineStore('tdm-scene', () => {
     models,
     selectModel,
     clearSelection,
+    replacementTarget,
+    replaceModel,
     // 运行时状态
     loading,
     progress,

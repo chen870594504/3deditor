@@ -43,8 +43,17 @@ const props = withDefaults(
      * `ModelLibrary` 那一支，整块与没有这个 prop 之前逐字一致。
      */
     tabs?: EditorPanelTab[]
+
+    /**
+     * 模型编辑页（`SceneViewer` 的 `mode="model"`）。
+     *
+     * 为真时这一栏**只剩宿主给的东西**：分类只有 `extraSections`（内置五类不出现，
+     * 服务器清单与那五个分类图标也一条请求都不发），导轨上那五个内置项一并让位。
+     * 宿主页（`tabs`）照旧在——它是这一页里唯一「换个正文」的出口。
+     */
+    modelMode?: boolean
   }>(),
-  { extraSections: () => [], tabs: () => [] },
+  { extraSections: () => [], tabs: () => [], modelMode: false },
 )
 
 /**
@@ -60,10 +69,16 @@ const props = withDefaults(
  */
 const builtinSections = useLibrarySections()
 
-const sections = computed<MergedLibrarySection[]>(() => [
-  ...builtinSections.value,
-  ...props.extraSections,
-])
+const sections = computed<MergedLibrarySection[]>(() => {
+  /*
+    模型编辑页**没有内置五类**：那一页左栏只放宿主提供的分类。
+    `useLibrarySections()` 仍会被调用（它在 setup 里、无条件），但这份结果
+    在这里被整个丢掉——那五个分类是算出来的，算一次不产生请求，
+    请求在 `useAssetManifest` / `useCategoryIcons` 两处，各自按 model 模式关掉。
+  */
+  if (props.modelMode) return props.extraSections
+  return [...builtinSections.value, ...props.extraSections]
+})
 
 /**
  * 导轨图标的共用约定（与右栏 `NAV_ICONS` 同一套，完整版在 `useInspectorSchema.ts`）：
@@ -235,7 +250,7 @@ const SECTION_ICONS = {
  * 探测的时机、失败为什么**不打 warn**、以及为什么只探内置这五个 key，
  * 都写在 `useCategoryIcons.ts` 上。
  */
-const serverIcon = useCategoryIcons()
+const serverIcon = useCategoryIcons({ enabled: !props.modelMode })
 
 /**
  * 每个分类的**量词**，用在导轨的悬停提示与 `aria-label` 里（`地板 · 2 个模型`）。
@@ -369,12 +384,21 @@ function pageRailItem(tab: EditorPanelTab, groupStart: boolean): RailItem {
  * 不再是模块常量。
  */
 const RAIL_ITEMS = computed<RailItem[]>(() =>
-  builtinSections.value.map((section) => sectionRailItem(section, false)),
+  // 模型编辑页没有内置分类，导轨上那五格一起让位（宿主页照旧，见 `pageRailItems`）
+  props.modelMode ? [] : builtinSections.value.map((section) => sectionRailItem(section, false)),
 )
 
-/** 宿主追加的那几项，只在宿主没写 `#rail`（不想自己画）时由组件代画 */
+/**
+ * 宿主追加的那几项，只在宿主没写 `#rail`（不想自己画）时由组件代画。
+ *
+ * `groupStart` 那条判据多了半个条件：**前面真有一组东西才画分隔线**。
+ * 模型编辑页里 `RAIL_ITEMS` 是空的，若只按 `index === 0` 判断，导轨最上面
+ * 会凭空多出一条线（线后面什么都没有，读起来像上一组被切掉了）。
+ */
 const extraRailItems = computed<RailItem[]>(() =>
-  props.extraSections.map((section, index) => sectionRailItem(section, index === 0)),
+  props.extraSections.map((section, index) =>
+    sectionRailItem(section, index === 0 && RAIL_ITEMS.value.length > 0),
+  ),
 )
 
 /**
@@ -470,7 +494,16 @@ const activePageSlot = computed(() => `${SIDE_TAB_PREFIX}${activePage.value?.key
  * 并进去会让「宿主撤掉一页」变成「兜底到那一页上」，正好是反的。
  */
 const activeRailKey = computed(
-  () => activePage.value?.key ?? resolveLibrarySection(librarySection.value, sections.value).key,
+  () =>
+    activePage.value?.key ??
+    resolveLibrarySection(librarySection.value, sections.value)?.key ??
+    /*
+      空表：模型编辑页里宿主一个分类都没给（`sections` 是 `[]`）。
+      此时导轨上一格都不该亮——`''` 与任何 key 都不等，正好是那个意思。
+      `??` 那一段不能省：早先 `resolveLibrarySection` 的签名谎报成 `T`，
+      这一行 `.key` 会直接炸在 `undefined` 上。
+    */
+    '',
 )
 
 /**
@@ -536,7 +569,11 @@ function activate(item: RailItem) {
           的兜底因此也落在内置第一条上——宿主把一个追加分类撤掉、而左栏正停在
           它上面时，落回的是内置分类，不是空白。
         -->
-        <ModelLibrary v-if="!activePage" :sections="sections">
+        <ModelLibrary
+          v-if="!activePage && sections.length > 0"
+          :sections="sections"
+          :model-mode="modelMode"
+        >
           <!--
             `#list` 的**透传**：导轨在 SidePanel、宫格在 ModelLibrary，
             宿主给 SidePanel 写的插槽要跨一层才到得了真正渲染它的地方。
@@ -550,6 +587,18 @@ function activate(item: RailItem) {
             <slot name="list" v-bind="scope" />
           </template>
         </ModelLibrary>
+
+        <!--
+          整栏空态。只有**模型编辑页**会走到这里：那一页没有内置五类，宿主又没给
+          `extraSections`。普通编辑页的五类恒在（条目可以为空），`sections` 不会空。
+
+          文案说的是「这一页只看宿主的分类」，不是「服务器上没有模型」——后者会
+          把原因指到错的地方。`tdm-lib-empty` 复用宫格空态那份边距（见样式表）；
+          `tdm-model-empty` 是给冒烟测试认的钩子。
+        -->
+        <p v-else-if="!activePage" class="tdm-hint tdm-hint--quiet tdm-lib-empty tdm-model-empty">
+          这个页面只显示宿主提供的模型分类，当前一个都没有。
+        </p>
 
         <!--
           宿主页：正文整个换掉，内容由 `#side-tab-<key>` 给出（名字见 `activePageSlot`）。
