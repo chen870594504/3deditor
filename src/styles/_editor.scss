@@ -667,6 +667,16 @@
 }
 
 /*
+  取消选中时下块那句提示（见 InspectorPanel 的 hasSelection）。
+  外观沿用列表空态那一套，只是它落在 .tdm-models-detail 里、上面紧挨着模型列表，
+  那块与列表之间没有分隔线，所以上边也给 12px——贴着写会看成列表的最后一行。
+  写成双类是为了压过 .tdm-hint 自己的 margin（两者同为单类，靠顺序不可靠）。
+*/
+.tdm-hint.tdm-models-detail-empty {
+  margin: 12px 12px 0;
+}
+
+/*
   模型库里空分类的提示。
   左右 5px 与宫格的内边距（.tdm-list）同值，所以这句话与缩略图**左对齐**，
   换成 12px 就会在缩略图左边多缩进一截、看起来像另一层级的说明；

@@ -79,7 +79,14 @@ export const useSceneStore = defineStore('tdm-scene', () => {
   // ---------- 选中项：界面状态 ----------
 
   /**
-   * 当前在属性面板里被编辑的那个模型。越界一律由 clampSelection 收回来。
+   * 当前在属性面板里被编辑的那个模型；**-1 表示没有选中任何模型**。
+   *
+   * 正常范围是 `[0, models.length - 1]`，越界一律由 clampSelection 收回来。
+   * -1 是后来补上的第二个合法状态：右栏「场景模型」里再点一次已选中的那行
+   * 就落到这里（见设计决定 56），于是属性面板那一块、画布上的包围框与手柄
+   * 一起让位。哨兵取 -1 而不是 `null`：所有按下标读配置的地方一行不用改，
+   * `config.models[-1]` 本来就是 `undefined`，而 `selectedModel` 恰好用它表达
+   * 「没有东西可编辑」。
    *
    * 空场景时它停在 0，而 `config.models[0]` 是 undefined ——
    * 于是 `selectedModel` 为 undefined，这正是「没有东西可编辑」的表达。
@@ -94,11 +101,14 @@ export const useSceneStore = defineStore('tdm-scene', () => {
    * 只盯长度即可：下标只可能因为「列表变短」而越界，而变短一定伴随长度变化。
    * 撤销、导入、重置都会整体换掉 `models` 数组（applyPatch 对数组是整体替换），
    * 长度 watch 同样能捕捉到，不必在 restore 里再补一次。
+   *
+   * **只收上界，不管负数**：-1 是用户主动取消选中，拉回 0 会让那一下当场失效
+   * （列表高亮重新出现、属性面板又填满）。列表变空时这里仍给 0，与改造前一致
+   * ——空场景里 0 与 -1 对界面是同一件事，`selectedModel` 都是 undefined。
    */
   function clampSelection() {
     const last = config.models.length - 1
     if (selectedIndex.value > last) selectedIndex.value = Math.max(0, last)
-    if (selectedIndex.value < 0) selectedIndex.value = 0
   }
 
   watch(() => config.models.length, clampSelection)
@@ -399,6 +409,17 @@ export const useSceneStore = defineStore('tdm-scene', () => {
     selectedIndex.value = index
   }
 
+  /**
+   * 取消选中（纯界面状态，不进历史）。
+   *
+   * 与 `selectModel` 分成两个动作而不是合成一个 toggle：行尾那个闪电按钮
+   * 必须先选中再开弹窗（见 `ModelList.vue` 的 `bindEvents`），做成 toggle 的话，
+   * 点已选中那行的闪电会把弹窗的目标清掉。toggle 只住在列表那一层。
+   */
+  function clearSelection() {
+    selectedIndex.value = -1
+  }
+
   /** 导出当前配置的深拷贝，可直接 JSON 序列化 */
   function exportConfig(): SceneConfig {
     return cloneConfig(config)
@@ -553,6 +574,7 @@ export const useSceneStore = defineStore('tdm-scene', () => {
     selectedModel,
     models,
     selectModel,
+    clearSelection,
     // 运行时状态
     loading,
     progress,

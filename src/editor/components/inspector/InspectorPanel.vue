@@ -139,17 +139,29 @@ const isFloorplanTab = computed(() => current.value.key === 'floorplan')
  */
 const isSunTab = computed(() => current.value.key === 'sun')
 
+const scene = useSceneStore()
+
 /**
- * 场景里是否还有模型。
- *
- * 「模型属性」这三节的字段路径全都指向 `models.<当前下标>.<字段>`，
- * 空场景下每一条都会读到 `undefined`——渲染出来是一屏空白控件，
- * 比什么都不显示更像坏了。所以空场景只留下拉列表那句提示。
+ * 空场景时这三节的字段路径全都指向 `models.<当前下标>.<字段>`，每一条都会读到
+ * `undefined`——渲染出来是一屏空白控件，比什么都不显示更像坏了。
+ * 所以空场景只留下拉列表那句提示。
  *
  * 它同时也是「上下分栏」的开关：空场景时下面那 3/5 没有任何东西可放，
  * 分出来就是一大片空白，不如让列表照常铺满整页。
+ *
+ * **分栏只按「有没有模型」，不按「有没有选中」**：取消选中是列表上的随手动作，
+ * 让下面那 3/5 忽大忽小会让每次切换都跳一下（见 `hasSelection`）。
  */
-const hasModels = computed(() => useSceneStore().models.length > 0)
+const hasModels = computed(() => scene.models.length > 0)
+
+/**
+ * 当前有没有选中模型。
+ *
+ * 列表里再点一次已选中的那行会取消选中——`selectedIndex` 落到 -1，见设计决定 56。
+ * 那时 `selectedModel` 为 `undefined`，下面三节的字段路径全都指向不存在的条目，
+ * 照常渲染就是一屏空白控件。整块换成一句提示，说清楚怎么选回来。
+ */
+const hasSelection = computed(() => scene.selectedModel !== undefined)
 
 const inspectorRef = useTemplateRef<HTMLElement>('inspector')
 
@@ -263,13 +275,21 @@ const { tip, showTip, hideTip } = useRailTip(() => inspectorRef.value)
           <!--
             两块各自滚动：模型多到装不下时列表自己在框内滚，不动下面的字段；
             字段长到装不下时也不把列表顶走。比例写在 .tdm-inspector-body--split 里。
+
+            取消选中时（`selectedIndex` 为 -1）整块换成一句提示：那三节的路径
+            全都指向不存在的条目，留着就是一片空白控件。
           -->
-          <div v-if="hasModels" class="tdm-models-detail tdm-scroll">
+          <div v-if="hasSelection" class="tdm-models-detail tdm-scroll">
             <InspectorSection
               v-for="section in current.sections"
               :key="section.index"
               :section="section"
             />
+          </div>
+          <div v-else-if="hasModels" class="tdm-models-detail tdm-scroll">
+            <p class="tdm-hint tdm-hint--quiet tdm-models-detail-empty">
+              没有选中模型。点上面列表里的一行查看它的属性；再点一次已选中的那一行可以取消选中。
+            </p>
           </div>
         </template>
         <template v-else-if="isFloorplanTab">

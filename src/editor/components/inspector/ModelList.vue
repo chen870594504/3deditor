@@ -17,6 +17,10 @@ const scene = useSceneStore()
  * 选中项是**界面状态**（store 里的 `selectedIndex`），不进配置、不进历史：
  * 在列表里点一下不该在撤销栈里留一条记录。
  *
+ * **再点一次已选中的那行 = 取消选中。** `selectedIndex` 落到 -1（见设计决定 56），
+ * 下面三节让位、画布上的包围框与手柄一起消失。这也是唯一能清掉选中态的入口
+ * ——点画布空白处不会清（拾取只报命中，不报落空）。
+ *
  * 字段那边是靠「路径闭包 + computed」自己跟着变的（见 useInspectorSchema
  * 的 modelPath），所以这里除了改下标之外什么都不用做。
  */
@@ -77,6 +81,18 @@ function bindEvents(index: number) {
   scene.selectModel(index)
   eventDialogOpen.value = true
 }
+
+/**
+ * 点一行：没选中就选它，已经选中就取消选中。
+ *
+ * toggle 只写在这里，`selectModel` / `clearSelection` 在 store 里仍是两个
+ * 独立的动作——闪电按钮（`bindEvents`）需要「无条件选中」那一半，
+ * 把 toggle 下沉进 store 的话它会连弹窗的目标一起清掉（见 store 里 `clearSelection` 的注释）。
+ */
+function pickModel(index: number) {
+  if (index === scene.selectedIndex) scene.clearSelection()
+  else scene.selectModel(index)
+}
 </script>
 
 <template>
@@ -113,7 +129,7 @@ function bindEvents(index: number) {
           :class="{ 'tdm-item--active': index === scene.selectedIndex }"
           :aria-current="index === scene.selectedIndex"
           :title="tipOf(model)"
-          @click="scene.selectModel(index)"
+          @click="pickModel(index)"
         >
           <svg class="tdm-models-icon" viewBox="0 0 24 24" aria-hidden="true">
             <path
