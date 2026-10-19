@@ -2,7 +2,7 @@
 import { computed, shallowRef, watch } from 'vue'
 import { Environment, Sky } from '@tresjs/cientos'
 import { MathUtils, Vector3 } from 'three'
-import type { DirectionalLight } from 'three'
+import type { DirectionalLight, Object3D } from 'three'
 import type { EnvironmentPreset } from '../types'
 
 defineOptions({ name: 'TdmSceneSun' })
@@ -61,6 +61,14 @@ const props = withDefaults(
     shadowNormalBias?: number
     /** 阴影正交相机的覆盖半径 */
     shadowCameraHalf?: number
+    /**
+     * 阴影正交相机的圆心（地面上的 `[x, z]`，世界坐标）。
+     *
+     * 主光是一只平行光，方向只由太阳角度决定；圆心决定的是**这只平行光
+     * 朝哪儿照着投**——阴影贴图的盒子以它为中心。场景整体偏离原点时必须
+     * 跟着挪（见 `utils/shadowBounds.ts`），否则盒子里一个模型都没有。
+     */
+    shadowTarget?: [number, number]
   }>(),
   {
     showSky: false,
@@ -75,7 +83,8 @@ const props = withDefaults(
     rayleigh: 3,
     mieCoefficient: 0.005,
     mieDirectionalG: 0.7,
-    ambientIntensity: 1.8,
+    /** 与 `DEFAULT_SCENE_CONFIG.sun.ambientIntensity` 保持一致（0.9，理由在那边的注释里） */
+    ambientIntensity: 0.9,
     keyIntensity: 2.2,
     fillIntensity: 0.7,
     environment: '',
@@ -85,23 +94,49 @@ const props = withDefaults(
     shadowBias: -0.0005,
     shadowNormalBias: 0.02,
     shadowCameraHalf: 12,
+    shadowTarget: () => [0, 0],
   },
 )
 
-/** 主光到原点的距离，只影响灯的位置，不影响方向 */
+/**
+ * 主光到圆心的距离，只影响灯的位置，不影响方向。
+ *
+ * 大场景里阴影相机半径可能到几十米，灯还贴在 12 米外的话，阴影相机的
+ * 近裁剪面（0.5）离最远的模型太近、远裁剪面又得拉到很远；把灯放到
+ * 「半径的 1.2 倍」之外，整只盒子就都落在灯前方，near/far 只用跟着半径走。
+ */
 const KEY_LIGHT_DISTANCE = 12
 
 /** 补光固定放在主光的对立侧，避免和太阳方向联动后失去补光作用 */
 const FILL_LIGHT_POSITION = new Vector3(-6, -3, -5)
 
-/** 阴影正交相机的远处裁剪面 */
-const SHADOW_CAMERA_FAR = 100
+/**
+ * 主光到圆心有多远。
+ *
+ * 平行光的方向只由「位置 → target」决定，所以把这个距离放大**不会改变
+ * 光线方向**，只让阴影相机站得更高、把整只盒子放进裁剪范围里。
+ */
+const keyLightDistance = computed(() =>
+  Math.max(KEY_LIGHT_DISTANCE, props.shadowCameraHalf * 1.2),
+)
+
+/**
+ * 阴影正交相机的远裁剪面。
+ *
+ * 覆盖半径变大之后固定 100 会切掉盒子的远端（模型仍在盒子里，
+ * 但因为超出相机远平面而不产生深度，影子整片消失）。按「灯到圆心的距离 +
+ * 圆的直径 + 余量」给，任何半径下都够。
+ */
+const shadowCameraFar = computed(() => keyLightDistance.value + props.shadowCameraHalf * 2 + 10)
 
 /**
  * 主光方向由太阳角度推导，而不是写死一个坐标。
  *
  * 用和 cientos 的 Sky 完全相同的球坐标公式，天空里的太阳和投影方向才对得上；
  * 否则调了高度角会看到"太阳在这里、影子朝那边"。
+ *
+ * 位置 = 圆心 + 方向 × 距离。**方向那一项与圆心无关**：把圆心挪到场景中心
+ * 只是让阴影相机照着那里，太阳的高度角与方位角读出来还是配置里那两个数。
  */
 const keyLightPosition = computed(() =>
   new Vector3()
@@ -110,8 +145,19 @@ const keyLightPosition = computed(() =>
       MathUtils.degToRad(90 - props.elevation),
       MathUtils.degToRad(props.azimuth),
     )
-    .multiplyScalar(KEY_LIGHT_DISTANCE),
+    .multiplyScalar(keyLightDistance.value)
+    .add(new Vector3(props.shadowTarget[0], 0, props.shadowTarget[1])),
 )
+
+/**
+ * 主光注视的那只空 Object3D。
+ *
+ * `DirectionalLight` 的方向永远是「位置 → target」，而 target 默认是
+ * `new Object3D()`、**不在场景图里**：不给它一个能更新世界矩阵的落点，
+ * 改了位置也不生效。这里是模板里那只 `<TresObject3D>` 的引用，
+ * 下面那个 watcher 把它交给灯的 `target`。
+ */
+const keyTarget = shallowRef<Object3D | null>(null)
 
 /**
  * 用 `shallowRef` + 同名的模板 ref 属性，不用 `useTemplateRef`。
@@ -120,10 +166,33 @@ const keyLightPosition = computed(() =>
  * 读 `.value` 得到的是光源的只读代理，`light.shadow.map = null` 会被静默丢弃、
  * `light.shadow.camera.updateProjectionMatrix()` 一个数都写不进去
  * （dev 下逐元素报 `Set operation on key ... failed: target is readonly`）。
- * 这两条正是本组件唯二要命令式做的事，所以这里必须是裸对象。
+ * 这两条命令式写入正是本组件必须拿到裸对象的原因，所以这里必须是裸对象。
  * 名字要与模板上的 `ref="keyLight"` 逐字相同。
  */
 const keyLight = shallowRef<DirectionalLight | null>(null)
+
+/** 主光注视点的位置（只在地面上，`y = 0`） */
+const keyTargetPosition = computed(
+  () => new Vector3(props.shadowTarget[0], 0, props.shadowTarget[1]),
+)
+
+/**
+ * 把注视点交给主光。
+ *
+ * 两边都是模板 ref，谁先挂上说不准，所以放在一个 watcher 里等两边都就位。
+ * 没有这一步时 `<TresObject3D>` 只是一个躺在场景里不动的空节点，
+ * 主光仍盯着默认的原点——大场景里阴影相机整个偏到一边去。
+ */
+watch(
+  [keyLight, keyTarget],
+  () => {
+    const light = keyLight.value
+    const target = keyTarget.value
+    if (!light || !target) return
+    light.target = target
+  },
+  { immediate: true },
+)
 
 /**
  * 两处 three 不会自动帮我们做的事，必须手动补：
@@ -176,6 +245,12 @@ watch(
 
   <TresAmbientLight :intensity="ambientIntensity" />
 
+  <!--
+    主光注视的空节点。它必须在场景图里：`DirectionalLight.target` 的默认值
+    **不在场景里**，位置改了也不会有人更新它的世界矩阵。
+  -->
+  <TresObject3D ref="keyTarget" :position="keyTargetPosition" />
+
   <TresDirectionalLight
     ref="keyLight"
     :position="keyLightPosition"
@@ -190,7 +265,7 @@ watch(
     :shadow-camera-top="shadowCameraHalf"
     :shadow-camera-bottom="-shadowCameraHalf"
     :shadow-camera-near="0.5"
-    :shadow-camera-far="SHADOW_CAMERA_FAR"
+    :shadow-camera-far="shadowCameraFar"
   />
 
   <TresDirectionalLight :position="FILL_LIGHT_POSITION" :intensity="fillIntensity" />

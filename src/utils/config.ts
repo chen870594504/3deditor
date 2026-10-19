@@ -232,7 +232,17 @@ export const DEFAULT_SCENE_CONFIG: SceneConfig = {
     rayleigh: 3,
     mieCoefficient: 0.005,
     mieDirectionalG: 0.7,
-    ambientIntensity: 1.8,
+    /**
+     * 环境光从 1.8 降到 0.9。
+     *
+     * 1.8 配上 2.2 的主光时，**受光面与背光面的亮度差不到两倍**：阴影确实在渲染、
+     * 深度图上也有，可看上去就是一片发白、没有影子（用户拿老项目对比时说的
+     * 「光影区别太大」「怎么调太阳都没有阴影」有一半是这一条）。
+     * 降到 0.9 之后背光面仍看得清，而影子里的区域落到受光面的一半以下，
+     * 方向感才出得来。这是**观感**的默认值，不是物理上的天空光强度；
+     * 想要更硬的影子把主光调高、想要更平把环境光调回去，右栏都能改。
+     */
+    ambientIntensity: 0.9,
     keyIntensity: 2.2,
     fillIntensity: 0.7,
     environment: '',

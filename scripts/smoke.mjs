@@ -36,9 +36,11 @@ import {
 import { MAX_COUNT, MAX_PARTS, parseModelParts, placeModelParts } from '../dist/index.js'
 import {
   CELL_SIZE,
+  DEFAULT_SHADOW_HALF,
   DEFAULT_WALL_HEIGHT,
   DEFAULT_WALL_THICKNESS,
   cloneFloorplanPatch,
+  computeShadowBounds,
   createFloorplanConfig,
   openingFaceOversized,
   openingFaceUnusable,
@@ -99,6 +101,10 @@ check('具名导出齐全', () => {
   assert(typeof assetManifestUrl === 'function', 'assetManifestUrl 不是函数')
   assert(typeof parseAssetManifest === 'function', 'parseAssetManifest 不是函数')
   assert(typeof assetIconUrl === 'function', 'assetIconUrl 不是函数')
+  // 阴影相机的覆盖范围。它错了**不报错**：范围小了，场景边缘的模型怎么调太阳
+  // 都没有影子，看上去只像「阴影没开」。
+  assert(typeof computeShadowBounds === 'function', 'computeShadowBounds 不是函数')
+  assert(typeof DEFAULT_SHADOW_HALF === 'number', 'DEFAULT_SHADOW_HALF 缺失')
   return 'createThreeDMaker / useSceneStore / SceneViewer / resolveSceneSwitches 均存在'
 })
 
@@ -358,6 +364,86 @@ check('旧默认值没被动过', () => {
     'DEFAULT_SCENE_SWITCHES 没冻结：谁都能就地改掉所有宿主的默认行为',
   )
   return '工具栏默认开、三个交互开关默认关，且已冻结'
+})
+
+check('阴影正交相机罩得住整个场景', () => {
+  /**
+   * 这一组钉的是「所有模型都有影子」的前提：正交相机盒子外面的东西
+   * **既不投影也不接影**，而且不报错。早先半径写死 ±12，一栋四五十米的房子
+   * 只有正中间那一小块有影子，调太阳高度、方位都不会变。
+   *
+   * 纯算术，SSR 下够得着——画面本身仍然归目视清单。
+   */
+  const empty = { foundation: null, walls: [], openings: [], rooms: [] }
+  const emptyBounds = computeShadowBounds(empty, [])
+  assert(
+    emptyBounds.half === DEFAULT_SHADOW_HALF && emptyBounds.center[0] === 0,
+    `空场景该退回默认半径：${JSON.stringify(emptyBounds)}`,
+  )
+
+  // 20 × 12 的房子：半对角线是 √(10² + 6²) ≈ 11.66，加 2 米余量，
+  // 必须比写死的 12 大——这正是「大房子边缘没有影子」的那条边界
+  const house = {
+    foundation: { x: 0, z: 0, width: 20, depth: 12 },
+    walls: [],
+    openings: [],
+    rooms: [],
+  }
+  const houseBounds = computeShadowBounds(house, [])
+  assert(houseBounds.half > DEFAULT_SHADOW_HALF, `20×12 的地基没撑大阴影相机：${houseBounds.half}`)
+  assert(
+    Math.abs(houseBounds.center[0]) < 1e-9 && Math.abs(houseBounds.center[1]) < 1e-9,
+    `居中的场景圆心不该偏：${houseBounds.center}`,
+  )
+
+  // 圆心跟着内容走：整栋房子挪到 x = 100 时，贴着原点的盒子一个模型都罩不到
+  const farHouse = {
+    foundation: { x: 100, z: 0, width: 20, depth: 12 },
+    walls: [],
+    openings: [],
+    rooms: [],
+  }
+  const farBounds = computeShadowBounds(farHouse, [])
+  assert(
+    Math.abs(farBounds.center[0] - 100) < 1e-9,
+    `圆心没跟着场景挪：${farBounds.center[0]}（应当是 100）`,
+  )
+
+  // 墙也参与包围盒：地基很小、墙拉到很远时，半径要按墙来
+  const longWall = {
+    foundation: null,
+    walls: [
+      {
+        id: 'w',
+        start: [-30, 0],
+        end: [30, 0],
+        height: 3,
+        thickness: 0.2,
+      },
+    ],
+    openings: [],
+    rooms: [],
+  }
+  const wallBounds = computeShadowBounds(longWall, [])
+  assert(wallBounds.half >= 30, `60 米长的墙没撑大阴影相机：${wallBounds.half}`)
+
+  // 只有模型时：位置 + 按缩放估的足迹都要算进去。
+  // 两个模型分居 x = ±20，圆心应落回 0，半径要罩住两侧（含各自 3 米足迹）
+  const model = (x, z, scale) => ({
+    position: [x, 0, z],
+    scale: [scale, scale, scale],
+  })
+  const modelBounds = computeShadowBounds(empty, [model(20, 0, 2), model(-20, 0, 2)])
+  assert(
+    Math.abs(modelBounds.center[0]) < 1e-9,
+    `两侧有模型时圆心没落回中间：${modelBounds.center[0]}`,
+  )
+  assert(
+    modelBounds.half >= 23,
+    `远离原点的模型没撑大阴影相机：${modelBounds.half}（模型在 x = ±20，足迹 ±3）`,
+  )
+
+  return `空场景 ±${emptyBounds.half}；20×12 → ±${houseBounds.half.toFixed(2)}；远场景圆心 ${farBounds.center[0]}`
 })
 
 /**

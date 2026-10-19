@@ -161,6 +161,18 @@ export { viewModeOf } from './utils/viewMode'
 export type { ViewMode } from './utils/viewMode'
 
 /**
+ * 主光阴影正交相机该罩多大、罩在哪儿。
+ *
+ * 导出的理由与上面几组略有不同：宿主**不需要**自己调它（库会在
+ * `SceneContent` 里按当次配置算好并喂给主光），但它是一条「错了不报错」的算术——
+ * 半径写小时，场景边缘的模型**怎么转太阳都没有影子**，画面看上去只是「阴影坏了」。
+ * 这种算术必须能被 `scripts/smoke.mjs` 直接钉住，所以放进公开面。
+ */
+export { computeShadowBounds, DEFAULT_SHADOW_HALF } from './utils/shadowBounds'
+
+export type { ShadowBounds } from './utils/shadowBounds'
+
+/**
  * 编辑器素材的类型与读取入口。
  *
  * 类型随包导出，是因为宿主写 `createThreeDMaker({ assets })` 时就是照它们拼那份表。

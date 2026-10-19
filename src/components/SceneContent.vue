@@ -12,6 +12,7 @@ import SceneShadows from './SceneShadows.vue'
 import SceneSkybox from './SceneSkybox.vue'
 import SceneSun from './SceneSun.vue'
 import { viewModeOf } from '../utils/viewMode'
+import { computeShadowBounds } from '../utils/shadowBounds'
 import { normalizeThumbnailSize, renderModelThumbnail } from '../utils/modelThumbnail'
 import type {
   CameraChangePayload,
@@ -854,6 +855,31 @@ const shadowCatcher = computed(
 )
 
 /**
+ * 阴影正交相机该罩住的圆。
+ *
+ * **必须跟着内容走，不能写死 ±12**：正交相机的盒子就是「哪里有影子」的边界，
+ * 盒子外的模型既不投影也不接影，而且不报错——表现是「小场景好好的，整栋房子
+ * 一摆进来就只剩中间一小块有影子，太阳怎么转都没用」。算法与理由在
+ * `utils/shadowBounds.ts` 的文件头。
+ *
+ * 配置一变就重算（模型位置、墙、地基都在里面），不需要等 glTF 加载：
+ * 模型按位置与缩放估足迹，加载完也不会再改阴影相机。
+ */
+const shadowBounds = computed(() => computeShadowBounds(props.floorplan, props.models))
+
+/**
+ * 阴影贴图分辨率跟着覆盖范围走。
+ *
+ * 半径从 12 涨到 25 时，同一张 1024² 贴图每像素覆盖的面积翻了四倍多，
+ * 影子边缘会糊成一团灰雾——看起来与「没有影子」很像。覆盖范围超过一个
+ * 「1024 还够用」的门槛就自动抬到 2048；用户在配置里填得更高时**不往下压**，
+ * 那是他自己选的代价。
+ */
+const shadowMapSize = computed(() =>
+  Math.max(props.shadow.mapSize, shadowBounds.value.half > 16 ? 2048 : 0),
+)
+
+/**
  * 户型图的墙与地基也参与同一张阴影贴图。
  *
  * **不传这两个布尔量时，户型图在 `map` 档下就是「只挡光、不投影、也不接影」**：
@@ -945,7 +971,9 @@ function receiveShadowOf(model: ModelConfig): boolean {
     :environment="sun.environment"
     :has-skybox="sun.skybox !== null"
     :cast-shadow="keyCastShadow"
-    :shadow-map-size="shadow.mapSize"
+    :shadow-target="shadowBounds.center"
+    :shadow-camera-half="shadowBounds.half"
+    :shadow-map-size="shadowMapSize"
     :shadow-bias="shadow.bias"
     :shadow-normal-bias="shadow.normalBias"
   />

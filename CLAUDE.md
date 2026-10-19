@@ -43,7 +43,7 @@ pnpm preview      # 预览构建产物
 几条容易踩的：
 
 - **没有 lint / formatter 配置**（无 ESLint / Prettier / Biome / EditorConfig）。不要凭空引入，也不要假设某个风格工具会兜住格式问题。
-- **没有测试框架**。`scripts/smoke.mjs` 是唯一的自动化测试，且**不支持筛选用例**——一次跑全部 115 条。想单点验证某个纯函数，写一个临时 node 脚本 `import('../dist/index.js')`（必须先 `pnpm build:only`），用完删掉。
+- **没有测试框架**。`scripts/smoke.mjs` 是唯一的自动化测试，且**不支持筛选用例**——一次跑全部 116 条。想单点验证某个纯函数，写一个临时 node 脚本 `import('../dist/index.js')`（必须先 `pnpm build:only`），用完删掉。
 - `pnpm smoke` 读的是 `dist/index.js`，改完 `src/` 不重新构建就测的是旧产物。
 - **验证 playground 构建必须另给 outDir**。仓库没有 `build:playground` 脚本，裸跑 `vite build` 会用默认 `outDir: dist` **覆盖库产物**。正确做法：
 
@@ -246,7 +246,7 @@ host 这一层。
 
 ## 验证到哪一步（不要补的测试）
 
-`pnpm verify` 的 115 条断言**跑在 SSR 下**（`createSSRApp` + `renderToString`），
+`pnpm verify` 的 116 条断言**跑在 SSR 下**（`createSSRApp` + `renderToString`），
 而 `TresCanvas` 的 children 在 SSR 下根本不渲染。所以下列内容**测不到**，
 不要为它们补冒烟用例（只会得到一条永远为真的断言）：
 
@@ -290,7 +290,7 @@ host 这一层。
 | 文件 | 读者 | 内容 |
 |---|---|---|
 | `README.md` | 用这个库的宿主 | **一份精简卡片（≤80 行）**：一句话简介、安装、快速开始、三条核心概念、props / 事件 / 对外方法三张表 |
-| `DESIGN.md` | 改这个仓库的人 | 编辑器的设计、**62 条编号设计决定**、167 条**目视清单**、目录结构、发布流程、待办 |
+| `DESIGN.md` | 改这个仓库的人 | 编辑器的设计、**63 条编号设计决定**、168 条**目视清单**、目录结构、发布流程、待办 |
 
 `README.md` 是一份**面向宿主的用法卡片**，结构是固定的（**总长 ≤80 行**）：一句话简介 →
 安装（一条命令）→ 快速开始（一个最小示例）→ 核心概念（最多 3 条）→ props / 事件 / 对外方法
