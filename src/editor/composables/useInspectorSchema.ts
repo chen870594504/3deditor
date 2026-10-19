@@ -981,7 +981,7 @@ export function createInspectorTabs(): InspectorTabDef[] {
               path: 'shadow.type',
               options: SHADOW_TYPE_OPTIONS,
               when: (config) => config.shadow.enabled,
-              hint: '下面只显示当前方式的那一组参数——三种方式各有一套，互不通用',
+              hint: '接触阴影 / 累积阴影由场景自身深度烘焙，不跟随太阳高度与方位；要跟着日照方向走的投影选 Shadow Map。下面只显示当前方式的那一组参数',
             },
             /*
              * 全局阴影总闸。这一对原先挂在「模型属性」页里，标签就叫「投射阴影」——

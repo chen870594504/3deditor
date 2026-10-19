@@ -39,6 +39,9 @@ const props = defineProps<{
    * 相机。给出处的完整理由写在 `SceneFloorplanWallBox.vue` 的 `planWall` 那段。
    */
   plan?: boolean
+  /** 是否投射 / 接收阴影（只有 Shadow Map 方式为真，判据在 `SceneContent`） */
+  castShadow?: boolean
+  receiveShadow?: boolean
 }>()
 
 /**
@@ -91,5 +94,7 @@ const boxes = computed(() =>
     :size="box.size"
     :role="box.role"
     :plan="plan"
+    :cast-shadow="castShadow"
+    :receive-shadow="receiveShadow"
   />
 </template>

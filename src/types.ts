@@ -5,6 +5,7 @@ import type { EditorHooks } from './editor/hooks'
 import type { IconPath } from './editor/composables/useInspectorSchema'
 import type { ExtraLibrarySection } from './editor/composables/useModelLibrary'
 import type { ModelPartsResult } from './utils/modelParts'
+import type { ViewMode } from './utils/viewMode'
 
 /**
  * 天空盒的六个面。
@@ -817,6 +818,25 @@ export interface SceneViewerProps {
    * 运行中改它时界面会跟着变，但清单与分类图标不会补发请求（见 DESIGN.md 设计决定 57）。
    */
   mode?: SceneViewerMode
+
+  /**
+   * 初始视角档位：一进页面是 **2D 俯视**还是 **3D 透视**。
+   *
+   * - **不传** —— 不碰机位，用场景配置里那一份。`initialScene` 里存的 2D 机位
+   *   会原样还原（与这个 prop 出现之前逐字相同）。这是「默认值」只能是
+   *   `undefined` 而不是 `'3d'` 的原因：写成 `'3d'` 会把宿主保存的俯视机位
+   *   悄悄抹掉，而且不报错。
+   * - `'2d'` —— 初始场景落地之后切到正上方俯视（与编辑器右上角那枚 2D 按钮
+   *   **同一条实现**：原点正上方、固定高度、关旋转、地面无限延伸）。
+   * - `'3d'` —— 初始场景若落在 2D 档就切回透视；本来就是 3D 则什么都不做。
+   *
+   * 它是**初始档位**，不是受控绑定：只在挂载时、以及 `initialScene` 第一次
+   * 拿到非空值之后应用一次。之后用户在画布上转视角、在右栏改机位都不会被它拉回去。
+   * 初始那一下**不留历史、不推日志**——它是页面打开时的样子，不是一次操作。
+   *
+   * `mode="model"` 下忽略：模型编辑页中栏固定 3D，也没有 2D / 3D 切换按钮。
+   */
+  defaultViewMode?: ViewMode
 
   /** 是否自动旋转视角，默认 false */
   autoRotate?: boolean

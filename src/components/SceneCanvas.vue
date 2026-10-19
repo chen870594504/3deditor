@@ -160,6 +160,28 @@ const isTransparent = computed(() => scene.background === 'transparent')
 const clearColor = computed(() => (isTransparent.value ? '#000000' : scene.background))
 
 /**
+ * 预览态**强制收起地面网格**。
+ *
+ * 网格是编辑时的量尺（对齐、读格距），不是场景内容；预览是「看成品」，
+ * 把它留在画面上等于把编辑器的辅助线一起交出去。
+ *
+ * 判据用 `props.editable === false` 而不是 `!props.editable`：**不传**
+ * （旧默认）那一档仍带内置工具栏，它是「画布态」而不是「预览态」，
+ * 行为要与 `editable` 出现之前逐字一致（见 `resolveSceneSwitches` 那条三级规则）。
+ * 编辑器进预览时 `EditorStage` 传的就是 `:editable="!previewMode"`，公开面
+ * 写 `:editable="false"` 也是预览（见 `SceneViewerProps`），一条判据同时管住两处。
+ *
+ * 只压 `visible`，不动 `ground` 里其余字段，也**不写回配置**：预览是显示层的
+ * 临时状态，进不了配置、也进不了历史；退出预览后网格必须原样回来。
+ * 承影面（`shadowCatcher`）不跟着消失——它接的是影子，影子是场景内容。
+ */
+const groundForCanvas = computed(() =>
+  props.editable === false
+    ? { ...scene.config.ground, visible: false }
+    : scene.config.ground,
+)
+
+/**
  * 任何一类阴影都要打开 renderer.shadowMap。
  *
  * 接触阴影与累积阴影虽然是自己渲染到独立 target 的，
@@ -432,7 +454,7 @@ defineExpose<SceneViewerApi>({
         :models="scene.config.models"
         :floorplan="scene.config.floorplan"
         :camera="scene.config.camera"
-        :ground="scene.config.ground"
+        :ground="groundForCanvas"
         :sun="scene.config.sun"
         :shadow="scene.config.shadow"
         :camera-transition="cameraTransition"

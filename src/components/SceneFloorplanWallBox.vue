@@ -37,6 +37,16 @@ const props = defineProps<{
    * 只有 `wall` 这一个 role 会因此改变，见下面 `planWall` 那段。
    */
   plan?: boolean
+  /**
+   * 是否投射 / 接收阴影（只有 Shadow Map 方式为真，判据在 `SceneContent`）。
+   *
+   * 这两个标记对 `MeshBasicMaterial`（2D 档的实色墙）里「接收」那一半不起作用
+   * ——Basic 材质不参与光照——但「投射」那一半照常：深度图渲的是几何，
+   * 不看材质。所以 2D 档开 `map` 时墙依然会投出影子，这是可接受的：
+   * 那一档本来就是俯视看影子往哪边落。
+   */
+  castShadow?: boolean
+  receiveShadow?: boolean
 }>()
 
 /**
@@ -122,7 +132,12 @@ const planWall = computed<string | null>(() => {
 </script>
 
 <template>
-  <TresMesh :position="position" :rotation="rotation">
+  <TresMesh
+    :position="position"
+    :rotation="rotation"
+    :cast-shadow="castShadow"
+    :receive-shadow="receiveShadow"
+  >
     <TresBoxGeometry :args="size" />
     <!--
       平面图那一档：`MeshBasicMaterial` 是**不受光**的，颜色就是屏幕上那个颜色。

@@ -43,7 +43,7 @@ pnpm preview      # 预览构建产物
 几条容易踩的：
 
 - **没有 lint / formatter 配置**（无 ESLint / Prettier / Biome / EditorConfig）。不要凭空引入，也不要假设某个风格工具会兜住格式问题。
-- **没有测试框架**。`scripts/smoke.mjs` 是唯一的自动化测试，且**不支持筛选用例**——一次跑全部 114 条。想单点验证某个纯函数，写一个临时 node 脚本 `import('../dist/index.js')`（必须先 `pnpm build:only`），用完删掉。
+- **没有测试框架**。`scripts/smoke.mjs` 是唯一的自动化测试，且**不支持筛选用例**——一次跑全部 115 条。想单点验证某个纯函数，写一个临时 node 脚本 `import('../dist/index.js')`（必须先 `pnpm build:only`），用完删掉。
 - `pnpm smoke` 读的是 `dist/index.js`，改完 `src/` 不重新构建就测的是旧产物。
 - **验证 playground 构建必须另给 outDir**。仓库没有 `build:playground` 脚本，裸跑 `vite build` 会用默认 `outDir: dist` **覆盖库产物**。正确做法：
 
@@ -94,7 +94,7 @@ SceneCanvas.vue  由合并后的 SceneViewer.vue 改名而来，收窄成**内�
      ↑
 SceneEditor.vue  三栏工作台 = SidePanel | EditorStage | InspectorPanel + 事件绑定弹窗
      ↑
-SceneViewer.vue  公开面：十一个 prop（editable / mode / height / autoRotate / draco / initialScene / sideTabs / inspectorTabs / extraSections / assetBaseUrl / iconBaseUrl）
+SceneViewer.vue  公开面：十二个 prop（editable / mode / defaultViewMode / height / autoRotate / draco / initialScene / sideTabs / inspectorTabs / extraSections / assetBaseUrl / iconBaseUrl）
 ```
 
 `SceneCanvas` 里面才是 `SceneContent`（`TresCanvas` 内部，组装各 `Scene*` + 相机 + 控制器 +
@@ -246,7 +246,7 @@ host 这一层。
 
 ## 验证到哪一步（不要补的测试）
 
-`pnpm verify` 的 114 条断言**跑在 SSR 下**（`createSSRApp` + `renderToString`），
+`pnpm verify` 的 115 条断言**跑在 SSR 下**（`createSSRApp` + `renderToString`），
 而 `TresCanvas` 的 children 在 SSR 下根本不渲染。所以下列内容**测不到**，
 不要为它们补冒烟用例（只会得到一条永远为真的断言）：
 
@@ -263,6 +263,9 @@ host 这一层。
 - **宿主面板页的正文**：那一页点开才渲染，而 SSR 里点不了。能断言的只有「那一格进了导轨」
   （`aria-label` 在不在、分隔线在不在）；正文到不到得了、点回内置页会不会留下空白，
   全归目视清单 147-151。
+- **`defaultViewMode` 的实际切档**：应用点在 `onMounted` 与 `initialScene` 落笔之后，
+  SSR 两处都不跑；冒烟只能断「它确实是个声明过的 prop」（HTML 里没有
+  `defaultviewmode` 属性，与 `iconBaseUrl` 同形）。真实画面归目视清单 165。
 - **去服务器读那份清单**：`index.json` 是在 `onMounted` 里 `fetch` 的，SSR 不跑 `onMounted`，
   所以整条路一行断言都盖不到。冒烟能断的只有两头的纯函数（`assetManifestUrl` 拼得对、
   `parseAssetManifest` 认得那份格式）与「库里不再内置任何条目」。
@@ -287,7 +290,7 @@ host 这一层。
 | 文件 | 读者 | 内容 |
 |---|---|---|
 | `README.md` | 用这个库的宿主 | **一份精简卡片（≤80 行）**：一句话简介、安装、快速开始、三条核心概念、props / 事件 / 对外方法三张表 |
-| `DESIGN.md` | 改这个仓库的人 | 编辑器的设计、**58 条编号设计决定**、164 条**目视清单**、目录结构、发布流程、待办 |
+| `DESIGN.md` | 改这个仓库的人 | 编辑器的设计、**62 条编号设计决定**、167 条**目视清单**、目录结构、发布流程、待办 |
 
 `README.md` 是一份**面向宿主的用法卡片**，结构是固定的（**总长 ≤80 行**）：一句话简介 →
 安装（一条命令）→ 快速开始（一个最小示例）→ 核心概念（最多 3 条）→ props / 事件 / 对外方法

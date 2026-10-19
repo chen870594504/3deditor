@@ -386,11 +386,17 @@ const boxes = computed(() =>
     >
       <TresGroup :position="node.offset" :scale="node.scale">
         <!--
-          不设 cast-shadow / receive-shadow：与墙那侧完全一致（今天户型图这一支
-          一处都没有），`<primitive>` 不做遍历，clone 进来的网格保持 glTF 默认的
-          `castShadow = false`。**顺带记一笔**：真要让洞口那一件投影，只改这里的
-          castShadow 不够——户型图不在 `SceneContent` 的烘焙 key 里，深度图不会重烘，
-          影子永远缺。
+          不设 cast-shadow / receive-shadow：门 / 窗那一件**刻意不参与**阴影，
+          而墙那一侧（灰盒子与贴面砖）在 Shadow Map 下是既投又收的。
+
+          理由是「可见收益近似为零、代价却是一处新的判据」：洞口的轮廓已经由
+          `wallPieces()` 切出来的墙段（含过梁）决定了影子形状，门扇薄、玻璃透，
+          再给它们投影只会让洞口里多一圈边；而它们贴墙安装，接收阴影也看不出来。
+          属性面板里那对开关管的是**模型**，管不到户型图这一支。
+
+          **这一条只对 Shadow Map 成立。** 真要让洞口那一件在 contact / accumulative
+          下也投影，只改这里的标记不够——户型图不在 `SceneContent` 的烘焙 key 里，
+          深度图不会重烘，影子永远缺（map 不走烘焙，不受这条限制）。
         -->
         <primitive :object="node.object" />
       </TresGroup>

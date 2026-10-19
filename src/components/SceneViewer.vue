@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed, provide, useTemplateRef, watch } from 'vue'
+import { computed, onMounted, provide, useTemplateRef, watch } from 'vue'
 import SceneCanvas from './SceneCanvas.vue'
 import SceneEditor from '../editor/components/SceneEditor.vue'
 import { EDITOR_ASSETS_KEY, useEditorAssets } from '../editor/assets'
 import { useSceneStore } from '../stores/scene'
+import { setViewMode } from '../editor/composables/useViewMode'
+import { viewModeOf } from '../utils/viewMode'
 import {
   INSPECTOR_TAB_PREFIX,
   SIDE_TAB_PREFIX,
@@ -60,6 +62,12 @@ const props = withDefaults(defineProps<SceneViewerProps>(), {
   autoRotate: false,
   draco: false,
   /*
+    `defaultViewMode` 也必须显式写 `undefined`——这里的「不传」是有语义的：
+    **不碰机位**，让场景配置（`initialScene` 带来的那份）说了算。
+    给它默认 `'3d'` 会把宿主保存的 2D 俯视机位悄悄抹掉，而且不报错。
+  */
+  defaultViewMode: undefined,
+  /*
     `initialScene` 也显式写 `undefined`：它没有合理的默认值，而「宿主到底传没传」
     本身就是要紧的——下面那个一次性 watcher 只在**第一次拿到非空值**时落笔。
   */
@@ -115,6 +123,48 @@ const isEditor = computed(() => props.editable === true || props.mode === 'model
 watch(() => props.autoRotate, (value) => { scene.autoRotate = value }, { immediate: true })
 watch(() => props.draco, (value) => { scene.patchModel({ draco: value }) }, { immediate: true })
 
+/*
+  初始视角档位（`defaultViewMode`）。
+
+  它复用编辑器那枚 2D / 3D 按钮的实现（`setViewMode`），**不在这里另写一份机位算术**：
+  「2D 是原点正上方多高、收紧哪两条权限、地面要不要无限」一旦有两份，
+  两份悄悄不一致时表现只是「默认 2D 与按一下 2D 长得不一样」，没有任何报错。
+
+  应用时机有两处，见 `defaultViewApplied` 那个闸门：
+  - 挂载时（下面的 `onMounted`）；
+  - `initialScene` 每次落笔之后（下面那个 watcher）——数据可以晚到，
+    先落下的默认机位会被整份场景盖掉，所以要让默认档位跟着这份场景再对齐一次。
+*/
+let defaultViewApplied = false
+
+async function applyDefaultViewMode(): Promise<void> {
+  if (defaultViewApplied) return
+
+  const target = props.defaultViewMode
+  if (!target) return
+
+  /*
+    `mode="model"` 下忽略：模型编辑页中栏固定 3D、也没有 2D / 3D 按钮，
+    切到 2D 会让用户困在俯视图里（`EditorStage` 的 onMounted 刚把它切回 3D，
+    这里再切回去还会白留一条历史）。
+  */
+  if (props.mode === 'model') return
+
+  defaultViewApplied = true
+  if (viewModeOf(scene.config.camera) === target) return
+
+  await setViewMode(target, { silent: true })
+  /*
+    初始档位是**页面打开时的样子**，不是一次操作：`setViewMode` 那一步会带 label
+    提交一条历史，不清掉的话宿主刚进页面按一次 ⌘Z，就退回一个用户从未见过的机位。
+    （`initialScene` 的装载本来就会清历史；这里再清一次是为了让两种起点都统一成
+    「初始状态」，而不是「初始状态 + 一条切换记录」。）
+  */
+  scene.clearHistory()
+}
+
+onMounted(() => { void applyDefaultViewMode() })
+
 /**
  * `initialScene`：挂载时装载一份场景数据，**只装一次**。
  *
@@ -141,6 +191,13 @@ watch(
     if (initialSceneApplied || !value) return
     initialSceneApplied = true
     scene.loadSceneData(value)
+    /*
+      默认档位跟着这份初装场景再对齐一次。数据晚到时，`onMounted` 已经按空场景的
+      机位落过一次；不重置闸门的话，默认 2D / 3D 会停在旧机位上，随后被整份场景
+      无声地覆盖——用户看到的第一个画面就不是他要求的档位。
+    */
+    defaultViewApplied = false
+    void applyDefaultViewMode()
   },
   { immediate: true },
 )

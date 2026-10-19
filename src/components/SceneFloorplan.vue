@@ -58,6 +58,19 @@ const props = defineProps<{
    * 不一致的表现是「按钮亮着 2D、墙却铺着贴面」，看起来只是渲染错了。
    */
   plan?: boolean
+  /**
+   * 是否投射 / 接收阴影。
+   *
+   * 由 `SceneContent` 判定后往下传（它同时看总闸、实现方式与两个全局开关），
+   * 这一层与下面各层只负责原样转发——**判据不能再在这里写一遍**：两处各写一份
+   * 判据时，「墙投射影子而地基不接」这种半开状态会安静地出现。
+   *
+   * 只有 `map` 方式会为真（理由见设计决定 10：另外两种不走逐对象的这两个标记）。
+   * 门 / 窗那一支**刻意不接**这两个 prop，原因写在
+   * `SceneFloorplanOpeningModel.vue` 的模板注释里。
+   */
+  castShadow?: boolean
+  receiveShadow?: boolean
 }>()
 
 /**
@@ -160,7 +173,11 @@ const openingModels = computed<
 </script>
 
 <template>
-  <SceneFloorplanFoundation v-if="floorplan.foundation" :foundation="floorplan.foundation" />
+  <SceneFloorplanFoundation
+    v-if="floorplan.foundation"
+    :foundation="floorplan.foundation"
+    :receive-shadow="receiveShadow"
+  />
 
   <!--
     房间与墙的 key 都用各自配置里的 id，不用下标：中间删掉一个时，
@@ -186,6 +203,8 @@ const openingModels = computed<
     :walls="group.walls"
     :openings="floorplan.openings"
     :plan="plan"
+    :cast-shadow="castShadow"
+    :receive-shadow="receiveShadow"
   />
 
   <!--
@@ -198,6 +217,8 @@ const openingModels = computed<
     :wall="wall"
     :openings="floorplan.openings"
     :plan="plan"
+    :cast-shadow="castShadow"
+    :receive-shadow="receiveShadow"
   />
 
   <!--

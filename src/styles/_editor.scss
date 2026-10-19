@@ -1074,6 +1074,15 @@
 /*
   按钮与手柄条**共用一条选择器**：三件浮在画面上的控件，形状、字号、
   悬停与选中色必须逐像素一致，分开写迟早漂移。只有 min-width 各写各的。
+
+  常态字色取 `--tdm-text-hi`（近白）而不是 `--tdm-text-lo`：这三处的文案
+  只有两个汉字（「地基」「画墙」「移动」「旋转」）或两个字母（「2D」「3D」），
+  字号 11px，而底是 0.82 的黑——`--tdm-text-lo`（#5b6675）在那个底上笔画会糊成
+  一片，用户报的就是「看不清」。悬停提到纯白，保住「比常态更亮」这条方向；
+  选中态仍是琥珀实底 + 墨色字，不受影响。
+
+  三处一起改而不是只提「地基」与「2D」：它们共用这条规则，只挑两处提亮会让
+  「三件控件逐像素一致」这条前提悄悄失效（盯不出来，但已经不是同一个形状了）。
 */
 .tdm-gizmo-btn,
 .tdm-view-btn,
@@ -1086,13 +1095,15 @@
   font-family: var(--tdm-font-ui);
   font-size: 11px;
   line-height: 1.4;
-  color: var(--tdm-text-lo);
+  color: var(--tdm-text-hi);
   cursor: pointer;
   user-select: none;
   pointer-events: auto;
   transition: color var(--tdm-t-fast) var(--tdm-ease), background var(--tdm-t-fast) var(--tdm-ease);
   &:hover {
-    color: var(--tdm-text);
+    /* 比 --tdm-text-hi 再亮一档：没有别的变化可做（背景留给选中态），
+       悬停若反而变暗，读起来就是「点上去反而看不清了」 */
+    color: #fff;
   }
 }
 /*

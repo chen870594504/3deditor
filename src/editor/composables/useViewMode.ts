@@ -138,8 +138,15 @@ let savedPose: SavedPose | null = null
  * 在 3D 里点 3D 不该把已经转好的视角推回上一个记录点。
  *
  * 是 `async` 的，只为了切到 2D 那一步要等一个渲染帧，理由见下面那段注释。
+ *
+ * `silent` 只给「初始档位」那一条路用（`SceneViewer` 的 `defaultViewMode`）：
+ * 页面一打开就是 2D / 3D 这件事**不是一次操作**，不该在控制台里留下一条
+ * 「已切换…」的回执。机位算术与历史语义仍走同一条实现，不因为少一行日志分叉。
  */
-export async function setViewMode(mode: ViewMode): Promise<void> {
+export async function setViewMode(
+  mode: ViewMode,
+  options: { silent?: boolean } = {},
+): Promise<void> {
   const scene = useSceneStore()
   if (viewModeOf(scene.config.camera) === mode) return
 
@@ -230,7 +237,9 @@ export async function setViewMode(mode: ViewMode): Promise<void> {
       '切换到 2D 俯视视角',
     )
 
-    pushEvent(`已切换到 2D 俯视视角（原点正上方 ${distance.toFixed(1)}）`)
+    if (!options.silent) {
+      pushEvent(`已切换到 2D 俯视视角（原点正上方 ${distance.toFixed(1)}）`)
+    }
     return
   }
 
@@ -274,5 +283,5 @@ export async function setViewMode(mode: ViewMode): Promise<void> {
     { camera: { position, ...lock }, ground: { infiniteGrid } },
     '切回 3D 透视视角',
   )
-  pushEvent('已切回 3D 透视视角')
+  if (!options.silent) pushEvent('已切回 3D 透视视角')
 }

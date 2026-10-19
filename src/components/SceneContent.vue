@@ -842,6 +842,33 @@ const keyCastShadow = computed(
 )
 
 /**
+ * Shadow Map 的承影面什么时候出现。
+ *
+ * 与主光的投影**不是同一个判据**：接触 / 累积阴影自带承影面，只有 `map` 这一档
+ * 需要 `SceneGround` 铺一块（理由写在那边的 `shadowCatcher` 上）。这里额外要求
+ * 全局的「接收阴影」——那个开关表达的是「场景要不要接影子」，承影面正是它的落点，
+ * 关掉之后连面都不该留下。
+ */
+const shadowCatcher = computed(
+  () => props.shadow.enabled && props.shadow.type === 'map' && props.shadow.receiveShadow,
+)
+
+/**
+ * 户型图的墙与地基也参与同一张阴影贴图。
+ *
+ * **不传这两个布尔量时，户型图在 `map` 档下就是「只挡光、不投影、也不接影」**：
+ * 地基板顶面是场景里最像地面的东西，模型摆进去之后影子全落在它上面，而它不接影
+ * 就一片都不显示；墙投射的影子则是「太阳一低整间屋子该暗下来」的那一层。
+ *
+ * 只在 `map` 档为真：另外两种方式不看逐对象的这两个标记（见设计决定 10），
+ * 传了也不会多出影子，反倒会让墙那条线误以为该做些什么。
+ */
+const floorplanCastShadow = keyCastShadow
+const floorplanReceiveShadow = computed(
+  () => props.shadow.enabled && props.shadow.type === 'map' && props.shadow.receiveShadow,
+)
+
+/**
  * 模型自己的阴影开关是叠加在全局之上的第二道闸。
  *
  * 全局那两个字段表达的是「这个场景要不要阴影」，物体级表达的是
@@ -933,6 +960,7 @@ function receiveShadowOf(model: ModelConfig): boolean {
 
   <SceneGround
     :visible="ground.visible"
+    :shadow-catcher="shadowCatcher"
     :size="ground.size"
     :cell-size="ground.cellSize"
     :cell-thickness="ground.cellThickness"
@@ -957,7 +985,12 @@ function receiveShadowOf(model: ModelConfig): boolean {
     空配置渲染不出任何东西（v-for 空转、foundation 为 null），
     与 `models: []` 的空场景是同一套处理。
   -->
-  <SceneFloorplan :floorplan="floorplan" :plan="planView" />
+  <SceneFloorplan
+    :floorplan="floorplan"
+    :plan="planView"
+    :cast-shadow="floorplanCastShadow"
+    :receive-shadow="floorplanReceiveShadow"
+  />
 
   <SceneShadows
     v-if="shadow.enabled"

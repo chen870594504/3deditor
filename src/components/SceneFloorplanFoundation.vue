@@ -12,6 +12,18 @@ defineOptions({ name: 'TdmSceneFloorplanFoundation' })
  */
 const props = defineProps<{
   foundation: FloorplanFoundation
+  /**
+   * 是否接收阴影（只有 Shadow Map 方式为真，判据在 `SceneContent` 与
+   * `SceneFloorplan` 两层之外，这里只负责落到网格上）。
+   *
+   * **地基只需要「接」，不需要「投」**：它是一块沉在地面下的板子，
+   * 投出去的影子全被它自己的顶面盖住，没有任何可见效果。
+   *
+   * 不写的时候是 `false`（Vue 对缺失的布尔 prop 就是如此），于是空场景里
+   * 模型影子会穿过这块板掉到更下面的承影面上——那正是「有地基的房子看不见影子」
+   * 的那一类现象，开 `map` 时这个 prop 必须为真。
+   */
+  receiveShadow?: boolean
 }>()
 
 /**
@@ -61,7 +73,7 @@ const boxPosition = computed(
 </script>
 
 <template>
-  <TresMesh :position="boxPosition">
+  <TresMesh :position="boxPosition" :receive-shadow="receiveShadow">
     <TresBoxGeometry :args="boxArgs" />
     <!--
       `polygonOffset` 是这块板子**不跟网格线打架**的真正原因（见 `TOP_GAP` 的注释）：

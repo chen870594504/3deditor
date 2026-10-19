@@ -104,6 +104,21 @@ const props = defineProps<{
    * **关掉贴面那一路**，让整组落到下面的退回路上去，原因见文件头那一段。
    */
   plan?: boolean
+  /**
+   * 是否投射 / 接收阴影（只有 Shadow Map 方式为真，判据在 `SceneContent`）。
+   *
+   * **贴面墙必须逐网格设置，`<primitive cast-shadow>` 不管用**：TresJS 对
+   * `<primitive>` 注入的对象不做遍历，写在组件上的标记只落在外层 Group 上，
+   * 而 three 的阴影判定是逐对象的、不继承（设计决定 10 在模型那条路上记的是同一件事）。
+   * 所以这两个值进 `tileObject()`，在**克隆出来的那棵树上**逐个网格写。
+   *
+   * 写进去之后不需要 `material.needsUpdate`：clone 是这一刻新建的，
+   * 第一次渲染时程序按新标记编译；而材质与别的砖共享，强行 bump 会让整组一起重编译。
+   * 代价是改这两个值会让 `layout` 重算、所有砖重新克隆一次——切阴影方式是人手点的
+   * 一次性动作，与「每帧克隆」差着几个数量级。
+   */
+  castShadow?: boolean
+  receiveShadow?: boolean
 }>()
 
 /*
@@ -284,7 +299,7 @@ watchEffect(() => {
  * 不用遍历整棵树去删：先收集再删，是因为 `removeFromParent()` 会改 `children`，
  * 边遍历边删会跳过节点。
  */
-function tileObject(scene: Object3D): Object3D {
+function tileObject(scene: Object3D, castShadow: boolean, receiveShadow: boolean): Object3D {
   const clone = scene.clone()
 
   /*
@@ -299,6 +314,14 @@ function tileObject(scene: Object3D): Object3D {
   clone.traverse((object) => {
     const mesh = object as Mesh
     if (!mesh.isMesh) return
+
+    /*
+      阴影标记要在**克隆出来的每一块网格**上写，理由见 prop 的注释。
+      片（零厚度）马上就会被摘掉，写不写都无所谓，顺手写上省一次判空。
+    */
+    mesh.castShadow = castShadow
+    mesh.receiveShadow = receiveShadow
+
     if (wallFaceIsSheet(boundsOf(meshBox(mesh)))) sheets.push(mesh)
   })
   for (const sheet of sheets) sheet.removeFromParent()
@@ -401,7 +424,7 @@ const layout = computed<SkinWall[] | null>(() => {
           // 不用 SkeletonUtils.clone()：three-stdlib 不在 package.json 里
           // （只是 cientos 的传递依赖），直接 import 就是幽灵依赖——
           // 资产要求里因此写死「静态网格、不带骨骼与动画」。
-          object: tileObject(scene),
+          object: tileObject(scene, props.castShadow ?? false, props.receiveShadow ?? false),
         })),
       })
     }
@@ -439,9 +462,8 @@ const layout = computed<SkinWall[] | null>(() => {
         门窗构件**不铺**：框、玻璃、门扇照旧走灰盒子那套材质
         （洞口的几何照旧由 `wallPieces()` 切段，见 DESIGN.md 设计决定）。
 
-        **不设 cast-shadow / receive-shadow**：今天墙这一侧一处都没有，
-        而 `<primitive>` 不做遍历，clone 进来的网格保持 glTF 默认的
-        `castShadow = false`——与灰盒子那条路完全一致，是刻意不动，不是漏了。
+        这两个阴影标记与上面那批砖**必须一致**：同一面墙上「砖投影、框不投影」
+        会让门洞边上多出一条不属于任何东西的亮缝，太阳低的时候尤其明显。
       -->
       <SceneFloorplanWallBox
         v-for="box in wall.boxes"
@@ -451,6 +473,8 @@ const layout = computed<SkinWall[] | null>(() => {
         :size="box.size"
         :role="box.role"
         :plan="plan"
+        :cast-shadow="castShadow"
+        :receive-shadow="receiveShadow"
       />
     </template>
   </template>
@@ -463,6 +487,8 @@ const layout = computed<SkinWall[] | null>(() => {
       :wall="wall"
       :openings="openings"
       :plan="plan"
+      :cast-shadow="castShadow"
+      :receive-shadow="receiveShadow"
     />
   </template>
 </template>

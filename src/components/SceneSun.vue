@@ -65,7 +65,12 @@ const props = withDefaults(
   {
     showSky: false,
     elevation: 48,
-    azimuth: 45,
+    /**
+     * 与 `DEFAULT_SCENE_CONFIG.sun.azimuth` 保持一致（90°）。
+     * 这里只是「配置里没写时」的兜底，两处不同会让同一个场景在
+     * 「走配置」与「走组件默认值」时亮出不同的影子方向。
+     */
+    azimuth: 90,
     turbidity: 3.4,
     rayleigh: 3,
     mieCoefficient: 0.005,

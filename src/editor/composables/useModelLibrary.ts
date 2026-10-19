@@ -290,7 +290,7 @@ export type MergedLibrarySection = LibrarySection | ExtraLibrarySection
  * 接缝一条都不会变（棱是立方体内部的，刚体转动不动它），所以方位角的**绝对值**
  * 只能由命名惯例定，量不出来。本轮取「相机默认朝 −Z」这一种：它是 three 自己的
  * 相机朝向，也让六个名字全部名副其实。旁证（弱）：这套图里烘焙的太阳在方位角
- * 60° 上下，与场景默认日照方位 45° 同象限；按另一种摆法会落到 −120° 去。
+ * 60° 上下，与场景默认日照方位 90° 同象限（见 `utils/config.ts` 那一段的注释）。
  *
  * 因此：若将来发现太阳在天空里的位置与场景日照对不上，要转 180° 应当用
  * `scene.backgroundRotation` + `scene.environmentRotation`（three 0.186 有这两个

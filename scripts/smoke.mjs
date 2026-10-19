@@ -764,6 +764,27 @@ check('iconBaseUrl 声明成了 prop（否则会漏到根节点上）', () => {
   return 'iconBaseUrl 是声明过的 prop，没有以属性形态漏出去'
 })
 
+/**
+ * `defaultViewMode` 与 `iconBaseUrl` 是同一种病：漏在 `SceneViewerProps` 里声明时，
+ * Vue 会把它当普通 attr 落到根节点上（`defaultviewmode="2d"`），档位不生效也不报错。
+ *
+ * 它**真正生效**的那一步在 `onMounted` / `initialScene` 之后，还要等一个 `nextTick`，
+ * 而 SSR 不跑生命周期——所以「初始画面到底是不是俯视」一行都断不到，归目视清单 165。
+ * 这里只断「它确实被当成 prop 收走了」这条反面证据。
+ */
+const defaultViewModeViewer = await tryRenderViewer('渲染带初始视角的画布', {
+  defaultViewMode: '2d',
+})
+
+check('defaultViewMode 声明成了 prop（否则会漏到根节点上）', () => {
+  assert(
+    !/defaultviewmode/i.test(defaultViewModeViewer.html),
+    'defaultViewMode 没被 Vue 当成 prop 收走，漏到根节点上了——' +
+      '说明 src/types.ts 的 SceneViewerProps 里少了它，初始视角不会生效也不会报错',
+  )
+  return 'defaultViewMode 是声明过的 prop，没有以属性形态漏出去'
+})
+
 check('两个根地址各自的两极（有值 / 空串）都在', () => {
   /**
    * 两个根地址是**两个独立的口子**，所以「默认那一份」与「关掉那一份」都得

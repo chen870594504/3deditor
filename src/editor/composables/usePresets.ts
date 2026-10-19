@@ -56,6 +56,10 @@ import type { SceneConfig, ShadowConfig, SunConfig } from '../../types'
  * 能看到光变了（灯的角度与强度照常生效），但那块影子的大小与浓淡归他自己管，
  * 预设不插手——这也正是「不换 type」的必然结果。
  *
+ * **默认方式已经是 Shadow Map**（设计决定 61），而预设不换 type，所以在默认状态下
+ * 点预设时，影子的大小与方向直接由 `elevation` / `azimuth` 驱动——下面那组 `contact*`
+ * 只在用户自己把方式切回接触阴影之后才生效。两组都照常写全，切过去时数值是配套的。
+ *
  * 留着的那几个 `contact*` 是**当场生效**的：`ContactShadows` 把
  * `opacity` / `blur` / `scale` 都挂在 watch 上，改一个只重画一帧 512²
  * （它本来就 `:frames="1"`）。同样几个数在两边的待遇不同，是 cientos 自己的

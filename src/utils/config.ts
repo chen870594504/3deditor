@@ -216,11 +216,18 @@ export const DEFAULT_SCENE_CONFIG: SceneConfig = {
      */
     showSky: false,
     /**
-     * 48° / 45° 与改造前硬编码的主光位置 (5, 8, 5) 是同一个方向，
-     * 这样把主光改为由太阳角度推导之后，默认观感不变。
+     * 48° / 90°。
+     *
+     * 高度角 48° 与改造前硬编码的主光位置 (5, 8, 5) 是同一个仰角；
+     * 方位角从 45° 挪到了 90°，原因是**默认视角下看不见影子**：
+     * 默认相机在 (4, 3, 6)、水平方位约 34°，太阳若在 45°，
+     * 光影方向几乎与视线重合、影子整个落在模型背后被模型自己挡住，
+     * 于是「开了阴影却一条影子都看不到」。90° 让影子落到画面左侧。
+     * 90° 与天空盒里烘焙的太阳（约 60°）仍在同一象限，接上天空盒时不会
+     * 出现「亮着的面与天空里的太阳不在一边」。
      */
     elevation: 48,
-    azimuth: 45,
+    azimuth: 90,
     turbidity: 3.4,
     rayleigh: 3,
     mieCoefficient: 0.005,
@@ -240,9 +247,24 @@ export const DEFAULT_SCENE_CONFIG: SceneConfig = {
   },
 
   shadow: {
-    /** 默认关闭，与 three 的 renderer.shadowMap.enabled 默认值保持一致 */
-    enabled: false,
-    type: 'contact',
+    /**
+     * 默认**打开**。
+     *
+     * 早先跟着 three 的 `renderer.shadowMap.enabled` 默认值关着，结果是：
+     * 用户把光调来调去，模型始终没有影子——「阴影」页里那个开关在另一页，
+     * 第一反应是阴影功能坏了。一个 3D 场景有影子是常态，不需要额外打开；
+     * 真心不想要它的宿主一个 `shadow.enabled: false` 就关掉了。
+     */
+    enabled: true,
+    /**
+     * 默认用主光投影（Shadow Map）。
+     *
+     * 接触阴影 / 累积阴影是从场景深度烘出来的，**不跟随太阳方向**；
+     * 而用户调的就是太阳。默认给它们，太阳怎么转影子都不动，看起来还是坏了。
+     * Shadow Map 的影子由主光实时投出，高度角一低影子就变长——这正是
+     * 「光线投射模型之后该有的影子」。
+     */
+    type: 'map',
     castShadow: true,
     receiveShadow: true,
 

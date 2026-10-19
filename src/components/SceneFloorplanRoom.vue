@@ -125,12 +125,31 @@ const GUIDE_BOTTOM_Y = FLOOR_Y + 0.01
 const GUIDE_COLOR = '#64748b'
 
 /**
- * 房间名在屏幕上的大小（`sizeAttenuation: false`，见模板那段注释）。
+ * 房间名在世界坐标里的高度，米。两档各一个值。
  *
- * 是**屏幕比例**而不是世界尺寸，所以与相机远近无关。
- * 这是个只能靠眼睛定的数：太小在俯视里读不出，太大在近处糊满屏。
+ * **标签是固定世界尺寸（`sizeAttenuation: true`），跟着画面里的模型一起放大缩小。**
+ * 相机拉远、模型在画面里变小时，标签跟着变小——不会再用一块固定屏幕大小的字
+ * 盖住模型。这正是「不要固定大小」那条反馈要的。
+ *
+ * 两个数是从**旧观感**折出来的，不是估的。旧写法是 `sizeAttenuation: false` 配
+ * `0.06`，而 three 的 sprite 顶点着色器在那条路上会把 scale 乘上标签自己的
+ * 相机空间深度（`scale *= -mvPosition.z`）。也就是说，那个「屏幕上的 0.06」
+ * 在标签所在深度 d 上等价于**世界高度 `0.06 × d`**：
+ *
+ * - 2D 的主机位在原点上方 110 米（`useViewMode` 的 `TOP_DISTANCE`），标签在
+ *   `LABEL_Y_2D`（1.4 米），相机空间深度约 108.6 米 → `0.06 × 108.6 ≈ 6.5`。
+ * - 3D 默认机位 `[4, 3, 6]` 看原点，标签在墙顶上方约 4.5 米、房间多半在原点
+ *   附近，深度约 6.1 米 → `0.06 × 6.1 ≈ 0.37`，取 0.4 米（约 7.9% 画面高度，
+ *   旧的屏幕比例约 7.2%，差不到 10%）。
+ *
+ * 所以**默认机位下的观感与改之前基本一致**，只有滚轮缩放时才跟着变。
+ *
+ * 同一份世界尺寸不可能同时服务两档：2D 的 6.5 米放到 3D 近处会糊满整屏，
+ * 而 3D 的 0.4 米在 110 米高的俯视里不到 4 像素。两个数都是**按各档的正常视距
+ * 定的**；改默认机位、`TOP_DISTANCE` 或 `LABEL_Y_2D` 时，按同一条式子重算。
  */
-const LABEL_HEIGHT = 0.06
+const LABEL_HEIGHT_2D = 6.5
+const LABEL_HEIGHT_3D = 0.4
 
 /**
  * 放平多边形的旋转。
@@ -261,10 +280,14 @@ const labelMap = computed(() =>
  *
  * **宽度按贴图的实际宽高比算**，否则中英文混排的长短名会被拉成同一个宽度，
  * 字就扁了。
+ *
+ * 高度取哪一档见 `LABEL_HEIGHT_2D` / `LABEL_HEIGHT_3D`——它是世界尺寸，
+ * 由 `sizeAttenuation` 负责投到屏幕上。
  */
-const labelScale = computed(
-  () => new Vector3(LABEL_HEIGHT * labelTextureAspect(labelMap.value), LABEL_HEIGHT, 1),
-)
+const labelScale = computed(() => {
+  const height = props.plan ? LABEL_HEIGHT_2D : LABEL_HEIGHT_3D
+  return new Vector3(height * labelTextureAspect(labelMap.value), height, 1)
+})
 </script>
 
 <template>
@@ -298,9 +321,10 @@ const labelScale = computed(
     2D 是 110 米高的透视相机，竖直的线在正俯视里投影成几个像素的点，
     既读不出「指向地面」又把俯视图弄脏，所以整条不画。
 
-    顶端落在 `labelY`（徽标中心）就行，**不要试图停在徽标下沿**：标签开着
-    `size-attenuation=false`，它的世界尺寸随相机距离变（5 米处半高约 15 厘米、
-    20 米处约 60 厘米），没有固定的世界下沿可躲。靠标签最后绘制盖住线顶。
+    顶端落在 `labelY`（徽标中心）就行：标签现在有固定的世界下沿
+    （`LABEL_HEIGHT_3D / 2`），但贴图四周还带着一圈透明 `padding`——
+    停在下沿会在徽标与线之间留一道小缝。停在中心，靠「标签最后绘制」
+    把线顶完整盖住，连接处看不出断口。
 
     渲染顺序是「色块（默认 0）→ 线（1）→ 标签（2）」：
     - 线必须 `transparent` 才能进透明队列；否则不透明队列先画、半透明色块后画，
@@ -324,11 +348,11 @@ const labelScale = computed(
     也就是这套东西的主场）与斜视（3D 档）下都正着读，不需要为每个机位
     各调一次朝向。
 
-    `size-attenuation` 关掉是**刻意的**：开着的话标签的世界尺寸固定，
-    而 2D 档的相机在 110 米高（见 useViewMode 的 TOP_DISTANCE），
-    一个看得清的世界尺寸到近处会糊满整屏；关掉之后标签是**屏幕比例**，
-    远近一样大——这正是地图标注要的行为。
-    代价是房间里多的时候标签不会随距离缩小，可能挤在一起。
+    `size-attenuation` **开着**（显式写出来）：标签是**世界尺寸**，跟着模型一起
+    放大缩小——相机拉远、模型在画面里变小时标签也变小，不会盖住模型。
+    关掉的话它是屏幕比例、远近一样大，那正是「模型缩小后标签太大」那条反馈。
+    两档各自的世界高度见 `LABEL_HEIGHT_2D` / `LABEL_HEIGHT_3D`（差一个数量级，
+    原因在那两段注释里）。
 
     贴图周围是透明的，所以必须 `transparent`，否则透明区会渲染成黑色。
 
@@ -338,7 +362,7 @@ const labelScale = computed(
   <TresSprite v-if="labelMap" :position="labelPosition" :scale="labelScale" :render-order="2">
     <TresSpriteMaterial
       :map="labelMap"
-      :size-attenuation="false"
+      :size-attenuation="true"
       :depth-test="true"
       transparent
     />
