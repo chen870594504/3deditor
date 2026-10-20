@@ -26,7 +26,7 @@ defineOptions({ name: 'PreviewBar' })
   <div class="tdm-preview-bar">
     <span class="tdm-micro">预览</span>
     <b class="tdm-preview-name">{{ sceneName }}</b>
-    <span class="tdm-preview-note">只读——模型点不动、相机不响应拖拽、绘制工具已收起</span>
+    <span class="tdm-preview-note">只读——模型点不动、绘制工具已收起；右上角可换视角、可走进屋里</span>
 
     <span class="tdm-spacer" />
 
