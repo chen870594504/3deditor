@@ -43,7 +43,7 @@ pnpm preview      # 预览构建产物
 几条容易踩的：
 
 - **没有 lint / formatter 配置**（无 ESLint / Prettier / Biome / EditorConfig）。不要凭空引入，也不要假设某个风格工具会兜住格式问题。
-- **没有测试框架**。`scripts/smoke.mjs` 是唯一的自动化测试，且**不支持筛选用例**——一次跑全部 121 条。想单点验证某个纯函数，写一个临时 node 脚本 `import('../dist/index.js')`（必须先 `pnpm build:only`），用完删掉。
+- **没有测试框架**。`scripts/smoke.mjs` 是唯一的自动化测试，且**不支持筛选用例**——一次跑全部 122 条。想单点验证某个纯函数，写一个临时 node 脚本 `import('../dist/index.js')`（必须先 `pnpm build:only`），用完删掉。
 - `pnpm smoke` 读的是 `dist/index.js`，改完 `src/` 不重新构建就测的是旧产物。
 - **验证 playground 构建必须另给 outDir**。仓库没有 `build:playground` 脚本，裸跑 `vite build` 会用默认 `outDir: dist` **覆盖库产物**。正确做法：
 
@@ -86,15 +86,15 @@ pnpm preview      # 预览构建产物
 组件分层（**三层都在 `src/` 内部，公开面仍然只有一份**）：
 
 ```
-SceneCanvas.vue  由合并后的 SceneViewer.vue 改名而来，收窄成**内部签名**：9 个 prop /
-                 13 个 emits / 6 个方法。编辑器与纯画布共用，宿主永远碰不到——公开面上
+SceneCanvas.vue  由合并后的 SceneViewer.vue 改名而来，收窄成**内部签名**：12 个 prop /
+                 14 个 emits / 6 个方法。编辑器与纯画布共用，宿主永远碰不到——公开面上
                  那几组「场景长什么样」的 prop 桥（`background` / `wireframe` / 分组配置…）
                  全删了，它们本来就住在 `store.config` 里；这里只留能决定画布本身的那些
                  与编辑器自己的手感偏好（`toolbar` / `gizmoMode` / `cameraTransition`）
      ↑
 SceneEditor.vue  三栏工作台 = SidePanel | EditorStage | InspectorPanel + 事件绑定弹窗
      ↑
-SceneViewer.vue  公开面：十二个 prop（editable / mode / defaultViewMode / height / autoRotate / draco / initialScene / sideTabs / inspectorTabs / extraSections / assetBaseUrl / iconBaseUrl）
+SceneViewer.vue  公开面：十三个 prop（editable / mode / defaultViewMode / showViewSwitch / height / autoRotate / draco / initialScene / sideTabs / inspectorTabs / extraSections / assetBaseUrl / iconBaseUrl）
 ```
 
 `SceneCanvas` 里面才是 `SceneContent`（`TresCanvas` 内部，组装各 `Scene*` + 相机 + 控制器 +
@@ -110,9 +110,16 @@ SceneViewer.vue  公开面：十二个 prop（editable / mode / defaultViewMode 
 
 **五个布尔 prop（`editable` / `toolbar` / `pickable` / `selection` / `gizmo`）一律 `withDefaults`
 成 `undefined`**——**缺失的布尔 prop 会被 Vue 转成 `false`**，不给 `undefined` 就等于把那一档钉死
-在关闭上，且不报错。这五处现在全在 `src/components/SceneCanvas.vue` 的 props 里（公开面上只剩
-`editable` 一个布尔）。见 DESIGN.md 设计决定 46 与 47，动这几处之前先读它们。
+在关闭上，且不报错。这五处现在全在 `src/components/SceneCanvas.vue` 的 props 里（公开面上的布尔
+只剩 `editable` 一个走这条规则；`showViewSwitch` 也是布尔，但它没有三级规则、默认就是 `true`）。
+见 DESIGN.md 设计决定 46 与 47，动这几处之前先读它们。
 `gizmoMode` 同样收进了内部签名：手柄模式是编辑器的手感偏好，公开面上没有它的位置。
+
+**右上角那枚 2D / 3D 视角胶囊住在 `SceneCanvas` 里**（`src/components/SceneViewSwitch.vue`），
+所以纯画布、只读画布、编辑态共用同一枚，显隐归公开 prop `showViewSwitch`（默认 `true`；
+`mode="model"` 与漫游中由编辑器压成 `false`）。胶囊自己**不切档**：点击只 `emit`，
+`SceneViewer`（画布态）与 `EditorStage`（编辑态，还有漫游交接）各自调同一条 `setViewMode`
+——见设计决定 69。
 
 `SceneViewer` 的对外面有两层：**props / emits**（声明式，「场景长什么样」）与
 **`defineExpose` 出来的 6 个方法**（命令式，「此刻画布上是什么情况」：`captureCamera` / `measureModel` /
@@ -274,7 +281,7 @@ host 这一层。
 
 ## 验证到哪一步（不要补的测试）
 
-`pnpm verify` 的 121 条断言**跑在 SSR 下**（`createSSRApp` + `renderToString`），
+`pnpm verify` 的 122 条断言**跑在 SSR 下**（`createSSRApp` + `renderToString`），
 而 `TresCanvas` 的 children 在 SSR 下根本不渲染。所以下列内容**测不到**，
 不要为它们补冒烟用例（只会得到一条永远为真的断言）：
 
@@ -300,6 +307,11 @@ host 这一层。
 - **`defaultViewMode` 的实际切档**：应用点在 `onMounted` 与 `initialScene` 落笔之后，
   SSR 两处都不跑；冒烟只能断「它确实是个声明过的 prop」（HTML 里没有
   `defaultviewmode` 属性，与 `iconBaseUrl` 同形）。真实画面归目视清单 165。
+- **视角胶囊按下之后**：SSR 能断的只有「它在不在、是不是恰好一枚、默认值是不是 `true`」
+  （`SceneViewer.props.showViewSwitch.default`，见设计决定 69）；点下去之后
+  `setViewMode` 对机位 / 阴影 / 无限网格的写入、画布态与编辑态是不是同一条路，
+  全要真实点击，归目视清单 180——**改 `SceneViewSwitch.vue`、`SceneCanvas` 里那段
+  渲染或 `EditorStage.onViewModeClick` 时必须看一眼那几条**。
 - **去服务器读那份清单**：`index.json` 是在 `onMounted` 里 `fetch` 的，SSR 不跑 `onMounted`，
   所以整条路一行断言都盖不到。冒烟能断的只有两头的纯函数（`assetManifestUrl` 拼得对、
   `parseAssetManifest` 认得那份格式）与「库里不再内置任何条目」。
@@ -324,7 +336,7 @@ host 这一层。
 | 文件 | 读者 | 内容 |
 |---|---|---|
 | `README.md` | 用这个库的宿主 | **一份精简卡片（≤80 行）**：一句话简介、安装、快速开始、三条核心概念、props / 事件 / 对外方法三张表 |
-| `DESIGN.md` | 改这个仓库的人 | 编辑器的设计、**68 条编号设计决定**、179 条**目视清单**、目录结构、发布流程、待办 |
+| `DESIGN.md` | 改这个仓库的人 | 编辑器的设计、**69 条编号设计决定**、180 条**目视清单**、目录结构、发布流程、待办 |
 
 `README.md` 是一份**面向宿主的用法卡片**，结构是固定的（**总长 ≤80 行**）：一句话简介 →
 安装（一条命令）→ 快速开始（一个最小示例）→ 核心概念（最多 3 条）→ props / 事件 / 对外方法

@@ -470,6 +470,9 @@ check('阴影正交相机罩得住整个场景', () => {
  * - **编辑态**（`editable: true`）：渲染的是三栏工作台，判据换成编辑器外壳
  *   自己的类名（`.tdm-body` 与左右两栏）。这比原来那条 `.tdm-toolbar` 更强——
  *   它同时钉住了「公开面收窄之后 `editable` 仍然说了算」与「三栏真的进了库产物」。
+ * - **视角胶囊**（`showViewSwitch`）：它住在 `SceneCanvas` 里、`TresCanvas` 之外，
+ *   三种形态下 SSR 都画得出来，所以「默认显示 / 关得掉 / 编辑态只有一枚」
+ *   断得到。按下之后相机怎么走断不到，归目视清单 180。
  * - **宿主页**（`sideTabs` / `inspectorTabs`）：导轨那一格在 `TresCanvas` 之外，
  *   SSR 下画得出来，所以「两个 prop 到没到得了面板」能断言；而**页里的正文**
  *   要点开才渲染，测不到——最后那次渲染为什么仍然把插槽给上，写在下面。
@@ -504,6 +507,16 @@ const plainViewer = await tryRenderViewer('渲染不带任何开关的画布', {
 const readonlyViewer = await tryRenderViewer('渲染只读画布', { editable: false })
 const editingViewer = await tryRenderViewer('渲染编辑画布', { editable: true })
 const rotatingViewer = await tryRenderViewer('渲染自动旋转画布', { autoRotate: true })
+/**
+ * 宿主显式关掉视角胶囊的那一次渲染。
+ *
+ * 与只读画布那一对：只断「默认有」的话，一个把 `showViewSwitch` 整个忽略掉
+ * 的实现同样能过，所以「关掉之后真的没有」必须单独给一次渲染。
+ */
+const noViewSwitchViewer = await tryRenderViewer('渲染关掉视角胶囊的只读画布', {
+  editable: false,
+  showViewSwitch: false,
+})
 
 /**
  * 带宿主页的那一次渲染。
@@ -613,6 +626,44 @@ check(':editable="false" 是只读', () => {
   assert(readonlyViewer.html.includes('tdm-root'), '缺少 .tdm-root')
   assert(!readonlyViewer.html.includes('class="tdm-toolbar"'), '只读画布渲染出了内置工具栏')
   return '无 .tdm-toolbar'
+})
+
+check('视角胶囊默认显示，由 showViewSwitch 单独控制', () => {
+  /**
+   * 用户上报的那一条：宿主以 `editable: false` 接入时右上角没有 2D / 3D 胶囊
+   * ——它当时住在 `EditorStage`，纯画布根本不渲染编辑器。搬进 `SceneCanvas`
+   * 之后（见 DESIGN.md 设计决定 69），这一条钉住三半：默认显示（只读画布与
+   * 不传任何开关的旧画布都有）、关得掉、编辑态只有一枚。
+   *
+   * 查 `class="tdm-view"` 这个**完整属性值**而不是子串：后者会被
+   * `tdm-viewport` 命中，断言会变成恒真（模型编辑页那条踩过同一个坑）。
+   */
+  assert(readonlyViewer.html.includes('class="tdm-view"'), '只读画布没有 2D / 3D 视角胶囊')
+  assert(plainViewer.html.includes('class="tdm-view"'), '不传任何开关时没有视角胶囊')
+  assert(
+    !noViewSwitchViewer.html.includes('class="tdm-view"'),
+    ':show-view-switch="false" 时胶囊还在',
+  )
+  /*
+    编辑态只渲染一次，这里数「恰好一枚」：搬渲染点时最容易出的错是两处都留着，
+    于是叠出两枚，而画面上只是按钮变粗，盯不出来。
+  */
+  const count = editingViewer.html.split('class="tdm-view"').length - 1
+  assert(count === 1, `编辑态视角胶囊出现了 ${count} 次（应当恰好一枚）`)
+  /*
+    默认值查**运行时声明**，不查 HTML 里有没有 `showviewswitch` 属性：
+    漏声明时它会被当成普通 attr 透传给子组件，而 `SceneCanvas` 自己声明了
+    同名 prop，于是照样生效、也照样落不到 DOM 上——那条断言抓不到漏。
+    这里直接读编译后的 props 表，`withDefaults` 漏写时它就是 `undefined`
+    （缺失的布尔 prop 会被 Vue 转成 `false`，胶囊在**所有**宿主上静默消失）。
+
+    `default` 是 `true` 而不是函数：Vue 只把对象 / 数组的默认值包成工厂。
+  */
+  assert(
+    SceneViewer.props.showViewSwitch?.default === true,
+    '`showViewSwitch` 的默认值不是 true——缺失时会被 Vue 转成 false，胶囊会静默消失',
+  )
+  return '只读与旧画布默认有、显式关掉就没有、编辑态恰好一枚、默认值真是 true'
 })
 
 check(':editable="true" 渲染三栏工作台', () => {
@@ -979,6 +1030,17 @@ check('样式产物包含组件用到的作用域类', () => {
     'tdm-progress',
     'tdm-progress-bar',
     'tdm-error',
+    /*
+      视角胶囊的样式。它现在由纯画布也渲染（`SceneCanvas`，见设计决定 69），
+      而样式仍然住在 `_editor.scss`（硬性约束 8）——两个文件任何一处掉线，
+      宿主右上角都会静默少一块。
+
+      `.tdm-view` 本身**不列**：那个子串会被 `.tdm-viewport` 命中，
+      列进来就是一条永远为真的断言。`--solo` 是「胶囊关掉时漫游入口顶上去」
+      那一档，只在编辑态出现，同样只有样式产物能证明它还在。
+    */
+    'tdm-view-btn',
+    'tdm-walk-btn--solo',
   ]
   const missing = needed.filter((name) => !css.includes(`.${name}`))
   assert(missing.length === 0, `缺少样式类：${missing.join(', ')}`)
@@ -1659,6 +1721,8 @@ check('公开契约里有物体级 API', () => {
     'events',
     'deriveModelId',
     'receiveShadow',
+    // 宿主收起右上角那枚 2D / 3D 胶囊时唯一要写的就是它（设计决定 69）
+    'showViewSwitch',
     // 画布级点选是第二条通道，同样漏了就没有任何提示
     'modelPick',
     'ModelPickPayload',

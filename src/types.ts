@@ -829,7 +829,7 @@ export interface SceneViewerProps {
    * 两个扩展 prop（`sideTabs` / `inspectorTabs`）只在编辑形态下有落点：
    * 画布形态没有面板，传了也不会渲染（不报错）。
    *
-   * 其余 prop（`height` / `autoRotate` / `draco`）在哪种形态下都照常生效。
+   * 其余 prop（`height` / `autoRotate` / `draco` / `showViewSwitch`）在哪种形态下都照常生效。
    *
    * 三栏工作台要求宿主给一个有高度的容器：组件根默认高 `480px`，铺满外层就写
    * `height="100%"`。
@@ -872,6 +872,24 @@ export interface SceneViewerProps {
    * `mode="model"` 下忽略：模型编辑页中栏固定 3D，也没有 2D / 3D 切换按钮。
    */
   defaultViewMode?: ViewMode
+
+  /**
+   * 右上角那枚 2D / 3D 视角胶囊是否显示，默认 `true`。
+   *
+   * 它是**画布的能力**，不是编辑器界面的一部分（见 DESIGN.md 设计决定 69）：
+   * 编辑形态、只读画布（`editable: false`）与不传 `editable` 的旧画布拿到的是
+   * 同一枚。不想让人在只读页里换视角时写 `:show-view-switch="false"`——
+   * 它只收这一枚按钮，相机拖动与其余控件不受影响。
+   *
+   * 两种形态例外，它无论如何都不出现：`mode="model"`（模型编辑页固定 3D），
+   * 以及第一人称漫游中（此刻切档等于把相机从屋里拽出去，退出走底部 HUD 或 Esc）。
+   *
+   * 点一下走的是与编辑器那枚**同一条实现**（`setViewMode`）：写机位、阴影与
+   * 无限网格进配置，并在历史里留一条切换记录。这与在画布上拖视角同类，
+   * 不是新类别。**不派发 `cameraChange`**：那是拖动结束后回写机位的事件，
+   * 与 `defaultViewMode` 的取舍一致。
+   */
+  showViewSwitch?: boolean
 
   /** 是否自动旋转视角，默认 false */
   autoRotate?: boolean

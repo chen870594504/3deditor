@@ -6,6 +6,7 @@ import { EDITOR_ASSETS_KEY, useEditorAssets } from '../editor/assets'
 import { useSceneStore } from '../stores/scene'
 import { setViewMode } from '../editor/composables/useViewMode'
 import { viewModeOf } from '../utils/viewMode'
+import type { ViewMode } from '../utils/viewMode'
 import {
   INSPECTOR_TAB_PREFIX,
   SIDE_TAB_PREFIX,
@@ -31,7 +32,9 @@ import type {
     含左右栏与事件弹窗）。`mode="model"` 是「编辑模型」页：左栏只显示宿主给的
     `extraSections`、点模型只替换不追加、右栏只留历史与宿主页、中栏固定 3D。
   - 其余 → `SceneCanvas`（纯画布；`false` 是四个开关全关的只读态，
-    **不传**则走旧默认——内置工具栏还开着，那是 `editable` 出现之前的形状）
+    **不传**则走旧默认——内置工具栏还开着，那是 `editable` 出现之前的形状）。
+    两档右上角都有 2D / 3D 视角胶囊：它住在画布里，由 `showViewSwitch`
+    控制、默认显示（见设计决定 69）。
 
   两种形态共用同一块画布（`SceneCanvas`），所以 `defineExpose` 那 6 个方法
   与 12 个事件在哪种形态下都成立。区别只在「谁来喂画布那几个内部值」：
@@ -72,6 +75,13 @@ const props = withDefaults(defineProps<SceneViewerProps>(), {
     本身就是要紧的——下面那个一次性 watcher 只在**第一次拿到非空值**时落笔。
   */
   initialScene: undefined,
+  /*
+    视角胶囊默认**显示**，所以这一条不能像 `editable` 那样写 `undefined`：
+    「不传」与 `true` 在这里是一回事，而缺失的布尔 prop 在没有 default 时会被
+    Vue 转成 `false`——漏写这个默认值，所有宿主右上角的胶囊会一起消失，且不报错。
+    （那五个需要 `undefined` 的是有「分开关 ?? 总闸」三级规则的开关，这一条没有。）
+  */
+  showViewSwitch: true,
 })
 
 /*
@@ -164,6 +174,20 @@ async function applyDefaultViewMode(): Promise<void> {
 }
 
 onMounted(() => { void applyDefaultViewMode() })
+
+/**
+ * 画布形态里点了右上角那枚 2D / 3D。
+ *
+ * 与 `defaultViewMode` 走**同一条实现**（`setViewMode`），差别只在语义：那一条是
+ * 「页面打开时的样子」（静默、不留历史），这一条是用户的一次明确操作——写配置、
+ * 留一条「切换到 2D 俯视视角」的历史、控制台留一条回执，与编辑态完全一致。
+ *
+ * 不在这里做 `silent`：`silent` 只压日志，而「点了按钮改了什么」本来就该看得见。
+ * 也不派发 `cameraChange`（那是拖动结束后回写机位的事件），同 `defaultViewMode`。
+ */
+function onViewModeSelect(mode: ViewMode): void {
+  void setViewMode(mode)
+}
 
 /**
  * `initialScene`：挂载时装载一份场景数据，**只装一次**。
@@ -326,6 +350,7 @@ defineExpose<SceneViewerApi>({
     :side-tabs="sideTabs"
     :inspector-tabs="inspectorTabs"
     :extra-sections="extraSections"
+    :show-view-switch="showViewSwitch"
     v-on="forwarded"
   >
     <!--
@@ -358,7 +383,9 @@ defineExpose<SceneViewerApi>({
     ref="canvasRef"
     :height="height"
     :editable="editable"
+    :show-view-switch="showViewSwitch"
     v-on="forwarded"
+    @view-mode-select="onViewModeSelect"
   >
     <!--
       `#scene` 透传给宿主。这一层必须是**具名插槽的 template**，

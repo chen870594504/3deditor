@@ -1,6 +1,6 @@
 # 设计决定与验证清单
 
-这个文件是 `3deditor` 仓库的**内部文档**：编辑器的设计、66 条编号设计决定、验收用的目视清单，
+这个文件是 `3deditor` 仓库的**内部文档**：编辑器的设计、69 条编号设计决定、验收用的目视清单，
 以及仓库目录结构与发布流程。给宿主看的用法在 [README.md](README.md) 里，两者刻意分开——
 README 回答「怎么用这个库」，这里回答「为什么这么写、改了要重新验什么」。
 
@@ -661,6 +661,8 @@ Vue 3.5 的 `useTemplateRef(key)` 末尾是 `readonly(shallowRef(null))`——�
 
 纵向位置是这两枚在预览里唯一不同的地方：标题栏浮在 `top: 0`、占掉约 56px，原位置（`top: 10px` / `46px`）会被它压住，那条渐变会把点击一起吃掉。所以预览覆盖里把它们挪到 `top: 66px` / `102px`（仍是编辑态那套上下关系，整体下移一个标题栏的高度），并把 `z-index` 抬到 41 压过标题栏的 40——窄屏上说明文字折行、标题栏比预期高时，控件仍然点得中。
 
+视角胶囊后来搬进了 `SceneCanvas`（设计决定 69），那两条覆盖是后代选择器、照样命中，位置一个像素没变。**宿主用 `:show-view-switch="false"` 关掉胶囊时**，漫游入口跟着换成 `--solo` 一档、从 102px 顶到 66px（不让右上角空出一格），标题栏那句「右上角可换视角」也一并去掉——预览里的说明不能指一个不存在的按钮。
+
 这条改过两回，两回的教训都留着：
 
 - **第一版**靠 CSS 把顶栏与左右两栏 `display: none` 掉、再把 `.tdm-app` 的网格压成一行，让视口顶上来占满整页。**画面几乎一样，读起来却是「页面被换掉了」**——用户的原话就是这个：点完不知道自己在哪儿，也不知道怎么回去。出口只有 Esc，而那句「进入预览模式（Esc 退出）」走的是 `pushEvent`，只进控制台，界面上一个字都没有（见设计决定 21）。那一版留下的另一半改动是**标题栏上那个看得见的「退出预览」按钮**，它与版本无关，一直在。
@@ -1232,12 +1234,12 @@ skybox/bak38/{back,down,front,left,right,top}.jpg
 
 ```
 SceneCanvas.vue   由合并后的 SceneViewer.vue 改名而来，收窄成**内部签名**：
-                  8 个 prop / 12 个 emits / 6 个方法。编辑器与纯画布共用，宿主永远碰不到
+                  12 个 prop / 14 个 emits / 6 个方法。编辑器与纯画布共用，宿主永远碰不到
      ↑
 SceneEditor.vue   三栏工作台 = SidePanel | EditorStage | InspectorPanel ＋ 事件绑定弹窗
                   中栏 EditorStage 内渲染 SceneCanvas，喂给它编辑器自己的值
      ↑
-SceneViewer.vue   公开面。十一个 prop，按 editable / mode 选一种形态渲染
+SceneViewer.vue   公开面。十三个 prop，按 editable / mode 选一种形态渲染
 ```
 
 **为什么砍这些 prop**：
@@ -1909,14 +1911,16 @@ ExtraLibrarySection[]`。三栏布局、插槽转发、事件桥全部复用编�
 **59. 初始视角是 `SceneViewer` 的一个 prop：`defaultViewMode`，只在初始场景落地后应用一次**
 
 宿主经常一进页面就要 2D 俯视（核对平面关系、对户型图），或者明确要 3D 透视。此前只能让用户
-自己点右上角那枚按钮，而纯画布形态根本没有那枚按钮。`defaultViewMode?: '2d' | '3d'` 把这件事
+自己点右上角那枚按钮，而纯画布形态根本没有那枚按钮（那一档在 0.9.x 之后由
+`showViewSwitch` 补齐，见设计决定 69；本决定仍然是「打开时是哪一档」，与「界面上能不能切」
+是两件事）。`defaultViewMode?: '2d' | '3d'` 把这件事
 变成声明式的一行，**两种形态都生效**。
 
 - **不传就什么都不做**，机位仍由场景配置决定——`initialScene` 里存着的 2D 机位原样还原。
   这就是「默认值」必须是 `undefined` 而不是 `'3d'` 的原因：写成 `'3d'` 会把宿主保存的俯视
   机位悄悄抹掉，而那种退化不报错。与那五个布尔 prop 的 `undefined` 是同一类考虑，只是
   这里的危险不是 Vue 的布尔转换，而是「默认值本身是一个有效档位」。
-- **`'2d'` / `'3d'` 直接复用编辑器那枚按钮的 `setViewMode`，不另写一份机位算术。**
+- **`'2d'` / `'3d'` 直接复用右上角那枚按钮的 `setViewMode`，不另写一份机位算术。**
   「2D 是原点正上方多高、收紧哪两条权限、地面要不要无限」这套东西一旦有两份，两份悄悄
   不一致时的表现只是「默认 2D 与按一下 2D 画出来的不是一个地方」，没有任何报错。
 - **应用点有两个**：`onMounted`，以及 `initialScene` 每次落笔之后。后者是必须的——数据可以
@@ -2298,11 +2302,58 @@ FloorplanPickTarget>`，`floorplanNodeOf` 沿 parent 往上查。不用 `userDat
 `resolveWalkPosition` 两条纯函数（门 2 块 / 窗 3 块、门洞正中不动、窗洞推到
 `墙厚/2 + 半径`、旋转墙同距）。真实手感归目视清单 174-179。
 
+## 设计决定 69：视角胶囊是画布的能力，不是编辑器的界面
+
+右上角那枚 2D / 3D 胶囊原先住在 `EditorStage.vue`。宿主以 `editable: false` 接入时
+（只读画布）整块编辑器不渲染，胶囊也跟着消失——用户报的就是这一条：同一份配置，
+编辑页里能切视角、预览页里不能。0.9.1 修的是**编辑器内部**的预览浮层
+（`togglePreview()`，不是公开入口），公开画布的只读档仍然够不到。
+
+**判据是「谁有资格拥有它」**，与仓库那条铁律同源：胶囊改的是相机、不改场景内容，
+纯画布同样需要「转着看 / 俯视看」这两种观察方式，所以它属于画布。胶囊被搬进
+`SceneCanvas`（`src/components/SceneViewSwitch.vue`），显隐归一条新的公开 prop
+`showViewSwitch`，**默认 `true`**。四档同形：编辑态、编辑器预览、只读画布
+（`editable: false`）、不传任何开关的旧画布都拿到同一枚；宿主不想给就写
+`:show-view-switch="false"`。
+
+**默认值必须显式写 `true`，不能像那五个开关一样写 `undefined`。** 那五个要的是
+「不传」与 `false` 可区分；这一条没有三级规则，「不传」本来就等于「显示」。而缺失的
+布尔 prop 会被 Vue 转成 `false`——漏写默认值的表现是所有宿主右上角一起少一块，
+不报错。冒烟那条 `SceneViewer.props.showViewSwitch.default === true` 守的就是它。
+查的是**运行时声明**而不是 HTML 属性：漏声明时 attr 会透传给声明了同名 prop 的
+`SceneCanvas`，照样生效、也照样落不到 DOM 上，属性那条断言抓不到。
+
+**胶囊自己只管「亮哪一档 + 发出选择」，不切档。** 点击只 `emit('select', mode)`，
+`SceneCanvas` 转成内部事件 `viewModeSelect`，由两种形态各自接：`SceneViewer`
+（画布态）直接调 `setViewMode`，`EditorStage` 接回原有的 `onViewModeClick`。
+不把动作塞进胶囊，是因为编辑态那一路还要先处理漫游交接（`cancelWalkPlacement` +
+`stopWalk`），而纯画布不该因此背上漫游状态。那一段交接不能删：待放点时点胶囊的真实
+时序是 `pointerdown` → 预览落点、`pointerup` → 直接进了漫游、**之后**浏览器才派发
+`click`，删掉的表现是人留在屋里、配置写着 2D、相机却不落位，而且没有出口。
+
+**两档例外仍然不渲染**：`mode="model"`（模型编辑页固定 3D）与漫游中（此刻切档等于
+把相机从屋里拽出去，退出走底部 HUD 或 Esc）。这两档由 `EditorStage` 在
+`:show-view-switch` 里压成 `false`，公开 prop 本身不掺和形态判断。
+
+**样式仍然住在 `_editor.scss`。** 它现在由 `_canvas.scss` 那一层的组件渲染，但
+`.tdm-view-btn` 与 `.tdm-gizmo-btn` / `.tdm-draw-btn` 共用一条 `min-width: 40px`，
+之后靠源码顺序收窄到 34px（硬性约束 8）——搬去 `_canvas.scss`（先被 `@use`）会让
+34 输给 40。位置相对 `.tdm-root` 算，与 `.tdm-viewport` 的 padding 盒起点重合
+（后者只有 1px 边框、没有内边距），所以视觉坐标一字未变，
+`.tdm-stage--preview .tdm-view` 那条覆盖与 `prefers-reduced-motion` 那条照样命中。
+唯一的差别是 box-sizing：按钮落进 `.tdm-root *` 的 border-box，没注入 reset 的宿主
+会看到胶囊从约 50px 收到 34px——这是库不注入全局 reset（硬性约束 2）的边界，不是回归。
+
+**胶囊被关掉时，漫游入口自己顶上去**（`.tdm-walk-btn--solo`）：它原先固定
+`top: 46px`，那是「胶囊在正上方」的位置，胶囊没了会悬空。预览里另有一档覆盖
+（66px），与胶囊在时的编辑态逐像素同形。预览标题栏那句「右上角可换视角」也跟着
+`PreviewBar` 的 `viewSwitch` 分支一起消失——说明宁可少一句，也不指一个不存在的按钮。
+
 ---
 
 ## 验证覆盖到哪一步
 
-`pnpm verify` 会跑 `scripts/smoke.mjs`，直接加载 `dist/index.js` 在真实 Vue 应用里安装插件并渲染，覆盖 121 项：
+`pnpm verify` 会跑 `scripts/smoke.mjs`，直接加载 `dist/index.js` 在真实 Vue 应用里安装插件并渲染，覆盖 122 项：
 
 - **导出面与安装**：具名导出、install、全局组件注册（3 个）、Pinia 复用/补建
 - **素材与清单那一路**（设计决定 50 立起来、52 与 53 改写过）：不传素材配置时左栏是**空态**——
@@ -2328,7 +2379,7 @@ FloorplanPickTarget>`，`floorplanNodeOf` 沿 parent 往上查。不用 `userDat
   `iconBaseUrl` 哪天被写成空串只会表现为「全用内置图标」，而那与「服务器上还没放图标」分不开）。
   **「真去服务器拉一份清单 / 探那些图标」这件事测不到**：`fetch`、`onMounted` 与 `new Image()`
   在 SSR 下都不跑，归目视清单第 156-160 条
-- **真实渲染**：组件树能渲染、store id 带前缀、根节点文案齐全。`editable: true` 那一档改判**编辑器外壳自己的类名**（`.tdm-body` 三栏容器 + `.tdm-col--left` / `.tdm-col--right` 两根栏，**带标签名一起断**——它们的根必须是 `div`，退回 `aside` 会被宿主的全局样式整片压住，见设计决定 2 与目视清单第 153 条），并且要求**内置工具栏不在**——编辑器自绘界面时它让了位，走的正是「分开关优先于总闸」那一支。另有一档**带宿主页**的渲染：两份 `tabs` 各给一页、插槽也一起给，验「宿主追加的页进了两根导轨」（`aria-label` 两边都在）与「分隔线只画在有第二组的地方」（有宿主页时有、没有时没有）。再有两档**模型编辑页**（设计决定 57）：`{ mode: 'model' }` 不传 `editable` 也必须是三栏、中栏没有 `class="tdm-view"`、右栏无「模型属性」有「操作历史」、没给宿主分类时是整栏空态；带上一条 `extraSections` 时宿主那一类进了导轨与宫格，而内置「地板」那一格不出现
+- **真实渲染**：组件树能渲染、store id 带前缀、根节点文案齐全。`editable: true` 那一档改判**编辑器外壳自己的类名**（`.tdm-body` 三栏容器 + `.tdm-col--left` / `.tdm-col--right` 两根栏，**带标签名一起断**——它们的根必须是 `div`，退回 `aside` 会被宿主的全局样式整片压住，见设计决定 2 与目视清单第 153 条），并且要求**内置工具栏不在**——编辑器自绘界面时它让了位，走的正是「分开关优先于总闸」那一支。另有一档**带宿主页**的渲染：两份 `tabs` 各给一页、插槽也一起给，验「宿主追加的页进了两根导轨」（`aria-label` 两边都在）与「分隔线只画在有第二组的地方」（有宿主页时有、没有时没有）。再有两档**模型编辑页**（设计决定 57）：`{ mode: 'model' }` 不传 `editable` 也必须是三栏、中栏没有 `class="tdm-view"`、右栏无「模型属性」有「操作历史」、没给宿主分类时是整栏空态；带上一条 `extraSections` 时宿主那一类进了导轨与宫格，而内置「地板」那一格不出现。**视角胶囊**（设计决定 69）另有三档画布渲染与一条运行时声明：只读画布与不传任何开关的旧画布都有 `class="tdm-view"`、显式 `showViewSwitch: false` 时没有、编辑态**恰好一枚**，以及 `SceneViewer.props.showViewSwitch.default === true`（查编译后的 props 表，不查 HTML 属性：漏声明时 attr 会透传给声明了同名 prop 的 `SceneCanvas`，照样生效、也照样落不到 DOM 上，属性那条抓不到）。按下之后相机怎么走 SSR 盖不到，归目视清单 180
 - **编辑模式总闸**：`resolveSceneSwitches` 的 6 组组合逐一比对（不传 = 旧默认、`false` = 全关、`true` = 全开，以及两条「分开关压过总闸」），`DEFAULT_SCENE_SWITCHES` 的四个字段与「已冻结」；真实渲染里拿 SSR 看得见的那个差别（`editable: false` 没有内置工具栏、`true` 有三栏外壳）把三种写法各断一次，其中**不传时不带任何总闸的旧行为**那一条同时守着「五个布尔必须显式 `undefined`」这个机制（漏了就是全体宿主进只读）。**点选 / 包围框 / 手柄一律不写断言**：它们在 `TresCanvas` 里，SSR 下不渲染，写了只会得到永远为真的假断言（见 CLAUDE.md），那三条只归目视清单 144-146。**宿主页的正文也测不到**（点开才渲染、SSR 里点不了）——能测的只有「那一格进了导轨」，正文到不到得了靠目视清单 147-151
 - **阴影覆盖范围**（设计决定 63）：`computeShadowBounds` 是「所有模型都有影子」的前提，纯算术、SSR 下够得着——空场景退回 ±12（旧行为）、20 × 12 的地基必须撑大（正好卡在写死 12 的那条边界上）、整栋房子挪到 x = 100 时圆心跟着走、60 米长的墙单独参与包围盒、只有模型时按位置与缩放估足迹并把圆心放回两侧中间。**画面本身仍然测不到**（影子落没落到墙上归目视清单 168），这里守的是「相机盒子不再把场景切在外面」这一半
 - **2D 房间名尺寸**（设计决定 64）：`roomLabelHeight` 是「字落在房间里、且跟着缩放走」的前提，纯算术、SSR 下够得着——20 × 12 的客厅取窄边 12 × 0.2 = 2.4 米；面积同为 80 的 40 × 2 走廊与 10 × 8 卧室给出**不同**的尺寸（走廊落到下限、卧室取窄边），这一条同时守着「不能改成按面积算」；2 × 2 的小房间落下限、30 × 30 的大厅封顶；不足三个点与空数组退回下限而不是 NaN。**画面上字有没有撑出墙仍然测不到**，归目视清单 169
@@ -2341,10 +2392,10 @@ FloorplanPickTarget>`，`floorplanNodeOf` 沿 parent 往上查。不用 `userDat
   `WALK_RADIUS` 算期望值，改半径时这条会红而不是继续通过）、贴墙 0.1 → 0.38、旋转 90° 的墙
   同距、远处不推。**记住这一组只验「推出算术」**：逐帧移动、起点标记、退出还原、HUD
   归目视清单 174-179
-- **样式产物**：组件样式类齐全、作用域样式存在、无全局 reset 泄漏、无 playground 样式混入
+- **样式产物**：组件样式类齐全、作用域样式存在、无全局 reset 泄漏、无 playground 样式混入；其中包含 `.tdm-view-btn` 与 `.tdm-walk-btn--solo`——视角胶囊现在由画布渲染、样式却留在 `_editor.scss`（硬性约束 8），两个文件哪一个掉了链子只有这里抓得住（`.tdm-view` 本身不查：那个子串会被 `.tdm-viewport` 命中，查了也是恒真）
 - **配置模型**：`models` 是数组且默认为空、新造出来的条目字段齐全、5 类事件各自是独立对象（防别名）、store 是深拷贝（不会污染 `DEFAULT_SCENE_CONFIG`）、深合并不清空未提及的分支、`undefined` 被跳过、导出往返幂等
 - **历史栈**：undo/redo 能还原与前进、resetConfig 复位
-- **物体级**：`deriveModelId` 表驱动（7 组输入）、三元组是整体替换而非逐项合并、**`repeat` 深拷进配置 / 整体替换 / 且默认值里不存在**（渲染层拿「这个键在不在」当「要不要去动模型自带的贴图」的开关，默认值里多一个 `[1, 1]` 会抹掉资产自带的 `KHR_texture_transform`）、`resetConfig` 会复位变换、`dist/*.d.ts` 里有 `objectClick` / `objectDblclick` / `objectPointerEnter` / `objectPointerLeave` / `objectContextMenu` / `ObjectClickPayload` / `ModelEventHandler` / `deriveModelId` / `receiveShadow` / `events` / `modelTransform` / `modelTransformEnd` / `ModelTransformPayload` / `TransformMode` / `pickable` / `selection` / `gizmo`（后三个守的是「那条三级规则的输入面 `SceneSwitchInput` 别被谁顺手删掉」，而不是「prop 别漏声明」——它们已经不是 prop 了；`gizmoMode` 收进了内部签名，不在名单里）
+- **物体级**：`deriveModelId` 表驱动（7 组输入）、三元组是整体替换而非逐项合并、**`repeat` 深拷进配置 / 整体替换 / 且默认值里不存在**（渲染层拿「这个键在不在」当「要不要去动模型自带的贴图」的开关，默认值里多一个 `[1, 1]` 会抹掉资产自带的 `KHR_texture_transform`）、`resetConfig` 会复位变换、`dist/*.d.ts` 里有 `objectClick` / `objectDblclick` / `objectPointerEnter` / `objectPointerLeave` / `objectContextMenu` / `ObjectClickPayload` / `ModelEventHandler` / `deriveModelId` / `receiveShadow` / `showViewSwitch` / `events` / `modelTransform` / `modelTransformEnd` / `ModelTransformPayload` / `TransformMode` / `pickable` / `selection` / `gizmo`（后三个守的是「那条三级规则的输入面 `SceneSwitchInput` 别被谁顺手删掉」，而不是「prop 别漏声明」——它们已经不是 prop 了；`gizmoMode` 收进了内部签名，不在名单里）
 - **事件绑定**：默认 5 类齐全且全关、部分补丁不会顺手清掉同一项的另一半、代码能原样导出并写回、默认值没有被任何一个用例改脏
 - **多模型**：`addModel` 是追加不是替换、新条目带全套默认字段且引用独立、`selectModel` 只在合法下标上生效、`patchModel` 按条目寻址且不改动别的模型、`patchModel` 断开宿主对象与配置的别名、`applyConfig` 里的 `models` 是整体替换而不是逐条合并、`removeModel` 删除后选中项收回界内（含删空后仍可追加）、`setModel` 只影响选中项
 - **产物契约**：`dist/index.js` 与 `dist/index.cjs` 里不含 `new Function` / `eval` / 字符串形式的 `setTimeout` ——把「库绝不执行用户代码」从文档承诺钉成会失败的测试
@@ -2354,7 +2405,7 @@ FloorplanPickTarget>`，`floorplanNodeOf` 沿 parent 往上查。不用 `userDat
 - **容器根**：`src/` 下 45 个 `.vue` 的模板里不得出现 `aside` / `header` / `section` / `article` / `footer` / `main` 的**开标签**（`nav` 是刻意的例外）。查的是 `<aside` 这种形态而不是裸字面量——这些文件的注释里写满了那几个标签名（正是在解释为什么不能用），照裸词查会全部误判，与上面 `new Function` 那条踩的是同一个坑。它守的是设计决定 2 那半条：宿主按**标签**写的全局样式会整片压住库的版面，而**不报错**（见目视清单第 153 条）。这一条一落地就抓到了三处（两栏 + 属性面板的每一节 + 事件弹窗的表头与脚注）
 - **模型 id**：建 store 时补上 uuid 形态的 id、换地址换 id 而重复设同一地址不换、卸载换 id、撤销到换模型之前连 id 一起还原、`applyConfig` 携带的 id 原样保留（导出导入往返不丢）
 - **装载整份场景**：这是唯一一组**不靠组件**的（`loadSceneData` 的实现住在 store 里，纯算术、不碰 three 也不碰 DOM，所以装载规则能直接对着 store 验，不必隔着画布）——整表换掉 `models`、给补丁里没带 id 的新条目就地补一个、深合并其余分组，并且**撤销栈被清空**（「初始化」的语义：换了一个场景之后还能 ⌘Z 退回上一个通常不是想要的，`canUndo` 归 `false`、`history.length` 回到 1）；旧格式的 `model` 单对象折成 `models` 列表（少了 `migrateConfig` 那一道**不报错**、只是「载入成功但场景是空的」，所以这条断言是那个迁移在 store 这条路上唯一的防线——`applyConfig` 走的是另一条路，够不着它）；非对象（`null` 与字符串各一次，`null` 也过 `typeof === 'object'` 所以判据里那半条必须单独写）一律**无副作用地**返回 `false`，配置一个字不动；只传一个分组时同分组的其他字段与未提及的分组**原样不动**——`applyConfig` 的深合并语义被搬走一层之后，最容易在这里悄悄退化成整体替换。`initialScene` 则是这节里**走真实渲染**的那半条：SSR 下 `TresCanvas` 的 children 不渲染，但组件 setup 会跑，而它正是在 setup 里写 store 的，所以「prop → store 的一次性装载在 setup 里落了笔」测得到（与「props 真的转发到了底层（`autoRotate`）」同源，都是「宿主写一个 prop、store 立刻有反应」这条路的证据；这一条那个 `renderViewer` 调用刻意排在本节最后，因为它会顺手换掉 active pinia）
-- **视角档位**：`viewModeOf` 是「2D / 3D」这条约定的唯一实现（编辑器的档位按钮与 `SceneContent` 的 `planView` 都吃它的结果，错了会同时错两处、且往两个方向错），所以它单独有一组断言——默认那份斜机位必须是 3D；原点正上方必须是 2D；**容差两侧各测一点**（按角度造机位，偏 4.9° 仍在 2D、偏 5.1° 掉出去），不是照抄那个常数复述实现；机位与注视点重合、机位在注视点下方这两条退化情形都算 3D（除以 0 得到的 `NaN` 恰好也落回 3D，断言的是「有意」而不是「碰巧」）；正俯视但**平移过**的机位仍然算 2D（那一档本来就允许右键平移）。`defaultViewMode` 只有**声明本身**有一条（与 `iconBaseUrl` 同形的反面证据：HTML 里没有 `defaultviewmode` 属性）——它在 `onMounted` / `initialScene` 之后才落笔，SSR 不跑生命周期，真实画面归目视清单 165（设计决定 59）
+- **视角档位**：`viewModeOf` 是「2D / 3D」这条约定的唯一实现（胶囊亮哪一档、`SceneContent` 的 `planView`、户型工具与漫游入口都吃它的结果，错了会同时错几处、且往两个方向错），所以它单独有一组断言——默认那份斜机位必须是 3D；原点正上方必须是 2D；**容差两侧各测一点**（按角度造机位，偏 4.9° 仍在 2D、偏 5.1° 掉出去），不是照抄那个常数复述实现；机位与注视点重合、机位在注视点下方这两条退化情形都算 3D（除以 0 得到的 `NaN` 恰好也落回 3D，断言的是「有意」而不是「碰巧」）；正俯视但**平移过**的机位仍然算 2D（那一档本来就允许右键平移）。`defaultViewMode` 只有**声明本身**有一条（与 `iconBaseUrl` 同形的反面证据：HTML 里没有 `defaultviewmode` 属性）——它在 `onMounted` / `initialScene` 之后才落笔，SSR 不跑生命周期，真实画面归目视清单 165（设计决定 59）
 - **墙面铺装**：墙的 `url` 跟着深拷贝与 JSON 往返一起走、且没写外观的墙上不出现这个键；沿墙平铺时铺满 / 不重叠 / 不留缝（逐块比边界，不是只比块数）、高厚各自拉伸到位；**资产的原点不在包围盒中心时也摆得准**（漏掉那一步整段砖会平移出去）；段长不是整数米时匀着摊、比半块还短的段不会被取整成 0 块、长得离谱的段被块数上限截住之后仍铺满；空包围盒 / 含 `NaN` / 太薄 / 太窄 / 太矮各给一句人话，且退化输入上绝不算出非有限数（`NaN` 灌进 `scale` 会让整个物体从画面上消失且不报错）；**建模时的背景板会被认成「片」筛掉、墙的尺寸不被它带跑**——用的是 `wall/wall1` 那次事故的真实数字（80 × 80 的背景板 + 4 × 2.8 × 0.2 的墙体），断言里同时钉住「脏盒子会被守卫放行」（这正是必须先筛的理由）与「脏盒子只铺出 0.4 米宽的一片」（历史上的那个现象），以及两个退化输入落在正确的一侧：一个顶点都没有的空网格判成片丢掉，含 `NaN` 的网格反过来要留下（丢掉的话它会绕过 NaN 守卫，整面墙变成「干净的半个几何」）
 - **天空盒**：`sun.skybox` 默认是 `null`；六个面通过 `applyConfig` 写进去之后能从 `exportConfig()` 原样导出；`skybox: null` 确实能把它写回「关掉」这个状态；撤销一步能把那六个面退回来。这组断言只覆盖**数据层的往返**——它守的是「关得掉」这条（`applyPatch` 只跳过 `undefined`、不跳过 `null`，改错了的表现是天空盒一旦开就再也关不上），而**画面**那一半属于下面的目视清单：六张图得真的发出去、真的拼成一张 `CubeTexture`，SSR 下连发请求的机会都没有；缺面兜底那一段（`utils/skyboxFill.ts`）还要一张能读像素的画布，Node 里没有。
 - **零件表**：这是设计决定 40 那条链里**唯一能不靠浏览器验**的部分（`SceneModelParts.vue` 画出来的几何体在 SSR 下根本不渲染），所以那四条断言全落在纯函数上——一张正常的零件表逐件读出来（盒子走 `w/h/d`、圆柱走 `rTop/rBottom/h`，没写的 `x` / `z` / `count` / `radius` / `name` / `color` 各补成 0 / 0 / 1 / 0 / 空串 / `#cbd5e1`，`metalness` / `roughness` 补成 0 / 0.8 而**刻意不是** three 自己的 0 / 1）；畸形的零件**逐件剔掉**而不是算出 NaN 顶点（15 件里留 1 剔 14：认不出的 `shape`、`w` 是 `null`（JSON 里没有 `NaN`，坏数字只会以 `null` 或字符串到场）、`w` 是字符串、缺 `w`、`h` 为 0、`x` 不是数、负 `radius`、圆柱负高、两个半径都是 0、`count: 2.5`、`count` 超 `MAX_COUNT`、字符串 / `null` / 数组各一条），剔完还逐件过一遍 `Number.isFinite`——**这一条是「一个 NaN 顶点会让整块几何整块消失且哪里都不报错」的守门人**（机制写在 `SceneModelNode` 的 `measure` 上）；`count + radius` 那条摆放约定的**两半各有一条断言**——第 0 份必须落在 `(0, y, radius)` 且长边仍沿 Z，第 1 份的**位置与朝向必须用同一个 θ**（72°），把「每份跟着转」删掉时第一条照样绿、第二条才会红，而那正是「五条横撑围成一圈切向的方框」那个现象的守门人（顺带钉住没写 `count` 的零件原地不动、圆柱参数表的末位是分段数 24、以及逐份的参数表**不是同一个数组**——共用一个数组就是五件几何体一起变）；整份读不出来时**只给一句人话、一件几何体都不给**——空串 / 纯空白 / 不是 JSON / 顶层是字符串 / 顶层是对象 / `null` 六种各自 `problem !== null`、`parts` 与 `dropped` 都是 0（整份的问题不记成「剔掉了某几件」），件数超 `MAX_PARTS` 也**整份拒掉而不是静默截断**（截断出来的画面「差不多是对的」，最难查），且那句人话里必须写着上限是多少。
@@ -3354,6 +3405,16 @@ FloorplanPickTarget>`，`floorplanNodeOf` 沿 parent 往上查。不用 `userDat
        宿主 `button { ... }` 一类按标签写的全局样式压过来时，「退出漫游」仍保持
        库里的外观（它自带类选择器，不是裸标签）；
        ② **cursor**：待放状态下视口是十字准星，退出后恢复成绘制 / 点选各自的光标。
+  180. **视角胶囊与 `showViewSwitch`**（见设计决定 69）：
+       ① **默认显示**：宿主以 `:editable="false"` 接入、以及不传任何开关的旧画布，
+       右上角都有一枚 2D / 3D 胶囊；点 2D / 3D 的画面与编辑态一致（机位、阴影、
+       无限网格、历史里那一条），宿主那边 `getSceneData()` 跟着变；
+       ② **关掉**：`:show-view-switch="false"` 后胶囊消失，相机拖动、内置工具栏与
+       其余控件不受影响；这一条要在真实宿主页里看一次，不能只看 playground；
+       ③ **编辑态关掉 + 2D**：漫游入口顶到原胶囊的位置（不留空档）；进预览时它顶到
+       标题栏下方 66px，标题栏那句说明里不再提「右上角可换视角」；
+       ④ **例外与唯一性**：`mode="model"` 与漫游中都没有胶囊；编辑态恰好一枚
+       （搬渲染点后叠出两枚只会表现为按钮变粗，盯不出来，所以这里要数一次）。
 - 编辑器的交互（拖放导入、快捷键、导入导出文件、**空档里点选门窗并沿墙拖动**、
   **左栏点一格替换选中的洞口或墙**、**「保存」取数据交给宿主**）
   没有自动化测试，只有类型检查和构建覆盖——上面那组「洞口落点」断言验的是它
@@ -3377,6 +3438,9 @@ store 那两半本身只是两行赋值，所以当时没有为它补冒烟断�
 左栏只放宿主分类），store 那条把替换语义（数量 / id / 姿态与事件保留 / no-op / `partsJson`
 清除 / 目标策略）整组钉住（断言数因此 111 → 114）——`onMounted` 里那三件复位与点击替换本身
 仍然只有目视清单 163 一条防线。
+视角胶囊那一次（设计决定 69）**另加 1 条**：只读画布与旧画布都有胶囊、显式关掉就没有、
+编辑态恰好一枚，外加 `showViewSwitch` 的默认值（断言数 121 → 122）——胶囊按下之后相机怎么走
+SSR 盖不到，归目视清单 180。
 
 ---
 
@@ -3414,8 +3478,9 @@ src/                     库源码，会被打包发布
 │   ├── _canvas.scss     画布作用域约束、内置工具栏、加载与错误态
 │   └── _editor.scss     编辑器那一整层（三栏外壳、两根导轨、属性面板、绘制工具）
 ├── components/          画布与公开组件
-│   ├── SceneViewer.vue     **公开面**：十一个 prop，按 editable / mode 选形态（画布 / 三栏编辑器）
-│   ├── SceneCanvas.vue     内部签名：8 个 prop / 12 个 emits / 6 个方法，编辑器与纯画布共用
+│   ├── SceneViewer.vue     **公开面**：十三个 prop，按 editable / mode 选形态（画布 / 三栏编辑器）
+│   ├── SceneCanvas.vue     内部签名：12 个 prop / 14 个 emits / 6 个方法，编辑器与纯画布共用
+│   ├── SceneViewSwitch.vue 右上角 2D / 3D 视角胶囊（画布态与编辑态共用，见设计决定 69）
 │   ├── SceneContent.vue    TresCanvas 内部：组装下面四个 + 相机 + 控制器 + 物体级变换与拾取
 │   ├── ScenePicker.vue     TresCanvas 内部：画布级点选（pickable 打开时才存在）
 │   ├── SceneWalkControls.vue TresCanvas 内部：第一人称漫游（接管相机、WASD、指针锁、不会渲染任何东西）

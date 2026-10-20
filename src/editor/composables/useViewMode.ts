@@ -22,9 +22,13 @@ import { pushEvent } from './useEditorState'
  * 不可能出现「档位写着 2D、画面其实已经转走」。
  *
  * **推导规则 `viewModeOf` 住在库里**（`src/utils/viewMode.ts`），这里只是把它
- * 原样再转出去，好让既有的两个调用点（`useFloorplanTool.ts` / `SceneStage.vue`）
- * 一个字不用改。搬家的理由在那边写着：墙的 2D 平面图外观要用**同一条**规则，
- * 两份实现不一致的表现是「按钮亮着 2D、墙却铺着贴面」。
+ * 原样再转出去，好让既有的调用点（`useFloorplanTool.ts` / `EditorStage.vue` /
+ * `SceneViewSwitch.vue`）一个字不用改。搬家的理由在那边写着：墙的 2D 平面图外观
+ * 要用**同一条**规则，两份实现不一致的表现是「按钮亮着 2D、墙却铺着贴面」。
+ *
+ * `setViewMode` 的调用点现在有三层：编辑器的 `EditorStage.onViewModeClick`
+ * （还要先处理漫游交接）、`SceneViewer` 的 `defaultViewMode` 与画布态胶囊点击。
+ * 三处共用这一份实现，不各自算机位。
  */
 
 export { viewModeOf }

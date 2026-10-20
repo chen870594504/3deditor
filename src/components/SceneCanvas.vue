@@ -6,11 +6,13 @@ import SceneContent from './SceneContent.vue'
 import ScenePicker from './ScenePicker.vue'
 import SceneSelection from './SceneSelection.vue'
 import SceneToolbar from './SceneToolbar.vue'
+import SceneViewSwitch from './SceneViewSwitch.vue'
 import SceneWalkControls from './SceneWalkControls.vue'
 import { useSceneStore } from '../stores/scene'
 import { parseModelParts } from '../utils/modelParts'
 import { resolveSceneSwitches } from '../utils/sceneSwitches'
 import type { FloorplanPickPayload } from '../utils/floorplanPick'
+import type { ViewMode } from '../utils/viewMode'
 import type {
   CameraChangePayload,
   DeepPartial,
@@ -34,9 +36,8 @@ import type {
   与编辑器共用的只有这一层。名字带 `Canvas` 而不是 `Viewer`：`TdmSceneViewer`
   这个全局名归公开面那个组件所有（`src/index.ts` 的 GlobalComponents 里那一条）。
 
-  它的 prop 是**内部签名**，不随公开面走：公开面只剩四个与「能力」有关的
-  （`height` / `editable` / `autoRotate` / `draco`，见 `SceneViewerProps`），
-  而这里留住能决定画布本身的那些，好让编辑器按自己的意思喂——
+  它的 prop 是**内部签名**，不随公开面走：公开面上那十几条（`SceneViewerProps`）
+  之外，这里留住能决定画布本身的那些，好让编辑器按自己的意思喂——
   `EditorStage` 正是靠这一点传 `:toolbar="false"`（内置工具栏让位）、
   `:gizmo-mode`、`:camera-transition`。
 
@@ -86,6 +87,14 @@ const props = withDefaults(defineProps<{
    * （平面图上那枚标记靠它），只是控制器不再接管相机。
    */
   walkSpawn?: FloorplanPoint | null
+  /**
+   * 右上角 2D / 3D 视角胶囊是否显示。
+   *
+   * 它是画布自己的能力，不是编辑器的一部分（见 DESIGN.md 设计决定 69）：
+   * 公开面用同名 prop 一路传到这一层，编辑态与纯画布都吃同一个值。
+   * 编辑器另外把「模型编辑页」与「漫游中」两档压成 `false`——那两档没有切换的需要。
+   */
+  showViewSwitch?: boolean
 }>(), {
   height: '480px',
   /*
@@ -121,6 +130,13 @@ const props = withDefaults(defineProps<{
   */
   walking: false,
   walkSpawn: null,
+  /*
+    这一条同样**不在**那五个必须写成 `undefined` 的开关里：它没有「宿主说了 false」
+    与「宿主没说」的区分——默认就是显示，写 `false` 就是要收起来。
+    （缺失的布尔 prop 在没有 default 时会被 Vue 转成 `false`，所以这一条必须显式写 `true`，
+    否则所有没传它的宿主都会静默丢掉胶囊。）
+  */
+  showViewSwitch: true,
 })
 
 /**
@@ -148,6 +164,11 @@ const emit = defineEmits<{
   (e: 'floorplanPick', payload: FloorplanPickPayload): void
   (e: 'modelTransform', payload: ModelTransformPayload): void
   (e: 'modelTransformEnd', payload: ModelTransformPayload): void
+  /*
+    视角胶囊选了一档。**内部通道**，不在公开事件表里：`SceneViewer` 在画布形态
+    自己接住并调 `setViewMode`，`EditorStage` 接回它原有的交接逻辑。宿主不必知道。
+  */
+  (e: 'viewModeSelect', mode: ViewMode): void
 }>()
 
 const scene = useSceneStore()
@@ -596,6 +617,23 @@ defineExpose<SceneViewerApi>({
     </TresCanvas>
 
     <SceneToolbar v-if="switches.toolbar" />
+
+    <!--
+      右上角的 2D / 3D 视角胶囊。
+
+      放在 `.tdm-root` 里、`TresCanvas` 之外：它是一层 DOM 浮层，与画布内容无关。
+      位置（`top: 10px; right: 14px`）相对 `.tdm-root`。编辑态下它是 `.tdm-viewport`
+      的内容盒（宽度与高度都是 100%、起点与后者的 padding 盒重合），所以视觉坐标
+      与它还住在 `EditorStage` 里时逐字相同。
+
+      **它不再只属于编辑器**：`editable: false` 的只读画布、不传 `editable` 的旧画布
+      默认都能看到它（见 DESIGN.md 设计决定 69）。点击只把档位发出去——切档那一半
+      在 `SceneViewer`（画布态）与 `EditorStage`（编辑态，还要先处理漫游交接）各自接。
+    -->
+    <SceneViewSwitch
+      v-if="showViewSwitch"
+      @select="emit('viewModeSelect', $event)"
+    />
 
     <!--
       加载进度遮罩。pointer-events: none 是必须的：它是 inset-0 的，

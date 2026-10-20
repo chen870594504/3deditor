@@ -43,7 +43,6 @@ import { commitTransform, selectPickedModel } from '../composables/useModelActio
 import { exitPreview } from '../composables/useSceneActions'
 import { useEditorHooks } from '../hooks'
 import { setViewMode, viewModeOf } from '../composables/useViewMode'
-import type { ViewMode } from '../composables/useViewMode'
 import {
   armWalkPlacement,
   cancelWalkPlacement,
@@ -56,6 +55,7 @@ import {
   walkSpawn,
   walking,
 } from '../composables/useWalkMode'
+import type { ViewMode } from '../../utils/viewMode'
 
 defineOptions({ name: 'TdmEditorStage' })
 
@@ -74,8 +74,15 @@ const props = withDefaults(
      *   「预览中」或者「正拿着画墙工具」，而两种表现都不报错。
      */
     modelMode?: boolean
+    /**
+     * 右上角 2D / 3D 视角胶囊是否显示（公开面 `SceneViewer` 的 `showViewSwitch`）。
+     *
+     * 本组件再把它与自己的两档状态合起来：模型编辑页与漫游中一律不渲染。
+     * 默认 `true`——缺失的布尔 prop 被 Vue 转成 `false` 的话，编辑态也会静默丢掉胶囊。
+     */
+    showViewSwitch?: boolean
   }>(),
-  { modelMode: false },
+  { modelMode: false, showViewSwitch: true },
 )
 
 /*
@@ -479,18 +486,6 @@ const CAMERA_TRANSITION = 450
 // ---------- 视角档位 ----------
 
 /**
- * 两档视角与它们的说明。
- *
- * 与 `TRANSFORM_MODES` 不同，这里没有第三列快捷键：2D / 3D 不绑键。
- * Blender 那套 `5` / numpad `7` 与画布上已有的 W/E/R 不是一套手感，
- * 而单键还要与输入框、中文输入法纠缠（App.vue 里那道 typing 判断），收益不抵成本。
- */
-const VIEW_MODES: { mode: ViewMode; label: string; title: string }[] = [
-  { mode: '2d', label: '2D', title: '2D 俯视角：相机移到正上方并框住当前内容' },
-  { mode: '3d', label: '3D', title: '3D 透视视角：回到进入 2D 之前的机位' },
-]
-
-/**
  * 现在是哪一档。
  *
  * **它是算出来的，不是存下来的**——判据只看机位（视线是否接近竖直朝下）。
@@ -499,6 +494,9 @@ const VIEW_MODES: { mode: ViewMode; label: string; title: string }[] = [
  *
  * 代价是每次配置写入都要重算一次。这一段只有几个 `Math.hypot`，
  * 与拖动时每帧都要跑的渲染相比可以忽略。
+ *
+ * 这里只剩漫游入口一处在读它（`viewMode === '2d'`）；胶囊自己算同一件事
+ * （`SceneViewSwitch` 是纯画布组件，不该为了一个布尔量收 prop）。
  */
 const viewMode = computed(() => viewModeOf(scene.config.camera))
 
@@ -675,11 +673,22 @@ function onViewportContextMenu(event: MouseEvent): void {
 /**
  * 切换 2D / 3D。
  *
+ * 由 `SceneCanvas` 的 `viewModeSelect` 事件调进来——胶囊本身住在画布里
+ * （它是画布的能力，纯画布也有，见设计决定 69），本组件只负责编辑态这段交接。
+ *
  * 与漫游的交接要**等一拍**：`stopWalk` 只是把 `walking` 置回 false，
  * 真正的「相机与轨道控制交还」在 `SceneWalkControls` 的 post watcher 里。
  * 同一拍里就调 `setViewMode`，配置的新机位会先落进 `SceneContent` 的
  * `syncCamera`——而那时它读到的 `walking` 还是 true（props 要等下一轮 flush 才更新），
  * 于是那次写入被整段跳过：配置写成了 3D、画面却停在漫游退出时的 2D 机位。
+ *
+ * **`walking` 那一支不是死代码，别删。** 胶囊在 `walking` 时由父层摘掉，但那是指
+ * 「已经进了漫游」；待放点（`walkArmed`）时点胶囊走的却是另一条时序：
+ * `pointerdown` 冒泡进 `.tdm-viewport` → `previewWalkAt`，`pointerup` 冒泡 →
+ * `startWalkAt`（`walking` 在这里变 true），浏览器**之后**才派发 `click`。
+ * 删掉这一支的表现是：人留在屋里、胶囊已经消失、配置写成 2D 但相机因 `walking`
+ * 不落位——点了没反应，而且没有出口。
+ * `cancelWalkPlacement` 同理：它是待放状态被这一次点击终结的那一步。
  */
 async function onViewModeClick(mode: ViewMode): Promise<void> {
   cancelWalkPlacement()
@@ -708,7 +717,7 @@ async function onViewModeClick(mode: ViewMode): Promise<void> {
 
       全屏之下没有「窗口外面」可以点，于是退出只有两条路：这一行的按钮、以及 Esc。
     -->
-    <PreviewBar v-if="previewMode" />
+    <PreviewBar v-if="previewMode" :view-switch="showViewSwitch" />
 
     <div
       ref="viewport"
@@ -750,6 +759,9 @@ async function onViewModeClick(mode: ViewMode): Promise<void> {
           后者会连带让 `SceneCanvas` 把地面网格当成预览态收起来（`groundForCanvas`），
           而漫游正是最需要地面参照的时候。`undefined` 那一支保留总闸原来的意思
           （预览态已由 `editable` 关完），所以写成三元而不是直接 `false`。
+        - `:show-view-switch` 是宿主那条公开 prop 与这里两档状态的交集：模型编辑页
+          与漫游中一律不渲染（见设计决定 69）。胶囊本身由 `SceneCanvas` 渲染，
+          选中哪一档从 `viewModeSelect` 事件回到下面的 `onViewModeClick`。
       -->
       <SceneCanvas
         ref="viewer"
@@ -764,6 +776,8 @@ async function onViewModeClick(mode: ViewMode): Promise<void> {
         :floorplan-pickable="!modelMode && !planView && !walking"
         :gizmo-mode="gizmoMode"
         :camera-transition="CAMERA_TRANSITION"
+        :show-view-switch="showViewSwitch && !modelMode && !walking"
+        @view-mode-select="onViewModeClick"
         @loaded="onLoaded"
         @progress="onProgress"
         @error="onError"
@@ -817,8 +831,10 @@ async function onViewModeClick(mode: ViewMode): Promise<void> {
         删读数与重排浮层是两件事，真要挪就把右上角的视角档位、左中部的绘制工具条
         一起看（三者的位置本来是互相让出来的）。
 
-        它是**编辑控件**而不是读数，所以预览模式下跟胶囊一起消失（CSS 里同一条规则），
-        没有选中模型时也整块不渲染——没有手柄就没有模式可言。
+        它是**编辑控件**而不是读数，所以预览模式下整块藏掉（CSS 里
+        `.tdm-stage--preview .tdm-gizmo`；视角胶囊与漫游入口不在这条名单里，
+        它们只改「怎么看」，见设计决定 22），没有选中模型时也整块不渲染
+        ——没有手柄就没有模式可言。
       -->
       <div v-if="gizmoVisible" class="tdm-gizmo" role="group" aria-label="变换手柄模式">
         <button
@@ -836,37 +852,17 @@ async function onViewModeClick(mode: ViewMode): Promise<void> {
       </div>
 
       <!--
-        视角档位切换。放在右上角。
+        右上角那枚 2D / 3D 视角胶囊**不在这份模板里**：它已经搬进 `SceneCanvas`
+        （`SceneViewSwitch`），因为纯画布同样要能切档，而显隐归公开 prop
+        `showViewSwitch` 管（见 DESIGN.md 设计决定 69）。
 
-        左上角原先被那条视口 HUD 的四行读数占着，HUD 删掉之后那里空了出来
-        ——挪不挪见上面手柄条那一段。顶边中部是手柄条，右下是操作胶囊，
-        四个角还有 13×13 的装饰角标。
-
-        与手柄条不同，它**没有按选中项决定的 v-if**：它管的是相机而不是模型，
-        空场景里同样有意义。预览模式下跟着其余编辑控件一起由 CSS 关掉。
-
-        **模型编辑页例外**：那一页固定 3D（进页面时 `onMounted` 会切回来），
-        没有任何切换需要，于是整块不渲染。
-        **漫游中也整块不渲染**：此刻切档等于把相机从屋里拽出去，
-        退出漫游走的是底部 HUD 那枚按钮或 Esc。
-
-        「行走」**不在这条胶囊里**：它是一次拖拽动作，不是一个档位。
-        见下面那枚独立的人形按钮。
+        这一层只剩两件与编辑器有关的事：
+        - 它不该出现的那两档——模型编辑页（固定 3D）与漫游中（此刻切档等于把
+          相机从屋里拽出去，退出走底部 HUD 或 Esc）——在下面传给 `SceneCanvas`
+          的 `:show-view-switch` 里压成 `false`；
+        - 选中哪一档仍然从 `viewModeSelect` 回到本组件的 `onViewModeClick`，
+          漫游待放时的交接逻辑还在那里，不能随模板一起搬走。
       -->
-      <div v-if="!modelMode && !walking" class="tdm-view" role="group" aria-label="视角模式">
-        <button
-          v-for="item in VIEW_MODES"
-          :key="item.mode"
-          type="button"
-          class="tdm-view-btn"
-          :class="{ 'tdm-view-btn--on': viewMode === item.mode }"
-          :aria-pressed="viewMode === item.mode"
-          :title="item.title"
-          @click="onViewModeClick(item.mode)"
-        >
-          {{ item.label }}
-        </button>
-      </div>
 
       <!--
         第一人称漫游的入口：一枚独立的人形图标，落在视角胶囊的正下方。
@@ -879,12 +875,16 @@ async function onViewModeClick(mode: ViewMode): Promise<void> {
         **不并进上面那条胶囊**：胶囊里三格都是「此刻在看哪个档」的状态，
         这枚是「按住我，把我放到平面图上」的一次拖拽。并排成一格会读成
         第三个档位——单击切过去，然后呢？所以它单独浮着、只画人形不写字。
+
+        胶囊被宿主关掉时（`:show-view-switch="false"`）这一枚**顶上去**：
+        `--solo` 那一档把 `top` 从 46 收回到 10，否则右上角会空出一块、
+        人形按钮悬在半空（预览里是 66，另有 CSS 覆盖）。
       -->
       <button
         v-if="viewMode === '2d' && !modelMode && !walking"
         type="button"
         class="tdm-walk-btn"
-        :class="{ 'tdm-walk-btn--on': walkArmed }"
+        :class="{ 'tdm-walk-btn--on': walkArmed, 'tdm-walk-btn--solo': !showViewSwitch }"
         :aria-pressed="walkArmed"
         aria-label="第一人称行走"
         title="第一人称行走：按住拖到平面图上松开，就从那里开始走"

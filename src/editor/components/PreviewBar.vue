@@ -5,6 +5,19 @@ import { exitPreview } from '../composables/useSceneActions'
 defineOptions({ name: 'PreviewBar' })
 
 /**
+ * 右上角那枚 2D / 3D 胶囊在不在（公开 prop `showViewSwitch` 透传下来）。
+ *
+ * 它只影响下面那句说明：宿主写 `:show-view-switch="false"` 时胶囊不渲染，
+ * 「右上角可换视角」就成了假话。关掉时也**不提**「可走进屋里」——漫游入口
+ * 只在 2D 里出现，而胶囊不在时界面上没有任何手段切到 2D（机位由配置决定，
+ * 进来是 3D 就只能停在 3D）。说明宁可少一句，也不能指一个不存在的按钮。
+ *
+ * 默认 `true`：这一层不给默认值时，缺失的布尔 prop 会被 Vue 转成 `false`，
+ * 于是正常预览里那句提示也会被删掉（见 `SceneViewer` 里同一类注释）。
+ */
+withDefaults(defineProps<{ viewSwitch?: boolean }>(), { viewSwitch: true })
+
+/**
  * 预览窗口顶上那一条。
  *
  * 它是**窗口的标题栏**，只做三件事：说明这是什么、说明现在能做什么、
@@ -26,7 +39,9 @@ defineOptions({ name: 'PreviewBar' })
   <div class="tdm-preview-bar">
     <span class="tdm-micro">预览</span>
     <b class="tdm-preview-name">{{ sceneName }}</b>
-    <span class="tdm-preview-note">只读——模型点不动、绘制工具已收起；右上角可换视角、可走进屋里</span>
+    <!-- 两种文案的分界见上面 `viewSwitch` 那段：胶囊不在时后半句整句删掉 -->
+    <span v-if="viewSwitch" class="tdm-preview-note">只读——模型点不动、绘制工具已收起；右上角可换视角、可走进屋里</span>
+    <span v-else class="tdm-preview-note">只读——模型点不动、绘制工具已收起</span>
 
     <span class="tdm-spacer" />
 

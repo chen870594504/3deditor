@@ -31,7 +31,8 @@ export const TOP_TOLERANCE = Math.sin((5 * Math.PI) / 180)
  * 现在算哪一档。
  *
  * 收 `camera` 而不是在内部取 store：让调用方自己决定依赖谁——
- * `SceneStage` 拿它算一个 computed，`SceneContent` 也是。
+ * `EditorStage` 与 `SceneViewSwitch` 各自把它算成一个 computed，
+ * `SceneContent` 也是。
  *
  * 三条判据缺一不可：
  *
