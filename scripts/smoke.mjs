@@ -1036,11 +1036,9 @@ check('样式产物包含组件用到的作用域类', () => {
       宿主右上角都会静默少一块。
 
       `.tdm-view` 本身**不列**：那个子串会被 `.tdm-viewport` 命中，
-      列进来就是一条永远为真的断言。`--solo` 是「胶囊关掉时漫游入口顶上去」
-      那一档，只在编辑态出现，同样只有样式产物能证明它还在。
+      列进来就是一条永远为真的断言。
     */
     'tdm-view-btn',
-    'tdm-walk-btn--solo',
   ]
   const missing = needed.filter((name) => !css.includes(`.${name}`))
   assert(missing.length === 0, `缺少样式类：${missing.join(', ')}`)

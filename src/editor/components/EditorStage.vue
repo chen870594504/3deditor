@@ -876,15 +876,16 @@ async function onViewModeClick(mode: ViewMode): Promise<void> {
         这枚是「按住我，把我放到平面图上」的一次拖拽。并排成一格会读成
         第三个档位——单击切过去，然后呢？所以它单独浮着、只画人形不写字。
 
-        胶囊被宿主关掉时（`:show-view-switch="false"`）这一枚**顶上去**：
-        `--solo` 那一档把 `top` 从 46 收回到 10，否则右上角会空出一块、
-        人形按钮悬在半空（预览里是 66，另有 CSS 覆盖）。
+        **胶囊被宿主关掉时，这一枚跟着隐藏**（`:show-view-switch="false"`）：
+        宿主关的不是胶囊这一块图形，而是右上角这一组「怎么看」的控件；
+        只留人形按钮会读成漏画了一枚，而且胶囊没了之后也切不到 2D 之外，
+        留着它没有意义。模型编辑页与漫游中那两档已经由下面自己的条件挡住。
       -->
       <button
-        v-if="viewMode === '2d' && !modelMode && !walking"
+        v-if="showViewSwitch && viewMode === '2d' && !modelMode && !walking"
         type="button"
         class="tdm-walk-btn"
-        :class="{ 'tdm-walk-btn--on': walkArmed, 'tdm-walk-btn--solo': !showViewSwitch }"
+        :class="{ 'tdm-walk-btn--on': walkArmed }"
         :aria-pressed="walkArmed"
         aria-label="第一人称行走"
         title="第一人称行走：按住拖到平面图上松开，就从那里开始走"

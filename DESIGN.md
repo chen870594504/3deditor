@@ -661,7 +661,7 @@ Vue 3.5 的 `useTemplateRef(key)` 末尾是 `readonly(shallowRef(null))`——�
 
 纵向位置是这两枚在预览里唯一不同的地方：标题栏浮在 `top: 0`、占掉约 56px，原位置（`top: 10px` / `46px`）会被它压住，那条渐变会把点击一起吃掉。所以预览覆盖里把它们挪到 `top: 66px` / `102px`（仍是编辑态那套上下关系，整体下移一个标题栏的高度），并把 `z-index` 抬到 41 压过标题栏的 40——窄屏上说明文字折行、标题栏比预期高时，控件仍然点得中。
 
-视角胶囊后来搬进了 `SceneCanvas`（设计决定 69），那两条覆盖是后代选择器、照样命中，位置一个像素没变。**宿主用 `:show-view-switch="false"` 关掉胶囊时**，漫游入口跟着换成 `--solo` 一档、从 102px 顶到 66px（不让右上角空出一格），标题栏那句「右上角可换视角」也一并去掉——预览里的说明不能指一个不存在的按钮。
+视角胶囊后来搬进了 `SceneCanvas`（设计决定 69），那两条覆盖是后代选择器、照样命中，位置一个像素没变。**宿主用 `:show-view-switch="false"` 关掉胶囊时**，漫游入口**一并隐藏**（宿主关的是右上角这一组「怎么看」的控件），标题栏那句「右上角可换视角、可走进屋里」也整个去掉——预览里的说明不能指不存在的按钮。
 
 这条改过两回，两回的教训都留着：
 
@@ -2344,10 +2344,14 @@ FloorplanPickTarget>`，`floorplanNodeOf` 沿 parent 往上查。不用 `userDat
 唯一的差别是 box-sizing：按钮落进 `.tdm-root *` 的 border-box，没注入 reset 的宿主
 会看到胶囊从约 50px 收到 34px——这是库不注入全局 reset（硬性约束 2）的边界，不是回归。
 
-**胶囊被关掉时，漫游入口自己顶上去**（`.tdm-walk-btn--solo`）：它原先固定
-`top: 46px`，那是「胶囊在正上方」的位置，胶囊没了会悬空。预览里另有一档覆盖
-（66px），与胶囊在时的编辑态逐像素同形。预览标题栏那句「右上角可换视角」也跟着
-`PreviewBar` 的 `viewSwitch` 分支一起消失——说明宁可少一句，也不指一个不存在的按钮。
+**胶囊被关掉时，漫游入口跟着隐藏。** 宿主写 `:show-view-switch="false"` 关掉的
+不是一枚按钮，而是右上角这一组「怎么看」的控件——只看不动场景的那两只。只留人形
+入口会读成漏画了一枚，而且胶囊不在时界面没有任何手段切到 2D（探针只认「俯视 /
+斜视」两档），入口多数时候根本不可达。判据直接与 `showViewSwitch` 取交集
+（模型编辑页与漫游中由模板自己的条件挡住），没有另给漫游单开一条 prop：
+两件事在宿主眼里是同一组控件，分开关只会多一个「关了胶囊却还剩一枚人形」的
+中间态。预览标题栏那句「右上角可换视角、可走进屋里」也跟着
+`PreviewBar` 的 `viewSwitch` 分支一起消失——说明宁可少一句，也不指不存在的按钮。
 
 ---
 
@@ -2392,7 +2396,7 @@ FloorplanPickTarget>`，`floorplanNodeOf` 沿 parent 往上查。不用 `userDat
   `WALK_RADIUS` 算期望值，改半径时这条会红而不是继续通过）、贴墙 0.1 → 0.38、旋转 90° 的墙
   同距、远处不推。**记住这一组只验「推出算术」**：逐帧移动、起点标记、退出还原、HUD
   归目视清单 174-179
-- **样式产物**：组件样式类齐全、作用域样式存在、无全局 reset 泄漏、无 playground 样式混入；其中包含 `.tdm-view-btn` 与 `.tdm-walk-btn--solo`——视角胶囊现在由画布渲染、样式却留在 `_editor.scss`（硬性约束 8），两个文件哪一个掉了链子只有这里抓得住（`.tdm-view` 本身不查：那个子串会被 `.tdm-viewport` 命中，查了也是恒真）
+- **样式产物**：组件样式类齐全、作用域样式存在、无全局 reset 泄漏、无 playground 样式混入；其中包含 `.tdm-view-btn`——视角胶囊现在由画布渲染、样式却留在 `_editor.scss`（硬性约束 8），两个文件哪一个掉了链子只有这里抓得住（`.tdm-view` 本身不查：那个子串会被 `.tdm-viewport` 命中，查了也是恒真）
 - **配置模型**：`models` 是数组且默认为空、新造出来的条目字段齐全、5 类事件各自是独立对象（防别名）、store 是深拷贝（不会污染 `DEFAULT_SCENE_CONFIG`）、深合并不清空未提及的分支、`undefined` 被跳过、导出往返幂等
 - **历史栈**：undo/redo 能还原与前进、resetConfig 复位
 - **物体级**：`deriveModelId` 表驱动（7 组输入）、三元组是整体替换而非逐项合并、**`repeat` 深拷进配置 / 整体替换 / 且默认值里不存在**（渲染层拿「这个键在不在」当「要不要去动模型自带的贴图」的开关，默认值里多一个 `[1, 1]` 会抹掉资产自带的 `KHR_texture_transform`）、`resetConfig` 会复位变换、`dist/*.d.ts` 里有 `objectClick` / `objectDblclick` / `objectPointerEnter` / `objectPointerLeave` / `objectContextMenu` / `ObjectClickPayload` / `ModelEventHandler` / `deriveModelId` / `receiveShadow` / `showViewSwitch` / `events` / `modelTransform` / `modelTransformEnd` / `ModelTransformPayload` / `TransformMode` / `pickable` / `selection` / `gizmo`（后三个守的是「那条三级规则的输入面 `SceneSwitchInput` 别被谁顺手删掉」，而不是「prop 别漏声明」——它们已经不是 prop 了；`gizmoMode` 收进了内部签名，不在名单里）
@@ -3411,8 +3415,9 @@ FloorplanPickTarget>`，`floorplanNodeOf` 沿 parent 往上查。不用 `userDat
        无限网格、历史里那一条），宿主那边 `getSceneData()` 跟着变；
        ② **关掉**：`:show-view-switch="false"` 后胶囊消失，相机拖动、内置工具栏与
        其余控件不受影响；这一条要在真实宿主页里看一次，不能只看 playground；
-       ③ **编辑态关掉 + 2D**：漫游入口顶到原胶囊的位置（不留空档）；进预览时它顶到
-       标题栏下方 66px，标题栏那句说明里不再提「右上角可换视角」；
+       ③ **编辑态关掉 + 2D**：`:show-view-switch="false"` 之后右上角**两枚都不在**
+       ——胶囊与漫游入口一起隐藏，不留一枚悬空的人形按钮；进预览也一样，
+       且标题栏那句说明里不再提「可换视角、可走进屋里」；
        ④ **例外与唯一性**：`mode="model"` 与漫游中都没有胶囊；编辑态恰好一枚
        （搬渲染点后叠出两枚只会表现为按钮变粗，盯不出来，所以这里要数一次）。
 - 编辑器的交互（拖放导入、快捷键、导入导出文件、**空档里点选门窗并沿墙拖动**、
