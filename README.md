@@ -35,7 +35,7 @@ createApp(App).use(createThreeDMaker()).mount('#app')
 | `editable`      | `boolean`                  | —         | 预览 / 编辑总闸                          |
 | `mode`          | `'scene' \| 'model'`       | `'scene'` | `'model'` = 编辑模型页（本身即编辑形态） |
 | `defaultViewMode` | `'2d' \| '3d'`           | —         | 初始视角：`'2d'` 俯视 / `'3d'` 透视；不传沿用场景机位 |
-| `showViewSwitch` | `boolean`                  | `true`    | 右上角 2D / 3D 视角胶囊是否显示（预览态也有） |
+| `showViewSwitch` | `boolean`                  | `true`    | 右上角 2D / 3D 视角胶囊与漫游入口是否显示（预览态也有） |
 | `height`        | `string \| number`         | `'480px'` | 组件高度，数字按 px                      |
 | `autoRotate`    | `boolean`                  | `false`   | 自动旋转视角                             |
 | `draco`         | `boolean`                  | `false`   | 模型是否 Draco 压缩（写在当前选中项上）  |

@@ -9,7 +9,7 @@ import {
   selectedWall,
 } from './useFloorplanTool'
 import { exitPreview, redo, undo } from './useSceneActions'
-import { cancelWalkPlacement, stopWalk, walkArmed, walking } from './useWalkMode'
+import { cancelWalkPlacement, stopWalk, walkArmed, walking } from '../../composables/useWalkMode'
 
 /**
  * 编辑器的全局快捷键。**由 `SceneEditor` 在 setup 里调一次**。

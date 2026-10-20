@@ -86,7 +86,7 @@ pnpm preview      # 预览构建产物
 组件分层（**三层都在 `src/` 内部，公开面仍然只有一份**）：
 
 ```
-SceneCanvas.vue  由合并后的 SceneViewer.vue 改名而来，收窄成**内部签名**：12 个 prop /
+SceneCanvas.vue  由合并后的 SceneViewer.vue 改名而来，收窄成**内部签名**：11 个 prop /
                  14 个 emits / 6 个方法。编辑器与纯画布共用，宿主永远碰不到——公开面上
                  那几组「场景长什么样」的 prop 桥（`background` / `wireframe` / 分组配置…）
                  全删了，它们本来就住在 `store.config` 里；这里只留能决定画布本身的那些
@@ -162,22 +162,27 @@ SceneViewer.vue  公开面：十三个 prop（editable / mode / defaultViewMode 
 以及**探测必须带 `crossOrigin="anonymous"`**（不带的话跨域 svg 照样 `onload`，探测放行、
 渲染遮罩时才被拦，导轨上多出一格空白——兜底就白兜了）。
 
-**第一人称漫游是编辑器里唯一一处「临时的相机接管」**（设计决定 68）。状态住在
-`composables/useWalkMode.ts`（模块级 `walking` / `walkArmed` / `walkSpawn`），
+**第一人称漫游是唯一一处「临时的相机接管」，而且已经是画布的能力**（设计决定 68 与 70）。
+状态住在 `src/composables/useWalkMode.ts`（模块级 `walking` / `walkArmed` / `walkSpawn`），
 **不进 `config`、不进历史、不进导出**——走路是观察方式，不是场景改动。
 它分三层落地，改之前先认清各在哪一层：
 
-- **入口与界面**在 `EditorStage.vue`：右上角视角胶囊**正下方**单独一枚人形图标
-  （不并进胶囊，且**只在 2D 里渲染**——3D 里拖出的点要经过一次相机飞行，
-  途中 `groundPointAt` 仍按旧机位算，人会落偏）。按住它拖到平面图上，松开落点
-  （`pointerdown` 记起点、6px 阈值之后才把指针当成拖拽，否则单击按钮会在
-  按钮脚下生成一个人）；待放期间视口套 `.tdm-viewport--walk`，底部 HUD 是退出口。
-  户型工具的分流包了一层 `onViewportPointer*`：`walkArmed` 时指针只喂给起点预览。
+- **入口与界面**在 `src/components/SceneWalkEntry.vue`，由 `SceneCanvas` 渲染——
+  编辑态、编辑器预览、纯画布（`editable: false`）共用同一枚，这是设计决定 70
+  的主题。右上角视角胶囊**正下方**单独一枚人形图标（不并进胶囊，且**只在 2D 里渲染**
+  ——3D 里拖出的点要经过一次相机飞行，途中 `groundPointAt` 仍按旧机位算，人会落偏）。
+  按住它拖到平面图上，松开落点（`pointerdown` 记起点、6px 阈值之后才把指针当成拖拽，
+  否则单击按钮会在按钮脚下生成一个人）；待放提示与底部 HUD（退出口）也在这里。
+  `showEntry` 取公开 prop `showViewSwitch`，但组件**总是挂载**——漫游中途宿主关掉
+  那一档时 HUD 与 Esc 不能跟着消失。
+  落点分流分两条：编辑态仍由 `EditorStage.onViewportPointer*` 先判 `walkArmed`
+  再让位给户型工具；纯画布走 `SceneCanvas` 的 `walkRouting`（只有 `SceneViewer`
+  画布形态传 `true`）。两边都接会让指针冒泡顺序把同一批事件先判成漫游、再落成墙。
 - **相机与移动**在 `src/components/SceneWalkControls.vue`，挂在 `TresCanvas` 内部
   （所以拿得到活的相机与轨道控制）。进入时关 `OrbitControls.enabled`、逐帧 WASD；
   退出时**先写相机位置、再写 target、最后 `update()`**，顺序换了会被 `minDistance`
-  顶开几米。起点标记 `src/editor/components/SceneWalkMarker.vue` 只画待放 / 已落点、
-  进入漫游后不画。
+  顶开几米。起点标记 `src/components/SceneWalkMarker.vue` 由 `SceneCanvas` 渲染，
+  只画待放 / 已落点、进入漫游后不画。
 - **碰撞算术**在 `src/utils/walk.ts`（纯函数，从 `index.ts` 导出给冒烟）：
   `collectWalkObstacles` 复用 `wallPieces`，只留 `role === 'wall'` 且与人体竖向范围
   相交的碎片——门洞天然可过、窗的窗台矮墙天然挡人，不要另写一套户型解析。
@@ -185,10 +190,13 @@ SceneViewer.vue  公开面：十三个 prop（editable / mode / defaultViewMode 
 两处联动缺了就会互相打架：`SceneContent` 在 `walking` 时**跳过配置 → 相机的同步**并
 掐掉还在飞的过渡；`useFloorplanTool` 的 `planView` 在 `walking` 时**为假**（否则 2D
 实色墙与户型工具会在漫游中回来）。快捷键里 Esc 的优先级最高一档是退出漫游，
-其次才是取消待放（`useEditorShortcuts.ts`），且漫游中 W 是「前进」、不是手柄模式。
+其次才是取消待放（`useEditorShortcuts.ts`）；`SceneWalkEntry` 也为纯画布挂了同一条
+Esc（两处同时命中是幂等的），且漫游中 W 是「前进」、不是手柄模式。
 `SceneCanvas` 还有一层**只给显示用的覆盖**：`walking` 时把 `shadow.enabled` 算成 `true`
 再传给画布（2D 把配置里的总开关写成了 `false`，屋里一片平光就看不出深浅），
 **不写回配置**、不进历史，右栏读数仍是配置里那个 `false`。
+事件日志（「第一人称漫游：从 … 开始 / 已退出」）住在 `EditorStage`：它监听
+`walking` 的两条沿补上，`useWalkMode` 自己不 import 编辑器状态。
 
 ### `playground/`（宿主示例）
 
@@ -291,8 +299,10 @@ host 这一层。
   内部，指针锁、WASD、鼠标转视角、相机回位全要真实输入与 `requestAnimationFrame`，
   SSR 一行都盖不到。冒烟够得着的只有两条碰撞纯函数（`collectWalkObstacles` 门留 2 段、
   窗留 3 段；`resolveWalkPosition` 的推离量），起点标记 / 拖放落点 / HUD 同样测不到。
-  真实手感归目视清单 174-179——**改 `utils/walk.ts` 或 `SceneWalkControls.vue` 时
-  必须同时看一眼那几条**。
+  真实手感归目视清单 174-179；**入口搬进画布之后纯画布那一路**（`walkRouting` 的落点分流、
+  `showEntry` 与 HUD 的分离、`SceneWalkEntry` 自己的 Esc、卸载复位）同样一行都盖不到，
+  归目视清单 181——**改 `utils/walk.ts`、`SceneWalkControls.vue` 或
+  `SceneWalkEntry.vue` 时必须同时看一眼那几条**。
 - 天空盒的**面到轴映射**（错了不报错，只是天整体转到别的方向）
 - 模板 ref 指向 three 对象时的浅引用陷阱（dev 下只是一条警告，生产里静默失效）
 - 那段 `new Function` 执行器（库自身从不执行配置里的任何 `code`）
@@ -336,7 +346,7 @@ host 这一层。
 | 文件 | 读者 | 内容 |
 |---|---|---|
 | `README.md` | 用这个库的宿主 | **一份精简卡片（≤80 行）**：一句话简介、安装、快速开始、三条核心概念、props / 事件 / 对外方法三张表 |
-| `DESIGN.md` | 改这个仓库的人 | 编辑器的设计、**69 条编号设计决定**、180 条**目视清单**、目录结构、发布流程、待办 |
+| `DESIGN.md` | 改这个仓库的人 | 编辑器的设计、**70 条编号设计决定**、181 条**目视清单**、目录结构、发布流程、待办 |
 
 `README.md` 是一份**面向宿主的用法卡片**，结构是固定的（**总长 ≤80 行**）：一句话简介 →
 安装（一条命令）→ 快速开始（一个最小示例）→ 核心概念（最多 3 条）→ props / 事件 / 对外方法

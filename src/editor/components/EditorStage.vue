@@ -17,7 +17,6 @@ import ModelActions from './ModelActions.vue'
 import FloorplanTools from './FloorplanTools.vue'
 import PreviewBar from './PreviewBar.vue'
 import SceneFloorplanDraft from './SceneFloorplanDraft.vue'
-import SceneWalkMarker from './SceneWalkMarker.vue'
 import {
   canvasApi,
   gizmoMode,
@@ -44,17 +43,15 @@ import { exitPreview } from '../composables/useSceneActions'
 import { useEditorHooks } from '../hooks'
 import { setViewMode, viewModeOf } from '../composables/useViewMode'
 import {
-  armWalkPlacement,
   cancelWalkPlacement,
   previewWalkAt,
   resetWalkMode,
   startWalkAt,
   stopWalk,
   walkArmed,
-  walkHint,
   walkSpawn,
   walking,
-} from '../composables/useWalkMode'
+} from '../../composables/useWalkMode'
 import type { ViewMode } from '../../utils/viewMode'
 
 defineOptions({ name: 'TdmEditorStage' })
@@ -75,7 +72,7 @@ const props = withDefaults(
      */
     modelMode?: boolean
     /**
-     * 右上角 2D / 3D 视角胶囊是否显示（公开面 `SceneViewer` 的 `showViewSwitch`）。
+     * 右上角 2D / 3D 视角胶囊与漫游入口是否显示（公开面 `SceneViewer` 的 `showViewSwitch`）。
      *
      * 本组件再把它与自己的两档状态合起来：模型编辑页与漫游中一律不渲染。
      * 默认 `true`——缺失的布尔 prop 被 Vue 转成 `false` 的话，编辑态也会静默丢掉胶囊。
@@ -328,6 +325,29 @@ watch(
   },
 )
 
+/**
+ * 漫游事件的两条沿：进与出各记一条。
+ *
+ * 文案原先写在 `useWalkMode` 的 `startWalkAt` / `stopWalk` 里，可那份状态已经
+ * 搬进画布层（见设计决定 70）：`pushEvent` 是编辑器的界面状态，纯画布没有事件面板，
+ * 让它 import 进画布等于给只读画布白背一层编辑器状态。所以日志留在需要它的这一层，
+ * 监听 `walking` 的两条沿补上——起点坐标从 `walkSpawn` 取，文案逐字未变。
+ *
+ * 不写成 `immediate`：进页面时状态一定是静止的，补一条历史没有意义。
+ */
+watch(walking, (on, was) => {
+  if (on) {
+    const point = walkSpawn.value
+    if (point) {
+      pushEvent(
+        `第一人称漫游：从 (${point[0].toFixed(1)}, ${point[1].toFixed(1)}) 开始`,
+      )
+    }
+    return
+  }
+  if (was) pushEvent('已退出第一人称漫游')
+})
+
 onUnmounted(() => {
   if (litTimer) clearTimeout(litTimer)
   for (const url of dropUrls) URL.revokeObjectURL(url)
@@ -483,45 +503,7 @@ function onTransformEnd(payload: ModelTransformPayload): void {
  */
 const CAMERA_TRANSITION = 450
 
-// ---------- 视角档位 ----------
-
-/**
- * 现在是哪一档。
- *
- * **它是算出来的，不是存下来的**——判据只看机位（视线是否接近竖直朝下）。
- * 于是撤销、套预设、点「重置机位」、在面板里手改位置之后，档位自己就是对的，
- * 不可能出现「写着 2D、画面其实已经转走」。
- *
- * 代价是每次配置写入都要重算一次。这一段只有几个 `Math.hypot`，
- * 与拖动时每帧都要跑的渲染相比可以忽略。
- *
- * 这里只剩漫游入口一处在读它（`viewMode === '2d'`）；胶囊自己算同一件事
- * （`SceneViewSwitch` 是纯画布组件，不该为了一个布尔量收 prop）。
- */
-const viewMode = computed(() => viewModeOf(scene.config.camera))
-
 // ---------- 第一人称漫游 ----------
-
-/**
- * 右上角那枚人形按钮的拖动落点。
- *
- * 交互是「按下按钮 → 拖到平面图上 → 松开」，所以按下之后要给按钮**指针捕获**：
- * 不捕获的话指针一离开按钮，后续的 move / up 就全落到视口上，按钮这一侧
- * 收不到松手，人也就永远走不进去。
- *
- * `moved` 是「这一次到底拖没拖」的记录，阈值与 `CLICK_MAX_DRIFT` 同一个量级。
- * 没有它的话，单纯点一下按钮（按下的位置也在视口矩形里）会被判成
- * 「在按钮底下那个点松开」——人凭空出现在按钮背后，而用户以为只是点了一下。
- * 点一下的正确语义是**进入待落点**：提示行会接着说要干什么。
- */
-interface WalkPress {
-  x: number
-  y: number
-  moved: boolean
-}
-
-let walkPress: WalkPress | null = null
-const WALK_DRAG_THRESHOLD = 6
 
 /**
  * 指针位置 → 地面上的点，**并且要求落在视口矩形里**。
@@ -529,6 +511,10 @@ const WALK_DRAG_THRESHOLD = 6
  * 只在视口内取点，是因为拖动会越过边缘（松在右栏、松在工具栏上），
  * 而 `groundPointAt` 对画布外的坐标照样会给出一个交点——那是射线延伸出去的
  * 位置，不是用户指的地方。松在视口外就该当作「这次没落下」。
+ *
+ * 入口按钮与 HUD 已经搬进画布（`SceneWalkEntry`，见设计决定 70），
+ * 这里只剩「待落点时直接点平面图」这一条分流——它必须先于户型工具，
+ * 所以留在编辑器自己的视口事件里，而不是画布的 `walkRouting`（那条只给纯画布用）。
  */
 function walkPointOf(event: PointerEvent): FloorplanPoint | null {
   const el = viewportRef.value
@@ -545,77 +531,6 @@ function walkPointOf(event: PointerEvent): FloorplanPoint | null {
   }
 
   return canvasApi.groundPointAt?.(event.clientX, event.clientY) ?? null
-}
-
-function onWalkButtonDown(event: PointerEvent): void {
-  if (event.button !== 0) return
-  // 按住拖动时别顺手选中按钮上的文字
-  event.preventDefault()
-
-  /*
-    按钮只在 2D 里渲染，这里仍然按配置再判一次。
-
-    判据是**配置推导出来的**（`viewModeOf`），按下这一刻它可能已经翻成 3D
-    ——比如右栏刚把机位拖回斜视、画面还没重绘。不在 2D 时只切档、不接住
-    这一次拖动：切档的机位过渡有 450ms，途中 `groundPointAt` 用的是还在飞的
-    相机，同一块屏幕坐标落在飞行的中途会指向完全不同的地方，松手之后人会
-    出现在离指针很远的位置。让用户再拖一次，只多一下，换来的是「落点永远
-    与看到的一致」。
-  */
-  const inPlan = viewModeOf(scene.config.camera) === '2d'
-
-  if (inPlan) {
-    walkPress = { x: event.clientX, y: event.clientY, moved: false }
-    ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
-  }
-
-  armWalkPlacement()
-}
-
-/**
- * 键盘 Enter / Space 触发的 click，与指针那条路共用这枚按钮。
- *
- * 指针路径在 `pointerdown` 里就已经进入待落点；拖拽落点松手时浏览器还会
- * 补一个 click，那时已经在漫游里了——不拦的话它会重新把 `walkArmed` 置真，
- * 退出漫游后视口还挂着十字准星，再点一下平面图又会莫名进屋子。
- */
-function onWalkButtonClick(): void {
-  if (walking.value) return
-  armWalkPlacement()
-}
-
-function onWalkButtonMove(event: PointerEvent): void {
-  const press = walkPress
-  if (!press || !walkArmed.value) return
-
-  if (!press.moved) {
-    press.moved =
-      Math.hypot(event.clientX - press.x, event.clientY - press.y) > WALK_DRAG_THRESHOLD
-    if (!press.moved) return
-  }
-
-  previewWalkAt(walkPointOf(event))
-}
-
-function onWalkButtonUp(event: PointerEvent): void {
-  const press = walkPress
-  walkPress = null
-
-  const el = event.currentTarget as HTMLElement
-  if (el.hasPointerCapture(event.pointerId)) el.releasePointerCapture(event.pointerId)
-
-  // 没拖动过：这次只是「进入待落点」，等用户直接点平面图
-  if (!press || !press.moved) return
-
-  const point = walkPointOf(event)
-  if (point) startWalkAt(point)
-}
-
-function onWalkButtonCancel(event: PointerEvent): void {
-  walkPress = null
-  const el = event.currentTarget as HTMLElement
-  if (el.hasPointerCapture(event.pointerId)) el.releasePointerCapture(event.pointerId)
-  cancelWalkPlacement()
 }
 
 /**
@@ -771,8 +686,6 @@ async function onViewModeClick(mode: ViewMode): Promise<void> {
         :pickable="walking ? false : undefined"
         :selection="walking ? false : undefined"
         :gizmo="walking ? false : undefined"
-        :walking="walking"
-        :walk-spawn="walkSpawn"
         :floorplan-pickable="!modelMode && !planView && !walking"
         :gizmo-mode="gizmoMode"
         :camera-transition="CAMERA_TRANSITION"
@@ -805,11 +718,9 @@ async function onViewModeClick(mode: ViewMode): Promise<void> {
           -->
           <SceneFloorplanDraft />
           <!--
-            第一人称的起点标记（跟着指针的预览点，或上一次的起点）。
-            与草稿同一条性质：它是界面状态的可视化，配置里没有它的位置。
-          -->
-          <SceneWalkMarker />
-          <!--
+            第一人称的起点标记**不在这一层**：它已经跟着入口搬进 `SceneCanvas`
+            （`SceneWalkMarker`），纯画布也要画它（见设计决定 70）。
+
             宿主自己的 3D 内容排在**最后**：上面那件是编辑器的内部件，
             它要在，而宿主注入的东西不该插在它前面——顺序会影响渲染次序，
             内部件的位置是编辑器说了算的。
@@ -865,41 +776,15 @@ async function onViewModeClick(mode: ViewMode): Promise<void> {
       -->
 
       <!--
-        第一人称漫游的入口：一枚独立的人形图标，落在视角胶囊的正下方。
+        第一人称漫游的入口**不在这份模板里**：它已经搬进 `SceneCanvas`
+        （`SceneWalkEntry`），因为纯画布（`editable: false`）同样要能进去走一圈
+        ——宿主装了库就能在只读画布上「点击预览」，漫游是那条路上同样成立的能力
+        （见 DESIGN.md 设计决定 70）。
 
-        **只在 2D 里渲染。** 3D 里拖出落点要先经过一次相机飞行，飞行途中
-        `groundPointAt` 用的还是旧机位，同一块屏幕坐标会指向别处——松手之后
-        人出现在离指针很远的位置。而漫游本来就是「在平面图上挑个位置进去」，
-        先在 3D 里把按钮亮出来只会让人先撞上那个错位。
-
-        **不并进上面那条胶囊**：胶囊里三格都是「此刻在看哪个档」的状态，
-        这枚是「按住我，把我放到平面图上」的一次拖拽。并排成一格会读成
-        第三个档位——单击切过去，然后呢？所以它单独浮着、只画人形不写字。
-
-        **胶囊被宿主关掉时，这一枚跟着隐藏**（`:show-view-switch="false"`）：
-        宿主关的不是胶囊这一块图形，而是右上角这一组「怎么看」的控件；
-        只留人形按钮会读成漏画了一枚，而且胶囊没了之后也切不到 2D 之外，
-        留着它没有意义。模型编辑页与漫游中那两档已经由下面自己的条件挡住。
+        编辑态仍然管着它的两档显隐：模型编辑页与漫游中在传给 `SceneCanvas` 的
+        `:show-view-switch` 里压成 `false`（入口跟着胶囊一起收起）；
+        「只在 2D 里渲染」这条判据在 `SceneWalkEntry` 自己那里。
       -->
-      <button
-        v-if="showViewSwitch && viewMode === '2d' && !modelMode && !walking"
-        type="button"
-        class="tdm-walk-btn"
-        :class="{ 'tdm-walk-btn--on': walkArmed }"
-        :aria-pressed="walkArmed"
-        aria-label="第一人称行走"
-        title="第一人称行走：按住拖到平面图上松开，就从那里开始走"
-        @pointerdown="onWalkButtonDown"
-        @pointermove="onWalkButtonMove"
-        @pointerup="onWalkButtonUp"
-        @pointercancel="onWalkButtonCancel"
-        @click="onWalkButtonClick"
-      >
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <circle cx="12" cy="4.6" r="2.4" />
-          <path d="M12 7.6v6.2M8 21l4-7.2 4 7.2M7.2 10.4 12 8.4l4.8 2" />
-        </svg>
-      </button>
 
       <!--
         选中某个模型时才出现的操作胶囊。放在 .tdm-dropzone 之前只是因为
@@ -932,28 +817,18 @@ async function onViewModeClick(mode: ViewMode): Promise<void> {
         而「斜着点不落点」这类**拒绝**如果没有一句话说明，表现出来就是
         「点了没反应」——编辑器没有 toast 体系，只有这里能说。
 
-        漫游的待落点提示也走这一条（`walkHint` 优先）：它同样是一个
-        「按下去之后画面没有立刻变化」的交互，发现路径只有这一行。
+        漫游的待落点提示**不在这里**：它跟着入口一起进了画布
+        （`SceneWalkEntry` 渲染 `walkHint`），两种形态共用同一条提示；
+        这里只保留绘制工具自己的那一行，两者不会同时有内容。
       -->
-      <p v-if="!modelMode && !walking && (walkHint || floorplanHint)" class="tdm-draw-hint">
-        {{ walkHint || floorplanHint }}
+      <p v-if="!modelMode && !walking && !walkArmed && floorplanHint" class="tdm-draw-hint">
+        {{ floorplanHint }}
       </p>
 
       <!--
-        漫游中的操作说明。
-
-        第一人称没有可见的控制器，三条操作（走、看、退）在画面上都没有落点，
-        不说就只能靠猜；而 `pointerlock` 还有一条单独的坑——锁定之后光标消失，
-        第一次遇到的人常常以为页面卡住了。所以在锁定入口写清「点击画面锁定鼠标」。
-
-        容器不吃指针事件（漫游时整块画布都在等鼠标），只有退出按钮例外。
+        漫游中的 HUD**不在这里**：它跟着入口搬进了 `SceneWalkEntry`，
+        纯画布里同样需要一枚看得见的退出按钮（见设计决定 70）。
       -->
-      <div v-if="walking" class="tdm-walk-hud" role="status">
-        <span class="tdm-walk-hud-text">
-          WASD / 方向键移动 · 鼠标转视角（点击画面锁定指针） · Shift 加速 · Esc 退出
-        </span>
-        <button type="button" class="tdm-walk-exit" @click="stopWalk">退出漫游</button>
-      </div>
 
       <div v-if="dropping" class="tdm-dropzone">
         {{ modelMode ? '释放以替换模型（glTF / GLB）' : '释放以载入 glTF / GLB' }}

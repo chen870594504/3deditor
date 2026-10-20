@@ -23,7 +23,7 @@ import type { LibrarySectionKey } from './useModelLibrary'
  */
 import { layFloorModel } from './useModelActions'
 import { setViewMode, viewModeOf } from './useViewMode'
-import { walking } from './useWalkMode'
+import { walking } from '../../composables/useWalkMode'
 
 /**
  * 视口里的绘制工具。

@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, provide, useTemplateRef, watch } from 'vue'
+import { computed, nextTick, onMounted, provide, useTemplateRef, watch } from 'vue'
 import SceneCanvas from './SceneCanvas.vue'
 import SceneEditor from '../editor/components/SceneEditor.vue'
 import { EDITOR_ASSETS_KEY, useEditorAssets } from '../editor/assets'
 import { useSceneStore } from '../stores/scene'
 import { setViewMode } from '../editor/composables/useViewMode'
+import { cancelWalkPlacement, stopWalk, walking } from '../composables/useWalkMode'
 import { viewModeOf } from '../utils/viewMode'
 import type { ViewMode } from '../utils/viewMode'
 import {
@@ -33,8 +34,8 @@ import type {
     `extraSections`、点模型只替换不追加、右栏只留历史与宿主页、中栏固定 3D。
   - 其余 → `SceneCanvas`（纯画布；`false` 是四个开关全关的只读态，
     **不传**则走旧默认——内置工具栏还开着，那是 `editable` 出现之前的形状）。
-    两档右上角都有 2D / 3D 视角胶囊：它住在画布里，由 `showViewSwitch`
-    控制、默认显示（见设计决定 69）。
+    两档右上角都有 2D / 3D 视角胶囊与第一人称漫游入口：它们住在画布里，
+    由 `showViewSwitch` 控制、默认显示（见设计决定 69 与 70）。
 
   两种形态共用同一块画布（`SceneCanvas`），所以 `defineExpose` 那 6 个方法
   与 12 个事件在哪种形态下都成立。区别只在「谁来喂画布那几个内部值」：
@@ -184,8 +185,23 @@ onMounted(() => { void applyDefaultViewMode() })
  *
  * 不在这里做 `silent`：`silent` 只压日志，而「点了按钮改了什么」本来就该看得见。
  * 也不派发 `cameraChange`（那是拖动结束后回写机位的事件），同 `defaultViewMode`。
+ *
+ * 与漫游的交接要**等一拍**，与编辑态的 `onViewModeClick` 同一条理由：
+ * `stopWalk` 只把 `walking` 置回 false，相机交还在 `SceneWalkControls` 的
+ * post watcher 里；同一拍写机位的话，`SceneContent` 的 `syncCamera` 读到的
+ * 仍是旧 props（`walking: true`），那次写入被整段跳过，画面停在漫游退出时的机位。
+ *
+ * 待落点（`walkArmed`）时点胶囊同样先撤掉这次落点：否则等一拍期间
+ * `pointerup` 可能已经在胶囊背后落下一个人。
  */
-function onViewModeSelect(mode: ViewMode): void {
+async function onViewModeSelect(mode: ViewMode): Promise<void> {
+  cancelWalkPlacement()
+
+  if (walking.value) {
+    stopWalk()
+    await nextTick()
+  }
+
   void setViewMode(mode)
 }
 
@@ -384,6 +400,7 @@ defineExpose<SceneViewerApi>({
     :height="height"
     :editable="editable"
     :show-view-switch="showViewSwitch"
+    walk-routing
     v-on="forwarded"
     @view-mode-select="onViewModeSelect"
   >

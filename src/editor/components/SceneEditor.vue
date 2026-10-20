@@ -63,7 +63,7 @@ const props = withDefaults(
     /** 宿主追加的模型分类。scene 模式追加在五类之后，model 模式是左栏的全部内容 */
     extraSections?: ExtraLibrarySection[]
     /**
-     * 右上角 2D / 3D 视角胶囊是否显示。
+     * 右上角 2D / 3D 视角胶囊与它下面的漫游入口是否显示。
      *
      * 一路透传到中栏，与 `SceneViewer` 的公开 prop 同名同义。默认 `true`——
      * 这一条不能像那五个开关那样写 `undefined`：没有默认值时，缺失的布尔 prop

@@ -1,6 +1,6 @@
 # 设计决定与验证清单
 
-这个文件是 `3deditor` 仓库的**内部文档**：编辑器的设计、69 条编号设计决定、验收用的目视清单，
+这个文件是 `3deditor` 仓库的**内部文档**：编辑器的设计、70 条编号设计决定、验收用的目视清单，
 以及仓库目录结构与发布流程。给宿主看的用法在 [README.md](README.md) 里，两者刻意分开——
 README 回答「怎么用这个库」，这里回答「为什么这么写、改了要重新验什么」。
 
@@ -661,7 +661,11 @@ Vue 3.5 的 `useTemplateRef(key)` 末尾是 `readonly(shallowRef(null))`——�
 
 纵向位置是这两枚在预览里唯一不同的地方：标题栏浮在 `top: 0`、占掉约 56px，原位置（`top: 10px` / `46px`）会被它压住，那条渐变会把点击一起吃掉。所以预览覆盖里把它们挪到 `top: 66px` / `102px`（仍是编辑态那套上下关系，整体下移一个标题栏的高度），并把 `z-index` 抬到 41 压过标题栏的 40——窄屏上说明文字折行、标题栏比预期高时，控件仍然点得中。
 
-视角胶囊后来搬进了 `SceneCanvas`（设计决定 69），那两条覆盖是后代选择器、照样命中，位置一个像素没变。**宿主用 `:show-view-switch="false"` 关掉胶囊时**，漫游入口**一并隐藏**（宿主关的是右上角这一组「怎么看」的控件），标题栏那句「右上角可换视角、可走进屋里」也整个去掉——预览里的说明不能指不存在的按钮。
+视角胶囊后来搬进了 `SceneCanvas`（设计决定 69），漫游入口随后也跟着搬了进去
+（`SceneWalkEntry`，设计决定 70）。那两条覆盖是后代选择器、照样命中，位置一个像素没变。
+**宿主用 `:show-view-switch="false"` 关掉胶囊时**，漫游入口**一并隐藏**（宿主关的是右上角
+这一组「怎么看」的控件），标题栏那句「右上角可换视角、可走进屋里」也整个去掉
+——预览里的说明不能指不存在的按钮。
 
 这条改过两回，两回的教训都留着：
 
@@ -2233,7 +2237,8 @@ FloorplanPickTarget>`，`floorplanNodeOf` 沿 parent 往上查。不用 `userDat
 **人形圆形按钮**，**只在 2D 里渲染**；按住它拖到平面图上、松开就落在那里。从 3D 里
 看不到它——要漫游就先切到 2D，再拖（理由见下面「为什么只留 2D」那一层）。
 **场景预览里也保留**：预览只是盖在编辑器上的一层底衬，不是第三种档位，3D 里先切到
-2D，入口就照常出现在标题栏下方（位置见设计决定 22）。
+2D，入口就照常出现在标题栏下方（位置见设计决定 22）。入口后来搬进了画布、纯画布
+（`editable: false`）同样有它，见设计决定 70。
 
 **它不并进档位胶囊。** 胶囊里每一格都是「此刻在看哪个档」的三选一状态，而这一枚是
 一次拖拽动作；并排成一格会读成第三个档位（单击切过去，然后呢？）。所以它单独浮着、
@@ -2242,15 +2247,15 @@ FloorplanPickTarget>`，`floorplanNodeOf` 沿 parent 往上查。不用 `userDat
 **为什么只留 2D。** 3D 里拖出落点要先经过一次 450ms 的相机飞行，飞行途中
 `groundPointAt` 用的还是旧机位，同一块屏幕坐标会指向完全不同的地方，松手之后人
 出现在离指针很远的位置。而漫游本来就是「在平面图上挑个位置进去」的动作，先切到 2D
-再走是唯一不会骗人的顺序。`onWalkButtonDown` 里仍然按配置再判一次 2D，那是防
-「配置刚被右栏改回 3D、画面还没重绘」的竞态。
+再走是唯一不会骗人的顺序。`SceneWalkEntry` 的 `onButtonDown` 里仍然按配置再判一次
+2D，那是防「配置刚被右栏改回 3D、画面还没重绘」的竞态。
 
 **为什么不是从机位推导出来的第四种档位。** `viewModeOf` 只认识「俯视 / 斜视」两档，
 而漫游的判据是「相机被谁控制」，不是「相机朝哪」。硬把它塞进 `viewModeOf` 会让
 「右栏把机位拖成俯视」也变成漫游——那正是 `planView` 依赖它的地方，2D 的实色墙与
-户型工具会跟着一起翻车。所以它是一份**独立的模块级状态**（`useWalkMode.ts` 的
-`walking`），和 `selectedIndex` 同类：**不进 `config`、不进历史、不进导出**。
-走路是观察方式，不是对场景的改动；进去走一圈再退出来，历史里一条都不该多。
+户型工具会跟着一起翻车。所以它是一份**独立的模块级状态**（`src/composables/useWalkMode.ts`
+的 `walking`，后来搬出编辑器，见设计决定 70），和 `selectedIndex` 同类：**不进 `config`、
+不进历史、不进导出**。走路是观察方式，不是对场景的改动；进去走一圈再退出来，历史里一条都不该多。
 
 **相机接管压在两处，缺一处就会互相打架。** `SceneWalkControls.vue` 挂在 `TresCanvas`
 内部（所以够得着活的相机、渲染器与轨道控制），进入时把 `OrbitControls.enabled` 关掉、
@@ -2277,8 +2282,8 @@ FloorplanPickTarget>`，`floorplanNodeOf` 沿 parent 往上查。不用 `userDat
 （`groundForCanvas`），漫游里脚下就空了。所以只把 `pickable` / `selection` / `gizmo`
 按 `walking ? false : undefined` 压成关，保住「不传总闸」那条三级规则；手柄、模型操作、
 档位胶囊与漫游入口一起藏起来，`planView` 为假、户型工具也不接指针。起点标记
-（`SceneWalkMarker.vue`）只在**还没进去**时画：待放状态跟指针走，进去之后交给眼睛，
-不留一个穿模的人形在原地。
+（`src/components/SceneWalkMarker.vue`，由 `SceneCanvas` 渲染）只在**还没进去**时画：
+待放状态跟指针走，进去之后交给眼睛，不留一个穿模的人形在原地。
 
 **漫游时阴影强制打开，同样只在显示层。** 漫游是从 2D 进来的，而 2D 那一档会把
 `shadow.enabled` 写成 `false`（俯视里影子只干扰读图，见设计决定里 2D 那一段）。
@@ -2347,11 +2352,77 @@ FloorplanPickTarget>`，`floorplanNodeOf` 沿 parent 往上查。不用 `userDat
 **胶囊被关掉时，漫游入口跟着隐藏。** 宿主写 `:show-view-switch="false"` 关掉的
 不是一枚按钮，而是右上角这一组「怎么看」的控件——只看不动场景的那两只。只留人形
 入口会读成漏画了一枚，而且胶囊不在时界面没有任何手段切到 2D（探针只认「俯视 /
-斜视」两档），入口多数时候根本不可达。判据直接与 `showViewSwitch` 取交集
-（模型编辑页与漫游中由模板自己的条件挡住），没有另给漫游单开一条 prop：
-两件事在宿主眼里是同一组控件，分开关只会多一个「关了胶囊却还剩一枚人形」的
+斜视」两档），入口多数时候根本不可达。入口后来跟着漫游一起搬进了画布
+（`SceneWalkEntry`，见设计决定 70），这条规则落成它自己的 `showEntry` 取
+`showViewSwitch`；编辑器仍然把模型编辑页压成 `false`，漫游中则由
+`SceneCanvas` 直接收起胶囊、入口按钮自己按 `!walking` 让位。没有另给漫游单开一条
+prop：两件事在宿主眼里是同一组控件，分开关只会多一个「关了胶囊却还剩一枚人形」的
 中间态。预览标题栏那句「右上角可换视角、可走进屋里」也跟着
 `PreviewBar` 的 `viewSwitch` 分支一起消失——说明宁可少一句，也不指不存在的按钮。
+
+---
+
+## 设计决定 70：第一人称漫游是画布的能力，纯画布也能走进去
+
+决策 69 把视角胶囊搬进画布之后，用户又报了同一类缺口：宿主以 `editable: false`
+接入时，切到 2D 能看到胶囊，但**胶囊正下方那枚人形入口不存在**——同一份配置，
+编辑页里能走进屋里看，宿主自己的预览页里不能。判据与 69 逐字相同：漫游只改
+「怎么看」，不改场景内容（设计决定 68 已经确立它不进 `config` / 历史 / 导出），
+所以它属于画布，不属于编辑器。
+
+**状态搬出编辑器。** `useWalkMode.ts` 从 `src/editor/composables/` 移到
+`src/composables/`，四个模块级 ref 与五个动作（arm / preview / cancel / start /
+stop）原样保留。两处编辑器专属的依赖被拆掉：
+
+- `pushEvent`（事件日志）：那个面板只有编辑器有，纯画布没有。日志留在
+  `EditorStage` 里，改成监听 `walking` 的两条沿补上，文案逐字不变；
+- `armWalkPlacement` 里那次防御性的 `setViewMode('2d')`：`setViewMode` 是编辑器的
+  动作（还带历史与日志），搬进画布层等于让只读画布白背一层编辑器状态。
+  入口只在 2D 里渲染，`SceneWalkEntry.onButtonDown` 再按配置判一次；不在 2D 时
+  直接不接这一次拖动（与旧行为一致），不再顺手切档。
+
+**入口、提示与 HUD 都进了 `SceneWalkEntry.vue`**，由 `SceneCanvas` 在 `.tdm-root`
+里渲染；起点标记 `SceneWalkMarker.vue` 进了 `src/components/`，由 `SceneCanvas`
+放在 `TresCanvas` 内部（宿主 `#scene` 插槽之前）。四种形态因此同形：编辑态、
+编辑器预览、只读画布、旧画布默认值。显隐仍然归 `showViewSwitch`：编辑器的
+模型编辑页把它压成 `false`；漫游中胶囊由 `SceneCanvas` 收起、入口按钮自己按
+`!walking` 让位。**`SceneWalkEntry` 本身总是挂载**（不随 `showViewSwitch` 装卸），
+只有按钮受 `showEntry` 控制——否则漫游中途宿主关掉那一档，HUD 与 Esc 会一起消失，
+屋里的人没有出口。
+
+**落点分流有两条，谁接管由 `walkRouting` 决定。** 入口按钮自己的拖动用指针捕获，
+不经过任何分流。待落点之后「直接点平面图」这一下：
+
+- 编辑态继续用 `EditorStage` 的 `onViewportPointer*`。那里必须先判漫游，因为
+  同一批指针事件还要分给户型工具——没有待落点时转给画墙 / 门窗，有待落点时
+  才当成落点。这条优先级不能搬进画布；
+- 纯画布没有户型工具可争，`SceneViewer` 给 `SceneCanvas` 传内部 prop
+  `walkRouting: true`，由画布根节点在 `pointerdown` / `pointerup` 上预览与落点。
+  浮层（胶囊、入口按钮、HUD）上的事件先剔掉——否则点一下胶囊，`pointerup`
+  会先在胶囊背后那块地面落一个人，随后才去切档。
+
+两边都接管的话，指针冒泡顺序会让同一批事件先被画布判成「开始漫游」、再落到
+户型工具上被当成「落下一段墙」——所以 `walkRouting` 默认为 `false`，只有画布
+形态打开。
+
+**Esc 在纯画布里也要能出来。** 编辑态的 Esc 排在 `useEditorShortcuts` 的六级
+优先级里；纯画布没有那一层，`SceneWalkEntry` 自己挂一条 window `keydown`：
+漫游中退出、待放时取消。编辑态两条同时存在只是幂等——第二次调用看见
+`walking` 已为假直接返回。
+
+**样式仍住在 `_editor.scss`。** 与决策 69 同一条：`dist/style.css` 是单文件，
+两种形态都带着它；位置从 `.tdm-viewport` 的 padding 盒挪到 `.tdm-root`，
+两者起点重合（只有 1px 边框、没有内边距），视觉坐标一字未变，
+`.tdm-stage--preview .tdm-walk-btn` 那条覆盖是后代选择器、照样命中。
+编辑态里绘制工具的提示行让位给漫游提示（`!walkArmed`），不会叠出两行。
+
+**复位点跟着组件走。** 状态是模块级的，`SceneCanvas` 卸载时 `resetWalkMode()`
+（编辑态的 `EditorStage` 也清一次，两处幂等）。少这一条的表现是带着
+`walking: true` 进下一个页面，新画布一挂上就处在「正在漫游」而没有任何控制器
+接管的半截状态——不报错，只表现为相机转不动。
+
+这一条没有新增冒烟断言：入口的指针拖动、纯画布的落点分流与 Esc 全在
+`onMounted` / 指针事件里，SSR 一行都盖不到。防线是目视清单第 181 条。
 
 ---
 
@@ -2395,7 +2466,8 @@ FloorplanPickTarget>`，`floorplanNodeOf` 沿 parent 往上查。不用 `userDat
   `resolveWalkPosition` 断门洞正中原地不动、窗洞被推到 `墙厚 / 2 + WALK_RADIUS`（用导出的
   `WALK_RADIUS` 算期望值，改半径时这条会红而不是继续通过）、贴墙 0.1 → 0.38、旋转 90° 的墙
   同距、远处不推。**记住这一组只验「推出算术」**：逐帧移动、起点标记、退出还原、HUD
-  归目视清单 174-179
+  归目视清单 174-179；入口搬进画布之后纯画布那一路（落点分流、Esc、`walkRouting`）
+  同样一行都盖不到，归目视清单 181
 - **样式产物**：组件样式类齐全、作用域样式存在、无全局 reset 泄漏、无 playground 样式混入；其中包含 `.tdm-view-btn`——视角胶囊现在由画布渲染、样式却留在 `_editor.scss`（硬性约束 8），两个文件哪一个掉了链子只有这里抓得住（`.tdm-view` 本身不查：那个子串会被 `.tdm-viewport` 命中，查了也是恒真）
 - **配置模型**：`models` 是数组且默认为空、新造出来的条目字段齐全、5 类事件各自是独立对象（防别名）、store 是深拷贝（不会污染 `DEFAULT_SCENE_CONFIG`）、深合并不清空未提及的分支、`undefined` 被跳过、导出往返幂等
 - **历史栈**：undo/redo 能还原与前进、resetConfig 复位
@@ -3420,6 +3492,25 @@ FloorplanPickTarget>`，`floorplanNodeOf` 沿 parent 往上查。不用 `userDat
        且标题栏那句说明里不再提「可换视角、可走进屋里」；
        ④ **例外与唯一性**：`mode="model"` 与漫游中都没有胶囊；编辑态恰好一枚
        （搬渲染点后叠出两枚只会表现为按钮变粗，盯不出来，所以这里要数一次）。
+  181. **纯画布里的第一人称漫游**（见设计决定 70）：
+       ① **入口出现**：宿主以 `:editable="false"` 接入（用真实宿主页，不要只看
+       playground）切到 2D，胶囊正下方有人形按钮；位置、悬停与 3D 里不出现这条
+       与编辑态逐像素一致；`:show-view-switch="false"` 时两枚一起消失；
+       ② **拖放起点**：按住按钮拖到房间中央松开 → 进漫游，标记与提示行都跟编辑态
+       一样；单击按钮不生成人；Esc / 右键 / 拖出画布取消待放；
+       ③ **直接点平面图**：待放时点一下地面，人从那里开始走（纯画布这条分流
+       只由画布自己接管，编辑态那条仍先让位给户型工具，两边不能同时接）；
+       ④ **点胶囊不落人**：待放时点 2D / 3D 胶囊，只切档、不生成人，也不会
+       卡在半截状态；
+       ⑤ **走路与退出**：WASD / Shift / 鼠标锁定与编辑态一致；底部 HUD 在、
+       「退出漫游」点得中；Esc 能退出；退出后相机回到配置里的机位，
+       `getSceneData()` 与进去之前逐字段一致（历史上不多记录）；
+       ⑥ **宿主关掉右上角控件时**：漫游中途把 `showViewSwitch` 改成 `false`，
+       胶囊与入口消失，但 HUD 与 Esc 仍在——人必须出得来；
+       ⑦ **模型编辑页**：`mode="model"` 里没有入口（与没有胶囊同一条）；
+       ⑧ **切换页面**：带着漫游状态卸载宿主页，再挂一个新的画布，新画布是静止的
+       3D / 2D 画面，不会一进来就是「正在漫游、相机转不动」。
+
 - 编辑器的交互（拖放导入、快捷键、导入导出文件、**空档里点选门窗并沿墙拖动**、
   **左栏点一格替换选中的洞口或墙**、**「保存」取数据交给宿主**）
   没有自动化测试，只有类型检查和构建覆盖——上面那组「洞口落点」断言验的是它
@@ -3446,6 +3537,9 @@ store 那两半本身只是两行赋值，所以当时没有为它补冒烟断�
 视角胶囊那一次（设计决定 69）**另加 1 条**：只读画布与旧画布都有胶囊、显式关掉就没有、
 编辑态恰好一枚，外加 `showViewSwitch` 的默认值（断言数 121 → 122）——胶囊按下之后相机怎么走
 SSR 盖不到，归目视清单 180。
+漫游入口搬进画布那一次（设计决定 70）**一条都不加**：入口拖动、纯画布的落点分流与
+Esc 全在指针 / 生命周期里，SSR 下 `TresCanvas` 的 children 本来也不渲染；断言数仍是 122，
+真实行为归目视清单 181。
 
 ---
 
@@ -3476,6 +3570,7 @@ src/                     库源码，会被打包发布
 ├── utils/pointerClick.ts      「算不算一次单击」的唯一判据（物体事件与画布点选同源）
 ├── utils/modelNodeRegistry.ts 「这个网格属于哪个模型」的内部登记簿（WeakMap）
 ├── utils/walk.ts        第一人称漫游的碰撞算术：挡路的墙、站在某点该被推到哪（纯函数）
+├── composables/useWalkMode.ts 第一人称漫游的界面状态（模块级；编辑态与纯画布共用，见设计决定 70）
 ├── stores/scene.ts      Pinia store（id: tdm-scene）：配置 + 历史栈 + 运行时状态
 ├── styles/              库样式（手写 SCSS，`index.scss` 用 `@use` 组织 partial）
 │   ├── index.scss       入口：只做 `@use`，顺序即产物里规则的顺序
@@ -3484,8 +3579,10 @@ src/                     库源码，会被打包发布
 │   └── _editor.scss     编辑器那一整层（三栏外壳、两根导轨、属性面板、绘制工具）
 ├── components/          画布与公开组件
 │   ├── SceneViewer.vue     **公开面**：十三个 prop，按 editable / mode 选形态（画布 / 三栏编辑器）
-│   ├── SceneCanvas.vue     内部签名：12 个 prop / 14 个 emits / 6 个方法，编辑器与纯画布共用
+│   ├── SceneCanvas.vue     内部签名：11 个 prop / 14 个 emits / 6 个方法，编辑器与纯画布共用
 │   ├── SceneViewSwitch.vue 右上角 2D / 3D 视角胶囊（画布态与编辑态共用，见设计决定 69）
+│   ├── SceneWalkEntry.vue  漫游入口 / 待放提示 / HUD（画布态与编辑态共用，见设计决定 70）
+│   ├── SceneWalkMarker.vue 漫游起点标记（TresCanvas 内部，由 SceneCanvas 渲染）
 │   ├── SceneContent.vue    TresCanvas 内部：组装下面四个 + 相机 + 控制器 + 物体级变换与拾取
 │   ├── ScenePicker.vue     TresCanvas 内部：画布级点选（pickable 打开时才存在）
 │   ├── SceneWalkControls.vue TresCanvas 内部：第一人称漫游（接管相机、WASD、指针锁、不会渲染任何东西）
@@ -3499,10 +3596,10 @@ src/                     库源码，会被打包发布
     ├── assets.ts        资产源：`useEditorAssets()` 的取值口，兜底是下面那份内置默认
     ├── defaultAssets.ts **库内置的默认：两个根地址（素材与分类图标），没有清单**（清单在服务器**根目录**那份 `index.json` 里，图在另一个同级目录里），没人覆盖时就是它，见设计决定 50、52、53 与 54
     ├── hooks.ts         回调宿主的唯一一道缝：模型事件的代码由宿主执行，库只发事件（不含 `new Function`）
-    ├── components/      SceneEditor.vue（三栏外壳）/ EditorStage.vue（中栏，渲染 SceneCanvas）/ SceneWalkMarker.vue（漫游起点标记）
+    ├── components/      SceneEditor.vue（三栏外壳）/ EditorStage.vue（中栏，渲染 SceneCanvas）
     │   ├── side/        左栏：图标导轨 + 模型库宫格（地板 / 墙壁 / 门 / 窗 / 天空盒）
     │   └── inspector/   右栏属性面板：图标 tab 导轨 + schema 字段控件
-    ├── composables/     编辑器状态、场景预设、属性面板 schema、素材清单（`useAssetManifest`）、分类图标（`useCategoryIcons`）与漫游状态（`useWalkMode`）
+    ├── composables/     编辑器状态、场景预设、属性面板 schema、素材清单（`useAssetManifest`）、分类图标（`useCategoryIcons`）
     └── utils/           面板图标与插槽名前缀（`panelSlots.ts`）、标签、数值格式化
 
 playground/              宿主示例，不会进入库产物。只放库碰不得的两件东西 ＋ 一个外壳

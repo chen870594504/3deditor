@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, useTemplateRef } from 'vue'
+import { computed, onUnmounted, useTemplateRef } from 'vue'
 import { TresCanvas } from '@tresjs/core'
 import type { Object3D } from 'three'
 import SceneContent from './SceneContent.vue'
@@ -8,7 +8,18 @@ import SceneSelection from './SceneSelection.vue'
 import SceneToolbar from './SceneToolbar.vue'
 import SceneViewSwitch from './SceneViewSwitch.vue'
 import SceneWalkControls from './SceneWalkControls.vue'
+import SceneWalkEntry from './SceneWalkEntry.vue'
+import SceneWalkMarker from './SceneWalkMarker.vue'
 import { useSceneStore } from '../stores/scene'
+import {
+  cancelWalkPlacement,
+  previewWalkAt,
+  startWalkAt,
+  walkArmed,
+  walking,
+  walkSpawn,
+  resetWalkMode,
+} from '../composables/useWalkMode'
 import { parseModelParts } from '../utils/modelParts'
 import { resolveSceneSwitches } from '../utils/sceneSwitches'
 import type { FloorplanPickPayload } from '../utils/floorplanPick'
@@ -16,7 +27,6 @@ import type { ViewMode } from '../utils/viewMode'
 import type {
   CameraChangePayload,
   DeepPartial,
-  FloorplanPoint,
   ModelBounds,
   ModelConfig,
   ModelExportGeometry,
@@ -74,27 +84,24 @@ const props = withDefaults(defineProps<{
   /** 机位过渡时长（毫秒），0 = 瞬移。编辑器给 450，纯画布给 0 */
   cameraTransition?: number
   /**
-   * 正在第一人称漫游。
+   * 是否显示右上角这一组「怎么看」的控件：2D / 3D 视角胶囊与它下面那枚
+   * 第一人称漫游入口。
    *
-   * 它是编辑器的界面状态，公开面上没有：纯画布不该有「人站在屋里」这种形态。
-   * 打开时相机的位姿归 `SceneWalkControls` 管，配置里的机位原样不动。
-   */
-  walking?: boolean
-  /**
-   * 漫游起点 `[x, z]`；为 `null` 时不挂控制器。
-   *
-   * 与 `walking` 分成两个量而不是合成一个：退出漫游之后起点仍然留着
-   * （平面图上那枚标记靠它），只是控制器不再接管相机。
-   */
-  walkSpawn?: FloorplanPoint | null
-  /**
-   * 右上角 2D / 3D 视角胶囊是否显示。
-   *
-   * 它是画布自己的能力，不是编辑器的一部分（见 DESIGN.md 设计决定 69）：
+   * 它是画布自己的能力，不是编辑器的一部分（见 DESIGN.md 设计决定 69 与 70）：
    * 公开面用同名 prop 一路传到这一层，编辑态与纯画布都吃同一个值。
-   * 编辑器另外把「模型编辑页」与「漫游中」两档压成 `false`——那两档没有切换的需要。
+   * 编辑器另外把「模型编辑页」与「漫游中」两档压成 `false`——那两档没有切换 / 入场的需要。
    */
   showViewSwitch?: boolean
+  /**
+   * 「直接点平面图落点」这条指针分流是否由画布自己接管。
+   *
+   * 纯画布没有别的东西会和它抢指针，所以 `SceneViewer` 给 `true`；
+   * 编辑态的视口还要把同一批指针事件先分给绘制工具，那条优先级在
+   * `EditorStage` 的 `onViewportPointer*` 里（没有指针指向漫游时就转给户型工具），
+   * 所以编辑态保持 `false`——两边都接管的话，指针冒泡顺序会让同一批事件
+   * 先被画布判成「开始漫游」，再落到户型工具上被当成「落下一段墙」。
+   */
+  walkRouting?: boolean
 }>(), {
   height: '480px',
   /*
@@ -125,16 +132,13 @@ const props = withDefaults(defineProps<{
     也没有「宿主说了 false」与「宿主没说」的区分——默认就是关，编辑器按需打开。
   */
   floorplanPickable: false,
+  /* 同上：没有三级规则，画布形态的 `SceneViewer` 按需打开 */
+  walkRouting: false,
   /*
-    这两个默认值与 `floorplanPickable` 同类：没有三级规则，编辑器按需打开。
-  */
-  walking: false,
-  walkSpawn: null,
-  /*
-    这一条同样**不在**那五个必须写成 `undefined` 的开关里：它没有「宿主说了 false」
+    这一条**不在**那五个必须写成 `undefined` 的开关里：它没有「宿主说了 false」
     与「宿主没说」的区分——默认就是显示，写 `false` 就是要收起来。
     （缺失的布尔 prop 在没有 default 时会被 Vue 转成 `false`，所以这一条必须显式写 `true`，
-    否则所有没传它的宿主都会静默丢掉胶囊。）
+    否则所有没传它的宿主都会静默丢掉胶囊与漫游入口。）
   */
   showViewSwitch: true,
 })
@@ -257,7 +261,7 @@ const groundForCanvas = computed(() =>
  * 用户在 3D 里特意选的方式与开关，不该被「进去走一圈」改掉。
  */
 const canvasShadow = computed<ShadowConfig>(() => {
-  if (!props.walking || scene.config.shadow.enabled) return scene.config.shadow
+  if (!walking.value || scene.config.shadow.enabled) return scene.config.shadow
   return { ...scene.config.shadow, enabled: true }
 })
 
@@ -371,6 +375,62 @@ function measureModel(id: string): ModelBounds | null {
 function groundPointAt(clientX: number, clientY: number): [number, number] | null {
   return contentRef.value?.groundPointAt(clientX, clientY) ?? null
 }
+
+/**
+ * 画布自己那条「直接点平面图落点」的分流（只给 `walkRouting` 打开的画布形态用）。
+ *
+ * 浮层上的点击要先剔掉：胶囊、人形入口、HUD 都浮在画布上，若不剔除，
+ * 待落点时点一下胶囊，`pointerup` 会先在「胶囊背后那块地面」上落下一个人，
+ * 随后那次 `click` 才去切档——人已经进了屋子。入口按钮自己的拖动走的是
+ * 指针捕获（`SceneWalkEntry`），不经过这里。
+ *
+ * `pointerdown` 只预览不落点，`pointerup` 才落——与编辑器那边同一条手感：
+ * 按下去先看见标记跟着走，松开才算数。
+ */
+function walkGroundPointOf(event: PointerEvent): [number, number] | null {
+  const target = event.target as HTMLElement | null
+  if (target?.closest('.tdm-view, .tdm-walk-btn, .tdm-walk-hud')) return null
+  return groundPointAt(event.clientX, event.clientY)
+}
+
+function onWalkPointerDown(event: PointerEvent): void {
+  if (!props.walkRouting || !walkArmed.value || event.button !== 0) return
+  previewWalkAt(walkGroundPointOf(event))
+}
+
+function onWalkPointerUp(event: PointerEvent): void {
+  if (!props.walkRouting || !walkArmed.value) return
+  const point = walkGroundPointOf(event)
+  if (point) startWalkAt(point)
+  else previewWalkAt(null)
+}
+
+function onWalkPointerCancel(): void {
+  if (!props.walkRouting || !walkArmed.value) return
+  cancelWalkPlacement()
+}
+
+/**
+ * 待落点时的右键 = 放弃这次落点（与编辑器那边同一条语义）。
+ *
+ * 只在 `walkRouting` 打开时接管：编辑态的视口自己会处理右键，根节点再抢一次
+ * 会让冒泡顺序把「取消漫游」之后的那一下转给户型工具（右键删墙）。
+ */
+function onCanvasContextMenu(event: MouseEvent): void {
+  if (props.walkRouting && walkArmed.value) {
+    event.preventDefault()
+    cancelWalkPlacement()
+    return
+  }
+  onContextMenu(event)
+}
+
+/*
+  漫游状态是模块级的，不清会带进下一个页面（理由见 `useWalkMode.ts`）。
+  编辑态的 `EditorStage` 也会清一次，两处都是幂等的；纯画布没有那一层，
+  这一条是它唯一的复位点。
+*/
+onUnmounted(() => resetWalkMode())
 
 /**
  * 当前选中模型的那只 three 组；没有选中、还没挂上、或模型被隐藏时是 null。
@@ -522,7 +582,15 @@ defineExpose<SceneViewerApi>({
 </script>
 
 <template>
-  <div class="tdm-root" :style="{ height: canvasHeight }" @contextmenu="onContextMenu">
+  <div
+    class="tdm-root"
+    :class="{ 'tdm-viewport--walk': walkArmed }"
+    :style="{ height: canvasHeight }"
+    @contextmenu="onCanvasContextMenu"
+    @pointerdown="onWalkPointerDown"
+    @pointerup="onWalkPointerUp"
+    @pointercancel="onWalkPointerCancel"
+  >
     <TresCanvas
       :clear-color="clearColor"
       :alpha="isTransparent"
@@ -569,6 +637,19 @@ defineExpose<SceneViewerApi>({
         :camera="scene.config.camera"
         :floorplan="scene.config.floorplan"
       />
+
+      <!--
+        第一人称的起点标记（跟着指针的预览点，或上一次的起点）。
+
+        它由画布而不是编辑器渲染：编辑态与纯画布共用同一份入口与同一份状态
+        （见 DESIGN.md 设计决定 70）。起点不是场景的一部分（见 `useWalkMode.ts`），
+        所以它不进配置、不进历史、不进导出物；`walkMarker` 为空时组件自己
+        不产出任何 3D 对象，平时没有开销。
+
+        排在宿主 `#scene` 插槽**之前**：内部件的位置是编辑器 / 库说了算，
+        宿主注入的东西不该插在它前面（顺序会影响渲染次序）。
+      -->
+      <SceneWalkMarker />
 
       <!--
         画布级的点选拾取。放在这一层而不是 SceneContent 里，是为了不动
@@ -629,11 +710,30 @@ defineExpose<SceneViewerApi>({
       **它不再只属于编辑器**：`editable: false` 的只读画布、不传 `editable` 的旧画布
       默认都能看到它（见 DESIGN.md 设计决定 69）。点击只把档位发出去——切档那一半
       在 `SceneViewer`（画布态）与 `EditorStage`（编辑态，还要先处理漫游交接）各自接。
+
+      漫游中整枚收起：此刻切档等于把相机从屋里拽出去，而退出走底部 HUD 或 Esc。
+      编辑态原先由 `EditorStage` 把 `showViewSwitch` 压成 `false`，纯画布没有那一层，
+      所以这条判据放在画布自己这里，两种形态同形。
     -->
     <SceneViewSwitch
-      v-if="showViewSwitch"
+      v-if="showViewSwitch && !walking"
       @select="emit('viewModeSelect', $event)"
     />
+
+    <!--
+      第一人称漫游的入口、待落点提示与漫游 HUD。
+
+      与视角胶囊同一条分层：两种形态共用这一枚（见 DESIGN.md 设计决定 70）。
+      显隐由 `showViewSwitch` 挡在入口按钮上；HUD 与 Esc 一直在，漫游中途
+      宿主收起这一档时人还能出来。
+
+      落点换算走本组件的 `groundPointAt`：入口只负责手势，three 那一层不往 DOM 层泄漏。
+    -->
+    <SceneWalkEntry
+      :resolve-point="groundPointAt"
+      :show-entry="showViewSwitch"
+    />
+
 
     <!--
       加载进度遮罩。pointer-events: none 是必须的：它是 inset-0 的，
