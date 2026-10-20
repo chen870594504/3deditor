@@ -6,12 +6,15 @@ import SceneContent from './SceneContent.vue'
 import ScenePicker from './ScenePicker.vue'
 import SceneSelection from './SceneSelection.vue'
 import SceneToolbar from './SceneToolbar.vue'
+import SceneWalkControls from './SceneWalkControls.vue'
 import { useSceneStore } from '../stores/scene'
 import { parseModelParts } from '../utils/modelParts'
 import { resolveSceneSwitches } from '../utils/sceneSwitches'
+import type { FloorplanPickPayload } from '../utils/floorplanPick'
 import type {
   CameraChangePayload,
   DeepPartial,
+  FloorplanPoint,
   ModelBounds,
   ModelConfig,
   ModelExportGeometry,
@@ -22,6 +25,7 @@ import type {
   ObjectClickPayload,
   SceneConfig,
   SceneViewerApi,
+  ShadowConfig,
   TransformMode,
 } from '../types'
 
@@ -52,6 +56,14 @@ const props = withDefaults(defineProps<{
   toolbar?: boolean
   /** 是否允许在画布上点选模型（输入通道，`modelPick` 是它的出口） */
   pickable?: boolean
+  /**
+   * 户型图（墙 / 门窗）是否也参与同一趟点选（输入通道，`floorplanPick` 是出口）。
+   *
+   * 它是**编辑器的内部开关**，公开面上没有：纯画布不该凭空多出一种可点对象。
+   * 编辑器按 `!planView && !modelMode` 给值——2D 正常俯视由地面求交那条路
+   * 负责（它能区分同一面墙上的洞口），3D 与「2D 但开着允许旋转」走这条射线。
+   */
+  floorplanPickable?: boolean
   /** 选中项是否画包围框 */
   selection?: boolean
   /** 是否显示 X/Y/Z 变换手柄 */
@@ -60,6 +72,20 @@ const props = withDefaults(defineProps<{
   gizmoMode?: TransformMode
   /** 机位过渡时长（毫秒），0 = 瞬移。编辑器给 450，纯画布给 0 */
   cameraTransition?: number
+  /**
+   * 正在第一人称漫游。
+   *
+   * 它是编辑器的界面状态，公开面上没有：纯画布不该有「人站在屋里」这种形态。
+   * 打开时相机的位姿归 `SceneWalkControls` 管，配置里的机位原样不动。
+   */
+  walking?: boolean
+  /**
+   * 漫游起点 `[x, z]`；为 `null` 时不挂控制器。
+   *
+   * 与 `walking` 分成两个量而不是合成一个：退出漫游之后起点仍然留着
+   * （平面图上那枚标记靠它），只是控制器不再接管相机。
+   */
+  walkSpawn?: FloorplanPoint | null
 }>(), {
   height: '480px',
   /*
@@ -85,6 +111,16 @@ const props = withDefaults(defineProps<{
   gizmo: undefined,
   gizmoMode: 'translate',
   cameraTransition: 0,
+  /*
+    这一条**不在**上面那五个必须写成 `undefined` 的开关里：它没有三级规则，
+    也没有「宿主说了 false」与「宿主没说」的区分——默认就是关，编辑器按需打开。
+  */
+  floorplanPickable: false,
+  /*
+    这两个默认值与 `floorplanPickable` 同类：没有三级规则，编辑器按需打开。
+  */
+  walking: false,
+  walkSpawn: null,
 })
 
 /**
@@ -109,6 +145,7 @@ const emit = defineEmits<{
   (e: 'objectPointerLeave', payload: ObjectClickPayload): void
   (e: 'objectContextMenu', payload: ObjectClickPayload): void
   (e: 'modelPick', payload: ModelPickPayload): void
+  (e: 'floorplanPick', payload: FloorplanPickPayload): void
   (e: 'modelTransform', payload: ModelTransformPayload): void
   (e: 'modelTransformEnd', payload: ModelTransformPayload): void
 }>()
@@ -182,6 +219,28 @@ const groundForCanvas = computed(() =>
 )
 
 /**
+ * 第一人称漫游时**强制打开阴影**，但只在显示层，不写回配置。
+ *
+ * 漫游是从 2D 进来的，而 2D 那一档会把 `shadow.enabled` 写成 false
+ * （俯视里影子只会干扰读图，见 `useViewMode`）。可进了屋子之后，
+ * 阴影正是空间关系仅剩的深度线索：一片平光下墙、地面与家具会糊成同一个面，
+ * 第一人称立刻失去「这是屋里」的感觉。
+ *
+ * **为什么不 `applyConfig({ shadow: { enabled: true } })`**：那会进历史、
+ * 进导出物，退出时再写回 false 又添一条——走一圈回来撤销栈里多出两条
+ * 与场景无关的记录，与设计决定 68「漫游是观察方式，不是场景改动」直接冲突。
+ * 所以这里只做一层**显示覆盖**：配置一个字节不动，右栏读数仍是 2D 的 false，
+ * 退出漫游后画面按配置回到 2D 的样子。
+ *
+ * 只覆盖总开关，`type` / `castShadow` / `receiveShadow` 这些仍然听配置：
+ * 用户在 3D 里特意选的方式与开关，不该被「进去走一圈」改掉。
+ */
+const canvasShadow = computed<ShadowConfig>(() => {
+  if (!props.walking || scene.config.shadow.enabled) return scene.config.shadow
+  return { ...scene.config.shadow, enabled: true }
+})
+
+/**
  * 任何一类阴影都要打开 renderer.shadowMap。
  *
  * 接触阴影与累积阴影虽然是自己渲染到独立 target 的，
@@ -189,7 +248,7 @@ const groundForCanvas = computed(() =>
  * 所以这里不按 type 收窄；重复投影的问题在 SceneContent 里靠
  * 主光的 cast-shadow 收窄解决。
  */
-const shadowsEnabled = computed(() => scene.config.shadow.enabled)
+const shadowsEnabled = computed(() => canvasShadow.value.enabled)
 
 function onLoaded() {
   scene.markLoaded()
@@ -456,8 +515,9 @@ defineExpose<SceneViewerApi>({
         :camera="scene.config.camera"
         :ground="groundForCanvas"
         :sun="scene.config.sun"
-        :shadow="scene.config.shadow"
+        :shadow="canvasShadow"
         :camera-transition="cameraTransition"
+        :walking="walking"
         @loaded="onLoaded"
         @progress="onProgress"
         @error="onError"
@@ -470,6 +530,26 @@ defineExpose<SceneViewerApi>({
       />
 
       <!--
+        第一人称漫游的相机控制器。
+
+        放在 TresCanvas 内部是因为它要拿 `useTresContext()` 里那只**活的**相机
+        与轨道控制；放在这一层而不是 SceneContent 里，是因为它要监听 DOM
+        （指针锁、键盘），而 SceneContent 承诺不碰 DOM 之外的东西——
+        那条承诺让 3D 层可以脱离浏览器单独推理。
+
+        `v-if` 只挂在「有没有起点」上，不挂在 `walking` 上：退出漫游之后
+        控制器要留在树上跑完还原（相机与轨道控制交还），下一次进入时也不必重新挂载。
+        没有起点时它连 watch 都不存在，纯画布一行开销都没有。
+      -->
+      <SceneWalkControls
+        v-if="walkSpawn"
+        :active="walking"
+        :spawn="walkSpawn"
+        :camera="scene.config.camera"
+        :floorplan="scene.config.floorplan"
+      />
+
+      <!--
         画布级的点选拾取。放在这一层而不是 SceneContent 里，是为了不动
         SceneContent 那句「不依赖 TresCanvas 内部的注入链」的承诺：
         本组件是第一个绕开那条链的（全仓库共三处，见 DESIGN.md 设计决定 4），
@@ -478,7 +558,12 @@ defineExpose<SceneViewerApi>({
         它是空模板组件（渲染返回 null），只在 pickable 打开时才存在；
         关掉时连那两个 DOM 监听器都不挂。
       -->
-      <ScenePicker v-if="switches.pickable" @pick="emit('modelPick', $event)" />
+      <ScenePicker
+        v-if="switches.pickable"
+        :floorplan-pickable="floorplanPickable"
+        @pick="emit('modelPick', $event)"
+        @floorplan-pick="emit('floorplanPick', $event)"
+      />
 
       <!--
         选中视觉：包围框与变换手柄，作用于 store 里那个选中的模型。

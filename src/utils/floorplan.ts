@@ -1,5 +1,6 @@
 import type {
   FloorplanOpening,
+  FloorplanPickTarget,
   FloorplanPoint,
   FloorplanWall,
 } from '../types'
@@ -824,6 +825,60 @@ export function polygonCenter(polygon: readonly FloorplanPoint[]): FloorplanPoin
 }
 
 /**
+ * 标签高度占房间窄边的比例。
+ *
+ * 字本身大约只有整张贴图高度的六成（`createLabelTexture` 的行高是 1.6 倍字号，
+ * 四周还有留白），所以这个 0.2 落到画面上的字高，大约是房间窄边的一成二。
+ */
+const ROOM_LABEL_RATIO = 0.2
+
+/** 标签高度的下限与上限（米），理由见 `roomLabelHeight` */
+const ROOM_LABEL_MIN = 0.9
+const ROOM_LABEL_MAX = 4.5
+
+/**
+ * 房间名标签在 2D 档的世界高度（米）。
+ *
+ * **为什么按房间尺寸算，而不是写死一个世界尺寸。** 标签是房间的标注，它要跟
+ * 房间里那块地面一起缩放，才谈得上「跟着视图缩放」。写死一个值做不到这一点：
+ * 同一个 6.5 米，放进 4 米见方的卧室会撑出墙外，放进 30 米的大厅又小得像脚注——
+ * 而这两种房间可以在同一栋房子里同时出现（住宅的卧室 + 大堂就是）。按房间算之后，
+ * 滚轮缩小时字跟着房子一起变小，凑近看时又不会突然占掉半个房间。
+ *
+ * **按窄边算，不按面积。** 长条形的房间（走廊）面积不小，但它的宽度撑不下
+ * 一个按面积折出来的字号；窄边才是「这个房间里放得下多大的字」那个尺寸。
+ * 取包围盒的窄边是对凹多边形（L 形、U 形）的近似——那类房间的某个角可能更窄，
+ * 但把它逐段求内切圆是另一个量级的代价，而标签压到一点墙脚并不难读。
+ *
+ * 上下限各有理由：**下限**让很小的储物间、卫生间也还有一行读得出来的字
+ * （再小就只剩几个像素，等于没有标签）；**上限**则给厂房、大堂那类超大房间兜底——
+ * 跟房间等比例的话，30 米见方的房间会得到 6 米高的字，压掉整块地面。
+ *
+ * 返回值是**整张贴图**的高度（画布里四周还带着透明留白与行高），不是字的像素高。
+ * `Sprite` 的 `scale` 直接用这个值。
+ */
+export function roomLabelHeight(polygon: readonly FloorplanPoint[]): number {
+  if (polygon.length < 3) return ROOM_LABEL_MIN
+
+  let minX = Infinity
+  let maxX = -Infinity
+  let minZ = Infinity
+  let maxZ = -Infinity
+
+  for (const [x, z] of polygon) {
+    if (x < minX) minX = x
+    if (x > maxX) maxX = x
+    if (z < minZ) minZ = z
+    if (z > maxZ) maxZ = z
+  }
+
+  const shortSide = Math.min(maxX - minX, maxZ - minZ)
+  if (!Number.isFinite(shortSide)) return ROOM_LABEL_MIN
+
+  return Math.min(ROOM_LABEL_MAX, Math.max(ROOM_LABEL_MIN, shortSide * ROOM_LABEL_RATIO))
+}
+
+/**
  * 点是否在多边形内部（射线法 / 奇偶规则）。
  *
  * 用于「这块区域已经有房间了」的判重，以及后续阶段的空间查询。
@@ -1233,3 +1288,64 @@ export function removeWall(
     openings: openings.filter((opening) => opening.hostWallId !== wallId),
   }
 }
+
+/**
+ * 一块碎片点下去算选中谁：墙，还是某个洞口。
+ *
+ * 判据**只有 `openingId` 一个**，不按 `key` 的拼法猜。`wallPieces` 给洞口自己的
+ * 构件（框条 / 中竖梃 / 玻璃 / 门扇）带上 `openingId`，而沿墙的实心段与洞口上下的
+ * 补墙（`-below` / `-above`）不带——后者是墙，不是洞口。
+ *
+ * **这条判据同时决定了 3D 点选的一个已知取舍**：窗台与过梁落的是墙。
+ * 不能靠「这个 key 里含着某个洞口的 id」把它们改判成洞口——`dropOpeningFills`
+ * 摘内饰件时正是按 `openingId` 摘的，给补墙补上它，换成模型的洞口上下会跟着
+ * 被摘掉，洞上漏一块。2D 那侧走的是沿墙跨度判定，同一个位置会选中洞口；
+ * 两条路的差别写进了 DESIGN.md 设计决定 66，这里不另造一套猜测。
+ */
+export function pickTargetOfPiece(
+  piece: Pick<FloorplanPiece, 'openingId'>,
+  wallId: string,
+): FloorplanPickTarget {
+  return piece.openingId
+    ? { kind: 'opening', id: piece.openingId }
+    : { kind: 'wall', id: wallId }
+}
+
+/**
+ * 选中的那个东西**在配置里查得到**的时候，把两边的对象一起给出来。
+ *
+ * 返回 `null` 的三种情形都要当成「没选中」，而不是「选中了一个不存在的东西」：
+ *
+ * - id 已经不在配置里（撤销、重做、右栏删行之后都可能悬空）；
+ * - 洞口在，但它的宿主墙不在（孤儿洞口——配置是任意 JSON，手写的绕得过
+ *   `removeWall` 的级联）；
+ * - `kind` 与配置里对不上（拿洞口 id 当墙查）。
+ *
+ * 这就是「查得到才算数」这条规则的**唯一实现**：`selectedOpening` /
+ * `selectedWall`、提示行、高亮、替换靶子，以及 `useFloorplanTool.selectPlanItem`
+ * 全走它。抄第二份的话，某个入口忘了校验时的表现是「提示行说选中了、
+ * 画面上什么都没有」，而它不报错。
+ */
+export type PlanSelectionTarget =
+  | { kind: 'wall'; id: string; wall: FloorplanWall }
+  | { kind: 'opening'; id: string; opening: FloorplanOpening; wall: FloorplanWall }
+
+export function findPlanSelectionTarget(
+  floorplan: {
+    walls: readonly FloorplanWall[]
+    openings: readonly FloorplanOpening[]
+  },
+  target: FloorplanPickTarget,
+): PlanSelectionTarget | null {
+  if (target.kind === 'wall') {
+    const wall = floorplan.walls.find((item) => item.id === target.id)
+    return wall ? { kind: 'wall', id: wall.id, wall } : null
+  }
+
+  const opening = floorplan.openings.find((item) => item.id === target.id)
+  if (!opening) return null
+
+  const wall = floorplan.walls.find((item) => item.id === opening.hostWallId)
+  return wall ? { kind: 'opening', id: opening.id, opening, wall } : null
+}
+

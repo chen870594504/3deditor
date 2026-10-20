@@ -3,6 +3,12 @@ import { useSceneStore } from '../../../stores/scene'
 import type { FloorplanOpening, FloorplanWall } from '../../../types'
 import { cloneFloorplanPatch } from '../../../utils/config'
 import { removeWall, wallLength } from '../../../utils/floorplan'
+import {
+  clearSelection,
+  selectPlanItem,
+  selectedOpening,
+  selectedWall,
+} from '../../composables/useFloorplanTool'
 import { pushEvent } from '../../composables/useEditorState'
 
 defineOptions({ name: 'FloorplanStructureList' })
@@ -22,9 +28,15 @@ const scene = useSceneStore()
  * 有三样东西，还要按下标定位配置里的某一条，字段声明那套（一字段一控件、
  * 路径是定长字符串）表达不了。序号 03 / 04 是**手写的**，加一节就要跟着改。
  *
- * 与「模型属性」页不同，这里没有选中态：墙与门窗是并列的对象，不是「当前正在改的那一个」。
- * 因此也不提供改名——它们根本没有名字，`墙 1` 是**数组下标的派生**（不是存进配置的字段）。
- * 这也是为什么删除按钮做成「谁的表就删谁」，而不是先选中再操作。
+ * **这里现在有选中态，但它与「模型属性」页那种不是同一件事**：墙与门窗的选中
+ * 住在 `useFloorplanTool` 的 `selection` 里（界面状态，不进配置 / 历史 / 导出），
+ * 画布点选、右栏点行、3D 射线三条入口写的是同一份。行高亮读的是
+ * `selectedWall` / `selectedOpening` 这两个**验证过的** computed——配置里那一条
+ * 被删掉、或洞口成了孤儿时它们自己变成 null，悬空 id 不会在清单里留下一行亮着的。
+ *
+ * 仍然不提供改名——它们根本没有名字，`墙 1` 是**数组下标的派生**（不是存进配置的字段）。
+ * 删除按钮仍是主按钮旁边的兄弟、不嵌进去：按钮不能嵌套（浏览器会把内层拆出去，
+ * 点击区域随之错位），而且「选中」与「删掉」是两件事，点错一下的代价差得远。
  */
 
 /** 洞口两种类型的名字。多处要用（行首、日志、标题），写成一张表 */
@@ -81,6 +93,55 @@ function openingTitle(opening: FloorplanOpening): string {
 }
 
 /**
+ * 这一面墙是不是当前选中的那一面。
+ *
+ * 读 `selectedWall` 而不是 composable 里私有的 `selection`：后者只存了
+ * `{ kind, id }`，墙被删掉之后那个 id 还悬着；前者每次都会回配置里查一遍，
+ * 查不到就是 null，于是「行亮着、场景里却没有这一面墙」不会发生。
+ */
+function wallActive(wall: FloorplanWall): boolean {
+  return selectedWall.value?.id === wall.id
+}
+
+/** 这个洞口是不是当前选中的那一个，理由同上 */
+function openingActive(opening: FloorplanOpening): boolean {
+  return selectedOpening.value?.opening.id === opening.id
+}
+
+/**
+ * 点一行：没选中就选它，已经选中就取消选中。
+ *
+ * toggle 写在这里而不是下沉进 `useFloorplanTool`，与 `ModelList.vue` 的
+ * `pickModel` 同一条理由：composable 里那两个动作是分开的，别处（画布、3D）
+ * 需要的是「无条件选中」，把 toggle 放进去会逼着它们绕一圈。
+ */
+function pickWall(wall: FloorplanWall): void {
+  if (wallActive(wall)) clearSelection()
+  else selectPlanItem({ kind: 'wall', id: wall.id })
+}
+
+/** 同 `pickWall` */
+function pickOpening(opening: FloorplanOpening): void {
+  if (openingActive(opening)) clearSelection()
+  else selectPlanItem({ kind: 'opening', id: opening.id })
+}
+
+/**
+ * 删除之后要不要把选中清掉——**必须在写配置之前**算好。
+ *
+ * `clearSelection` 自己只看 `selection` 里那个 id，不看配置；但**问「刚才选的是不是
+ * 它」只能趁配置还完整时问**：`applyConfig` 一落，`selectedWall` /
+ * `selectedOpening` 就已经回配置里查不到了，回答永远是「不是」。
+ * 不清的后果不是当下的画面（选中本来就看不见了），而是**撤销之后它自己复活**——
+ * 用户看到一块自己没点过的琥珀高亮板，且没有任何一步操作能解释它。
+ */
+function losesSelection(wallId?: string, openingIds: readonly string[] = []): boolean {
+  if (wallId !== undefined && selectedWall.value?.id === wallId) return true
+  const openingId = selectedOpening.value?.opening.id
+  return openingId !== undefined && openingIds.includes(openingId)
+}
+
+/**
  * 删一面墙，连带挂在它上面的洞口。
  *
  * 两个键写进**同一个补丁**，于是历史上是一步：撤销一次，墙与门窗一起回来。
@@ -92,8 +153,16 @@ function openingTitle(opening: FloorplanOpening): string {
  */
 function dropWall(wall: FloorplanWall): void {
   const plan = scene.config.floorplan
+
+  /* 这一下会带走谁、它此刻是不是选中的，都要在写配置之前问（见 `losesSelection`） */
+  const removedOpeningIds = plan.openings
+    .filter((opening) => opening.hostWallId === wall.id)
+    .map((opening) => opening.id)
+  const droppedSelection = losesSelection(wall.id, removedOpeningIds)
+
   const removed = removeWall(plan.walls, plan.openings, wall.id)
   scene.applyConfig({ floorplan: cloneFloorplanPatch(removed) }, '删除墙体')
+  if (droppedSelection) clearSelection()
 
   const orphans = plan.openings.length - removed.openings.length
   pushEvent(orphans > 0 ? `已删除一面墙，连带 ${orphans} 个门窗` : '已删除一面墙')
@@ -102,9 +171,11 @@ function dropWall(wall: FloorplanWall): void {
 /** 删一个洞口。同样照抄视口里「再点一下同一个位置」那一条的标签与回执 */
 function dropOpening(opening: FloorplanOpening): void {
   const label = OPENING_LABELS[opening.kind]
+  const droppedSelection = losesSelection(undefined, [opening.id])
   const openings = scene.config.floorplan.openings.filter((item) => item.id !== opening.id)
 
   scene.applyConfig({ floorplan: cloneFloorplanPatch({ openings }) }, `删除${label}洞`)
+  if (droppedSelection) clearSelection()
   pushEvent(`已删除一个${label}`)
 }
 </script>
@@ -126,12 +197,25 @@ function dropOpening(opening: FloorplanOpening): void {
         用 wall.id 做 key 而不是下标——与房间清单同一条理由：删除中间一行时，
         下标会让后面每一行的序号错位一格。序号是**算出来的**（下标 + 1），
         所以它跟着行一起移动，不会留下「墙 3 不见了但下面还有墙 3」这种状态。
+
+        每行是**两个兄弟按钮**：主按钮点选 / 取消选中，行尾 × 删除。不能嵌套。
+        主按钮用 `.tdm-item` + `.tdm-item--active`，与「场景模型」页那份选中的
+        视觉是同一套（琥珀左条 + 浅底）——它们是同一件事的两个入口。
       -->
       <div v-for="(wall, index) in scene.config.floorplan.walls" :key="wall.id" class="tdm-plan-row">
-        <span class="tdm-plan-idx">墙 {{ index + 1 }}</span>
-        <span class="tdm-plan-meta" :title="wallTitle(wall, index)">
-          中点 ({{ midpointOf(wall) }}) · {{ num(wallLength(wall)) }} 米
-        </span>
+        <button
+          type="button"
+          class="tdm-item tdm-plan-pick"
+          :class="{ 'tdm-item--active': wallActive(wall) }"
+          :aria-current="wallActive(wall)"
+          :title="wallTitle(wall, index)"
+          @click="pickWall(wall)"
+        >
+          <span class="tdm-plan-idx">墙 {{ index + 1 }}</span>
+          <span class="tdm-plan-meta">
+            中点 ({{ midpointOf(wall) }}) · {{ num(wallLength(wall)) }} 米
+          </span>
+        </button>
 
         <button
           type="button"
@@ -161,12 +245,23 @@ function dropOpening(opening: FloorplanOpening): void {
       <!--
         这里按**配置顺序**排，与墙清单一致（都是数组顺序），刻意不按墙分组重排：
         一重排，行首那个位置说明里的「墙 N」就与上面那份清单里的行号对不上了。
+
+        行的结构与墙那一份逐字相同：主按钮点选 / 取消，行尾 × 删除。
       -->
       <div v-for="opening in scene.config.floorplan.openings" :key="opening.id" class="tdm-plan-row">
-        <span class="tdm-plan-idx">{{ OPENING_LABELS[opening.kind] }}</span>
-        <span class="tdm-plan-meta" :title="openingTitle(opening)">
-          {{ hostLabel(opening) }} · 沿墙 {{ num(opening.offset) }} 米
-        </span>
+        <button
+          type="button"
+          class="tdm-item tdm-plan-pick"
+          :class="{ 'tdm-item--active': openingActive(opening) }"
+          :aria-current="openingActive(opening)"
+          :title="openingTitle(opening)"
+          @click="pickOpening(opening)"
+        >
+          <span class="tdm-plan-idx">{{ OPENING_LABELS[opening.kind] }}</span>
+          <span class="tdm-plan-meta">
+            {{ hostLabel(opening) }} · 沿墙 {{ num(opening.offset) }} 米
+          </span>
+        </button>
 
         <button
           type="button"

@@ -62,6 +62,13 @@ export function createFloorplanConfig(): FloorplanConfig {
     walls: [],
     openings: [],
     rooms: [],
+    /*
+      墙体的默认不透明度是 1（完全实心）。
+      它是一个**标量**，所以不存在「多份默认值互相污染」的问题；摆在这里是因为
+      `FloorplanConfig` 要求它有值，而**老配置里没有这个键**——导入时 `deepAssign`
+      会把它补上这一份默认值，于是渲染端永远拿得到一个数。理由见 `types.ts`。
+    */
+    wallOpacity: 1,
   }
 }
 

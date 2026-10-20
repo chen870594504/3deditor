@@ -64,6 +64,17 @@ export { migrateConfig } from './utils/config'
  * 事：宿主自己铺墙时**绕不过它们**。一个洞口写了外观地址（门与窗都会写）之后，
  * 洞里的框条与门扇必须由**装模型的那一方**画，而墙那一侧要么抑制、要么重复画
  * ——重复画的表现是同一个包围盒上两组共面几何，逐像素 z-fighting。
+ *
+ * `roomLabelHeight` 是这一组里的例外：宿主不会去画房间名，导出它只为让
+ * `scripts/smoke.mjs` 够得着——2D 标签的尺寸在 `TresCanvas` 里，SSR 一行断言
+ * 都盖不到，写死在里面的比例趁早拆出来。渲染端与冒烟用的是同一份实现，
+ * 不是两处各写一遍。
+ *
+ * `pickTargetOfPiece` / `findPlanSelectionTarget` 是「画布上点中的是哪一件、
+ * 它现在还查不查得到」这两个问题的实现。导出它们同样有两条理由：宿主自己做
+ * 户型点选时绕不过去（后者是「id 悬空就当没选中」这条规则的唯一实现，
+ * 抄漏一处的表现是提示行说选中了、画面上什么都没有），以及 3D 射线拾取
+ * 在 SSR 下够不到，冒烟只能靠这两个纯函数守住身份映射那一半。
  */
 export {
   CELL_SIZE,
@@ -79,17 +90,20 @@ export {
   dropOpeningFills,
   findEnclosedArea,
   findNearestWall,
+  findPlanSelectionTarget,
   openingFilledByModel,
   openingFreeGap,
   openingMagnetOffset,
   openingOverlaps,
   openingRejectReason,
   pickRoomColor,
+  pickTargetOfPiece,
   pointAlongWall,
   pointInPolygon,
   polygonCenter,
   removeWall,
   resolveOpeningDrag,
+  roomLabelHeight,
   wallLength,
   wallPieces,
   wallRotationY,
@@ -102,6 +116,7 @@ export type {
   NearestWallHit,
   OpeningGap,
   OpeningRejectReason,
+  PlanSelectionTarget,
 } from './utils/floorplan'
 
 /**
@@ -159,6 +174,22 @@ export type { SceneSwitchInput, SceneSwitches } from './utils/sceneSwitches'
 export { viewModeOf } from './utils/viewMode'
 
 export type { ViewMode } from './utils/viewMode'
+
+/**
+ * 第一人称漫游的碰撞算术：哪些墙挡路、一个人站在某点时该被推到哪里。
+ *
+ * 宿主**不需要**自己调它（编辑器在 `SceneWalkControls` 里逐帧用），导出的理由
+ * 与 `computeShadowBounds` 同类：这是一条「错了不报错」的算术——半径或推离方向
+ * 反了，表现只是「走不过去」或「贴墙穿进屋里」，看起来像手感问题而不像 bug。
+ * 而指针锁、逐帧移动、墙体拾取在 SSR 下一行都跑不到，能钉住的只有这两条纯函数，
+ * 所以放进公开面让 `scripts/smoke.mjs` 够得着。
+ *
+ * `WALK_RADIUS` 一并导出，是给断言用的：它量的是「推出去多少」，
+ * 测试里写死 0.28 的话，改这个常量时那条断言会继续通过（而它本该失败）。
+ */
+export { WALK_RADIUS, collectWalkObstacles, resolveWalkPosition } from './utils/walk'
+
+export type { WalkObstacle } from './utils/walk'
 
 /**
  * 主光阴影正交相机该罩多大、罩在哪儿。

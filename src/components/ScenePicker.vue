@@ -5,6 +5,8 @@ import { Raycaster, Vector2 } from 'three'
 import { isClickGesture, trackPress } from '../utils/pointerClick'
 import type { PressRecord } from '../utils/pointerClick'
 import { modelNodeOf } from '../utils/modelNodeRegistry'
+import { floorplanNodeOf } from '../utils/floorplanPick'
+import type { FloorplanPickPayload } from '../utils/floorplanPick'
 import type { ModelPickPayload } from '../types'
 
 defineOptions({ name: 'TdmScenePicker' })
@@ -23,9 +25,26 @@ defineOptions({ name: 'TdmScenePicker' })
  *
  * 它自己**不访问 store、也不认识配置**：命中之后只说「这个 id 被点了」，
  * 由宿主决定这意味着什么。
+ *
+ * ## 户型图那一路（`floorplanPickable`）
+ *
+ * 墙与门窗也走同一趟射线：它们由 `SceneFloorplanWallBox` / 贴面砖 / 洞口模型
+ * 登记进 `utils/floorplanPick.ts`，命中之后往上查回「哪面墙 / 哪个洞口」，
+ * 经 `floorplanPick` 抛给编辑器。两条身份表**在同一条按距离排序的循环里**
+ * 查，所以墙能挡住它后面的模型、模型也能挡住它后面的墙——谁在射线更近处就是谁。
+ *
+ * 开关由编辑器给（`!planView && !modelMode`）：2D 正常俯视仍走地面求交那条
+ * pointerdown 路径（它能区分同一面墙上的洞口），模型编辑页不认户型。
+ * 纯画布（宿主不装编辑器）默认关，于是库对宿主的既有行为一个字不变。
  */
+const props = defineProps<{
+  /** 户型图（墙 / 门窗）是否参与这趟点选 */
+  floorplanPickable?: boolean
+}>()
+
 const emit = defineEmits<{
   (e: 'pick', payload: ModelPickPayload): void
+  (e: 'floorplanPick', payload: FloorplanPickPayload): void
 }>()
 
 const { scene, camera, renderer } = useTresContext()
@@ -107,8 +126,10 @@ function onPointerUp(event: PointerEvent) {
   scene.value.updateMatrixWorld()
 
   /**
-   * 一次调用、一次排序，按距离从近到远扫，取第一个「属于某个模型、且那一组可见」
-   * 的交点。
+   * 一次调用、一次排序，按距离从近到远扫，取第一个「登记过、且那一组可见」的交点。
+   *
+   * 两条身份表在同一趟里查：先模型、再墙 / 门窗。顺序只是写法上的，
+   * 结果由射线距离决定——更近的那一个先被扫到。
    *
    * 跳过不可见的那几个（three 的射线检测不看 `visible`，隐藏的模型照样会被命中）：
    * 这样选中**跟眼睛看到的一致**——看不见的模型既不会被选中，也不会挡住它后面那个。
@@ -118,19 +139,30 @@ function onPointerUp(event: PointerEvent) {
 
   for (const intersection of intersections) {
     const node = modelNodeOf(intersection.object)
-    if (!node || !node.group.visible) continue
+    if (node) {
+      if (!node.group.visible) continue
 
-    const { point } = intersection
-    emit('pick', {
-      id: node.id,
-      point: [point.x, point.y, point.z],
-      distance: intersection.distance,
-      object: intersection.object,
-    })
+      const { point } = intersection
+      emit('pick', {
+        id: node.id,
+        point: [point.x, point.y, point.z],
+        distance: intersection.distance,
+        object: intersection.object,
+      })
+      return
+    }
+
+    if (!props.floorplanPickable) continue
+
+    const floorplan = floorplanNodeOf(intersection.object)
+    if (!floorplan) continue
+    if (!floorplan.group.visible) continue
+
+    emit('floorplanPick', floorplan.target)
     return
   }
 
-  // 扫完没有：点到的是地面 / 网格 / 空白，什么都不发生（选中项保持不变）
+  // 扫完没有：点到的是地面 / 网格 / 房间色块 / 空白，什么都不发生（选中项保持不变）
 }
 
 /**

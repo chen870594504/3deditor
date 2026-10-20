@@ -45,6 +45,14 @@ const props = defineProps<{
   shadow: ShadowConfig
   /** 机位过渡时长（毫秒），0 表示瞬移。见下面「机位过渡」一节 */
   cameraTransition: number
+  /**
+   * 正在第一人称漫游。
+   *
+   * 它同时挡两件事：户型图**不能**再按 2D 的扁平外观渲染（人站在屋里，
+   * 墙要是有厚度、有高度的实体），以及配置里的机位**不能**再往相机上写
+   * （相机此刻由 `SceneWalkControls` 接管，写一次就是把人从屋里拽走）。
+   */
+  walking: boolean
 }>()
 
 const emit = defineEmits<{
@@ -131,8 +139,12 @@ const cameraPoseKey = computed(
  * 切档时的过渡动画（下面「机位过渡」那节）会让它在飞行途中翻一次档，
  * 翻的那一下墙从贴面直接变成实色——这是有意的，档位就该跟着机位走，
  * 而不是等动画落地才认账（否则会出现「画面已经俯视、墙还铺着贴面」的半途状态）。
+ *
+ * **漫游时强制当成 3D。** 配置里的机位在漫游期间一直是那张俯视图（漫游不改配置），
+ * 照着它算出来的档位会让整间屋子保持「薄墙 + 顶面开口」的平面图外观——
+ * 人站在 1.6 米高、四周的墙却只有一层纸那么薄，看着像悬浮在模型上方。
  */
-const planView = computed(() => viewModeOf(props.camera) === '2d')
+const planView = computed(() => !props.walking && viewModeOf(props.camera) === '2d')
 
 /**
  * 把一对机位写进相机与轨道控制。
@@ -416,6 +428,19 @@ function armFlight(camera: PerspectiveCamera, controls: { target: Vector3Type })
 function syncCamera() {
   stopFlight()
 
+  /*
+   * 漫游期间配置不碰相机。
+   *
+   * 两个原因：相机的位姿此刻归 `SceneWalkControls` 管，这里写一次就是把人拽回
+   * 平面图的机位上（表现是「走两步就闪回天上」）；而进入漫游时刚刚切过 2D，
+   * `setViewMode` 那两次配置写入还会陆续把 `cameraPoseKey` 推起来，正好落进
+   * 这个 watcher——飞行若继续跑，也会与漫游控制器逐帧抢相机。
+   *
+   * 退出漫游**不在这里补一次写入**：配置从头到尾没变过，相机由控制器按
+   * `props.camera` 原样还回去（那边有完整说明）。
+   */
+  if (props.walking) return
+
   const camera = tdmCamera.value
   const controls = tdmControls.value?.instance
   if (camera && controls && armFlight(camera, controls)) return
@@ -424,6 +449,21 @@ function syncCamera() {
 }
 
 watch([tdmCamera, tdmControls, cameraPoseKey], syncCamera, { immediate: true })
+
+/**
+ * 一进入漫游就掐掉还在跑的飞行。
+ *
+ * 漫游入口只在 2D 里出现，而 3D → 2D 那趟飞行可能要飞几百毫秒；按钮在配置
+ * 落笔那一刻就出现了，用户完全可能在那之前拖完并松手——落点因此可能撞在
+ * 飞行途中。不停的话两边同时写相机位置：控制器每帧写眼位，飞行每帧写插值，
+ * 最后谁赢取决于 watcher 与 rAF 的先后——表现是「刚开始走，人却在原地抖」。
+ */
+watch(
+  () => props.walking,
+  (active) => {
+    if (active) stopFlight()
+  },
+)
 
 /**
  * 用户开始操作视角（按下指针、滚一格滚轮都会走到这里）。

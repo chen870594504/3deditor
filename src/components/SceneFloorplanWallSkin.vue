@@ -2,14 +2,15 @@
 import { computed, watchEffect } from 'vue'
 import { useGLTF } from '@tresjs/cientos'
 import { Box3, Euler, Vector3 } from 'three'
-import type { Mesh, Object3D } from 'three'
+import type { Material, Mesh, Object3D } from 'three'
 import SceneFloorplanWall from './SceneFloorplanWall.vue'
 import SceneFloorplanWallBox from './SceneFloorplanWallBox.vue'
-import { wallPieces, dropOpeningFills } from '../utils/floorplan'
+import { wallPieces, dropOpeningFills, pickTargetOfPiece } from '../utils/floorplan'
 import type { FloorplanPieceRole } from '../utils/floorplan'
+import { registerFloorplanNode } from '../utils/floorplanPick'
 import { wallFaceIsSheet, wallFaceTiles, wallFaceUnusable } from '../utils/wallFace'
 import type { WallFaceBounds } from '../utils/wallFace'
-import type { FloorplanOpening, FloorplanWall } from '../types'
+import type { FloorplanOpening, FloorplanPickTarget, FloorplanWall } from '../types'
 
 defineOptions({ name: 'TdmSceneFloorplanWallSkin' })
 
@@ -104,6 +105,19 @@ const props = defineProps<{
    * **关掉贴面那一路**，让整组落到下面的退回路上去，原因见文件头那一段。
    */
   plan?: boolean
+  /**
+   * 墙身的不透明度（0–1），由 `SceneFloorplan` 从 `floorplan.wallOpacity` 传下来。
+   *
+   * 这一组里真正吃它的是**贴面砖**（glTF 克隆出来的那批网格）——它们的材质是从
+   * 资产克隆来的、**同一个地址的所有砖按引用共享**（见文件头）。全局值恰好让
+   * 「写在共享材质上」是安全的；逐墙存的话就得为每块砖克隆材质，那正好把这套
+   * 分组省下来的显存又花回去。
+   *
+   * 退化回灰墙（`v-else`）时原样转给 `SceneFloorplanWall`，于是 2D 档与加载中
+   * 也是同一档透明度。门窗补件（下面的 `SceneFloorplanWallBox`）**不跟着变**，
+   * 判据在 Box 里（只有 `role === 'wall'` 吃它）。
+   */
+  opacity?: number
   /**
    * 是否投射 / 接收阴影（只有 Shadow Map 方式为真，判据在 `SceneContent`）。
    *
@@ -284,6 +298,94 @@ watchEffect(() => {
   console.warn(`3deditor: ${text}`)
 })
 
+/** 一个材质「本来是什么样」，按材质对象记一次 */
+interface MaterialBase {
+  opacity: number
+  transparent: boolean
+  depthWrite: boolean
+}
+
+/**
+ * 贴面砖的材质是与资产 `state.scene` **共享**的（见文件头），所以改它等于改
+ * 同一个地址的所有砖。要做「改完能还原」，就得记住材质原来的样子——
+ * **不能一律还原成 1 / false**：资产里本来就半透明的部件，那样会被改成实心。
+ *
+ * 键是材质对象：资产被卸载时材质随之回收，WeakMap 的条目也跟着消失；
+ * 同一份材质被多块砖共享时只记一次。
+ */
+const MATERIAL_BASE = new WeakMap<Material, MaterialBase>()
+
+/**
+ * 把墙身的不透明度乘进一个材质。
+ *
+ * **乘，不是赋值**：墙资产的某些部件可能本来就带透明度，直接盖掉会改变资产
+ * 自己的样子。乘上去之后「1」严格等于原样，0.5 则在原有透明度上再淡一层。
+ *
+ * 透明时关掉 `depthWrite`，理由与 `SceneFloorplanWallBox.vue` 那段一字不差：
+ * 写深度会让近处那面半透明墙把后面的远墙整片挡掉，画面上看起来像远墙消失了。
+ *
+ * `needsUpdate` 只在 `transparent` 真的翻转时打：它影响渲染器对材质的分类与
+ * 程序，而 `opacity` 本身只是一个 uniform，拖动滑杆时不必每步重编译。
+ */
+function setWallOpacity(material: Material, opacity: number): void {
+  let base = MATERIAL_BASE.get(material)
+  if (!base) {
+    base = {
+      opacity: material.opacity,
+      transparent: material.transparent,
+      depthWrite: material.depthWrite,
+    }
+    MATERIAL_BASE.set(material, base)
+  }
+
+  const nextOpacity = base.opacity * opacity
+  /*
+    透明与否看的是**墙这一层的系数**，不是乘出来的结果：资产里可能有一份
+    `opacity < 1` 却写着 `transparent: false` 的材质（渲染上等同不透明），
+    用乘积判会在 wallOpacity = 1 时把它改成透明，等于这一条偷偷改了资产。
+  */
+  const transparent = base.transparent || opacity < 1
+  /*
+    只关**我们把它变透明**的那一种：资产本来就半透明的部件，它自己的 depthWrite
+    原样留着（那不是这一条该改的东西）；1 时也还原成原来的值。
+  */
+  const depthWrite = base.transparent || opacity >= 1 ? base.depthWrite : false
+  const transparentChanged = material.transparent !== transparent
+
+  if (
+    material.opacity === nextOpacity &&
+    !transparentChanged &&
+    material.depthWrite === depthWrite
+  ) {
+    return
+  }
+
+  material.opacity = nextOpacity
+  material.transparent = transparent
+  material.depthWrite = depthWrite
+  if (transparentChanged) material.needsUpdate = true
+}
+
+/**
+ * 把不透明度写进**克隆树**里的每一个材质（`mesh.material` 可能是数组）。
+ *
+ * 在克隆上遍历而不是在 `state.scene` 上改，与 `tileObject` 摘片同一条口径：
+ * `state.scene` 是加载器持有的对象，只在克隆上动是安全的。
+ */
+function applyWallOpacity(object: Object3D, opacity: number): void {
+  object.traverse((node) => {
+    const mesh = node as Mesh
+    if (!mesh.isMesh) return
+
+    const material = mesh.material
+    if (Array.isArray(material)) {
+      for (const item of material) setWallOpacity(item, opacity)
+    } else if (material) {
+      setWallOpacity(material, opacity)
+    }
+  })
+}
+
 /**
  * 一块砖要克隆的那个对象：**把片摘掉之后**的资产。
  *
@@ -299,7 +401,12 @@ watchEffect(() => {
  * 不用遍历整棵树去删：先收集再删，是因为 `removeFromParent()` 会改 `children`，
  * 边遍历边删会跳过节点。
  */
-function tileObject(scene: Object3D, castShadow: boolean, receiveShadow: boolean): Object3D {
+function tileObject(
+  scene: Object3D,
+  castShadow: boolean,
+  receiveShadow: boolean,
+  wallId: string,
+): Object3D {
   const clone = scene.clone()
 
   /*
@@ -325,6 +432,13 @@ function tileObject(scene: Object3D, castShadow: boolean, receiveShadow: boolean
     if (wallFaceIsSheet(boundsOf(meshBox(mesh)))) sheets.push(mesh)
   })
   for (const sheet of sheets) sheet.removeFromParent()
+
+  /*
+    登记的是**克隆根**，不是每一块网格：`floorplanNodeOf` 会沿 parent 往上找，
+    而根正好是「这一块砖属于哪面墙」的答案。同一面墙的每一块砖都登记成同一个
+    目标，点中哪一块都选中这面墙。
+  */
+  registerFloorplanNode(clone, { kind: 'wall', id: wallId })
 
   return clone
 }
@@ -352,6 +466,8 @@ interface SkinBox {
   rotation: Euler
   size: [number, number, number]
   role: FloorplanPieceRole
+  /** 点选身份：框 / 玻璃 / 门扇归洞口，墙体补件归墙（判据与灰墙那条完全相同） */
+  pick: FloorplanPickTarget
 }
 
 interface SkinWall {
@@ -407,6 +523,7 @@ const layout = computed<SkinWall[] | null>(() => {
           rotation: new Euler(0, piece.rotationY, 0),
           size: piece.size,
           role: piece.role,
+          pick: pickTargetOfPiece(piece, wall.id),
         })
         continue
       }
@@ -424,13 +541,45 @@ const layout = computed<SkinWall[] | null>(() => {
           // 不用 SkeletonUtils.clone()：three-stdlib 不在 package.json 里
           // （只是 cientos 的传递依赖），直接 import 就是幽灵依赖——
           // 资产要求里因此写死「静态网格、不带骨骼与动画」。
-          object: tileObject(scene, props.castShadow ?? false, props.receiveShadow ?? false),
+          object: tileObject(
+            scene,
+            props.castShadow ?? false,
+            props.receiveShadow ?? false,
+            wall.id,
+          ),
         })),
       })
     }
 
     return { key: wall.id, segments, boxes }
   })
+})
+
+/**
+ * 把不透明度写到**当前这批砖**的材质上。
+ *
+ * 单独一个 effect，而不是让 `layout` 依赖 `props.opacity`：`layout` 每重算一次
+ * 就是每块砖一次深克隆（文件头算过这笔账），而拖一下不透明度滑杆会连发几十次
+ * ——每次重克隆整组资产，卡顿且毫无必要。材质本来就是共享的，直接改当前这批
+ * clone 用到的材质即可。
+ *
+ * 依赖有两支：`layout`（切墙、改阴影、切 2D 等会换掉这批 clone）与
+ * `props.opacity`。后者变化时 `layout` 不动，effect 只重写材质，一次深克隆都不发。
+ */
+watchEffect(() => {
+  const wallLayout = layout.value
+  if (!wallLayout) return
+
+  /*
+    夹取放在这里：`opacity` 来自配置，宿主可以写进 2 或 -1。面板滑杆保证正常
+    路径落在 0–1，但配置不是只有面板会写。
+  */
+  const opacity = Math.min(1, Math.max(0, props.opacity ?? 1))
+  for (const wall of wallLayout) {
+    for (const segment of wall.segments) {
+      for (const tile of segment.tiles) applyWallOpacity(tile.object, opacity)
+    }
+  }
 })
 </script>
 
@@ -472,7 +621,9 @@ const layout = computed<SkinWall[] | null>(() => {
         :rotation="box.rotation"
         :size="box.size"
         :role="box.role"
+        :pick="box.pick"
         :plan="plan"
+        :opacity="opacity"
         :cast-shadow="castShadow"
         :receive-shadow="receiveShadow"
       />
@@ -487,6 +638,7 @@ const layout = computed<SkinWall[] | null>(() => {
       :wall="wall"
       :openings="openings"
       :plan="plan"
+      :opacity="opacity"
       :cast-shadow="castShadow"
       :receive-shadow="receiveShadow"
     />

@@ -187,6 +187,10 @@ const openingModels = computed<
     没写的照旧一面一个灰盒子。**两条路的判据只有一个**（`wall.url` 是否为空），
     所以不可能同一面墙两边都画——那会是同一个包围盒上的两组共面几何，
     逐像素 z-fighting。
+
+    墙体不透明度（`floorplan.wallOpacity`）与 `plan` 一样**两条路都要传**：
+    它是全局量（见 `types.ts`），贴面墙写在共享材质上，灰盒子写在材质属性上，
+    2D 那一档也照传——否则切到 2D 时墙会突然变回实心。
   -->
   <SceneFloorplanRoom
     v-for="room in floorplan.rooms"
@@ -203,6 +207,7 @@ const openingModels = computed<
     :walls="group.walls"
     :openings="floorplan.openings"
     :plan="plan"
+    :opacity="floorplan.wallOpacity"
     :cast-shadow="castShadow"
     :receive-shadow="receiveShadow"
   />
@@ -217,6 +222,7 @@ const openingModels = computed<
     :wall="wall"
     :openings="floorplan.openings"
     :plan="plan"
+    :opacity="floorplan.wallOpacity"
     :cast-shadow="castShadow"
     :receive-shadow="receiveShadow"
   />

@@ -6,6 +6,7 @@ import type { Mesh, Object3D } from 'three'
 import SceneFloorplanWallBox from './SceneFloorplanWallBox.vue'
 import { wallPieces } from '../utils/floorplan'
 import type { FloorplanPiece, FloorplanPieceRole } from '../utils/floorplan'
+import { registerFloorplanNode } from '../utils/floorplanPick'
 import {
   openingFaceOversized,
   openingFaceUnusable,
@@ -13,7 +14,12 @@ import {
   wallFaceIsSheet,
 } from '../utils/wallFace'
 import type { WallFaceBounds } from '../utils/wallFace'
-import type { FloorplanOpening, FloorplanOpeningKind, FloorplanWall } from '../types'
+import type {
+  FloorplanOpening,
+  FloorplanOpeningKind,
+  FloorplanPickTarget,
+  FloorplanWall,
+} from '../types'
 
 defineOptions({ name: 'TdmSceneFloorplanOpeningModel' })
 
@@ -268,7 +274,7 @@ watchEffect(() => {
  * 「一块砖」上、这边挂在「一个洞口」上，两处的卸载时机与数量都不同，将来要各自调整
  * （比如洞口要投影、砖不要）时不必先把这个函数拆开。真到第三处时再抽，不是现在。
  */
-function openingObject(scene: Object3D): Object3D {
+function openingObject(scene: Object3D, openingId: string): Object3D {
   const clone = scene.clone()
   clone.updateMatrixWorld(true)
 
@@ -282,6 +288,13 @@ function openingObject(scene: Object3D): Object3D {
 
   // 先收集再删：`removeFromParent()` 会改 `children`，边遍历边删会跳过节点
   for (const sheet of sheets) sheet.removeFromParent()
+
+  /*
+    与贴面墙的砖同一条：登记克隆根，`floorplanNodeOf` 沿 parent 查回来。
+    一个洞口一件资产，点中它的任何一块网格都选中这个洞口。
+  */
+  registerFloorplanNode(clone, { kind: 'opening', id: openingId })
+
   return clone
 }
 
@@ -339,7 +352,7 @@ const layout = computed<OpeningNode[] | null>(() => {
       rotation: new Euler(0, fill.rotationY, 0),
       offset: new Vector3(...fit.offset),
       scale: new Vector3(...fit.scale),
-      object: openingObject(scene),
+      object: openingObject(scene, opening.id),
     })
   }
 
@@ -367,6 +380,8 @@ const boxes = computed(() =>
         rotation: new Euler(0, piece.rotationY, 0),
         size: piece.size,
         role: piece.role as FloorplanPieceRole,
+        // 这一批本来就是「这个洞口自己的构件」（上面按 openingId 滤过），点中归洞口
+        pick: { kind: 'opening', id: opening.id } satisfies FloorplanPickTarget,
       })),
   ),
 )
@@ -411,6 +426,7 @@ const boxes = computed(() =>
       :rotation="box.rotation"
       :size="box.size"
       :role="box.role"
+      :pick="box.pick"
       :plan="plan"
     />
   </template>

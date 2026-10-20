@@ -47,17 +47,23 @@ import {
   dropOpeningFills,
   findEnclosedArea,
   findNearestWall,
+  findPlanSelectionTarget,
   openingFilledByModel,
   openingFreeGap,
   openingMagnetOffset,
   openingOverlaps,
   openingRejectReason,
+  pickTargetOfPiece,
   pointAlongWall,
   pointInPolygon,
   polygonCenter,
   removeWall,
   resolveOpeningDrag,
+  roomLabelHeight,
   viewModeOf,
+  WALK_RADIUS,
+  collectWalkObstacles,
+  resolveWalkPosition,
   wallFaceFit,
   wallFaceIsSheet,
   wallFaceTiles,
@@ -105,6 +111,16 @@ check('具名导出齐全', () => {
   // 都没有影子，看上去只像「阴影没开」。
   assert(typeof computeShadowBounds === 'function', 'computeShadowBounds 不是函数')
   assert(typeof DEFAULT_SHADOW_HALF === 'number', 'DEFAULT_SHADOW_HALF 缺失')
+  // 2D 房间名的尺寸算术。它在 TresCanvas 里，SSR 下渲染不到，所以只剩这里
+  // 够得着；错了的表现是「大房间里字压掉整块地面 / 小房间里字撑出墙」，
+  // 两者都不报错，只有眼睛看得出来
+  assert(typeof roomLabelHeight === 'function', 'roomLabelHeight 不是函数')
+  // 第一人称漫游的碰撞算术。指针锁与逐帧移动在 SSR 下一行都跑不到，
+  // 这两条纯函数是整条路上唯一测得了的部分；推离方向反了的症状只是「穿墙」，
+  // 看起来像手感问题，不会报错
+  assert(typeof collectWalkObstacles === 'function', 'collectWalkObstacles 不是函数')
+  assert(typeof resolveWalkPosition === 'function', 'resolveWalkPosition 不是函数')
+  assert(typeof WALK_RADIUS === 'number', 'WALK_RADIUS 缺失')
   return 'createThreeDMaker / useSceneStore / SceneViewer / resolveSceneSwitches 均存在'
 })
 
@@ -1114,7 +1130,7 @@ check('SceneConfig 默认值字段齐全', () => {
     ground: ['visible', 'size', 'cellSize', 'cellColor', 'infiniteGrid', 'fadeDistance'],
     sun: ['showSky', 'elevation', 'azimuth', 'turbidity', 'ambientIntensity', 'environment', 'skybox'],
     shadow: ['enabled', 'type', 'castShadow', 'mapSize', 'contactOpacity', 'accFrames'],
-    floorplan: ['foundation', 'walls', 'openings', 'rooms'],
+    floorplan: ['foundation', 'walls', 'openings', 'rooms', 'wallOpacity'],
   }
 
   for (const [group, keys] of Object.entries(groups)) {
@@ -1145,6 +1161,11 @@ check('SceneConfig 默认值字段齐全', () => {
     整份对象被反复取用时每一层都必须是新对象。
   */
   assert(config.floorplan.foundation === null, '默认地基不是 null')
+  /*
+    墙体不透明度是**全局标量**，默认 1（实心）。单独断言它，是因为它不像
+    墙高 / 墙厚那样住在每面墙上：默认配置里没有墙，前三个数组的断言一个都碰不到它。
+  */
+  assert(config.floorplan.wallOpacity === 1, '默认墙体不透明度不是 1')
   for (const key of ['walls', 'openings', 'rooms']) {
     assert(Array.isArray(config.floorplan[key]), `floorplan.${key} 不是数组`)
     assert(config.floorplan[key].length === 0, `默认 floorplan.${key} 应当是空的`)
@@ -2749,6 +2770,39 @@ check('pointInPolygon 与 polygonCenter', () => {
   return '点在多边形内 / 形心落在房间内'
 })
 
+check('2D 房间名按房间窄边定尺寸', () => {
+  /*
+    20 × 12 的客厅：高度 = 窄边 12 × 0.2 = 2.4 米。这是正常房间的标定值，
+    改 `ROOM_LABEL_RATIO` 这里就该红。
+  */
+  const living = roomLabelHeight([[-10, -6], [10, -6], [10, 6], [-10, 6]])
+  assert(Math.abs(living - 2.4) < 1e-9, `20 × 12 的标签高度不对：${living}`)
+
+  /*
+    **按窄边而不是按面积**：40 × 2 的走廊与 10 × 8 的卧室面积都是 80，
+    但前者放不下 1.6 米高的字。走廊被下限兜住（0.9），卧室取 8 × 0.2 = 1.6。
+    若哪天改成按面积算，这一条会红。
+  */
+  const corridor = roomLabelHeight([[0, 0], [40, 0], [40, 2], [0, 2]])
+  const bedroom = roomLabelHeight([[0, 0], [10, 0], [10, 8], [0, 8]])
+  assert(corridor === 0.9, `走廊的标签没落到下限：${corridor}`)
+  assert(Math.abs(bedroom - 1.6) < 1e-9, `10 × 8 的标签高度不对：${bedroom}`)
+
+  /*
+    上下限各自兜一件事：储物间再小也留一行字；30 米见方的大厅不按比例
+    （那会是 6 米）而是封顶在 4.5。
+  */
+  const closet = roomLabelHeight([[0, 0], [2, 0], [2, 2], [0, 2]])
+  const hall = roomLabelHeight([[0, 0], [30, 0], [30, 30], [0, 30]])
+  assert(closet === 0.9, `小房间的标签没落到下限：${closet}`)
+  assert(hall === 4.5, `大房间的标签没封顶：${hall}`)
+
+  // 不足三个点、或坐标退化时给下限，而不是 NaN（NaN 交给 Sprite 不会报错，只是整个标签消失）
+  assert(roomLabelHeight([[0, 0], [1, 1]]) === 0.9, '退化多边形没有退回下限')
+  assert(roomLabelHeight([]) === 0.9, '空多边形没有退回下限')
+  return '窄边定尺寸、上下限兜住、退化输入退回下限'
+})
+
 check('删墙连带删掉挂在上面的门窗', () => {
   const walls = [mkWall('w1', [0, 0], [4, 0]), mkWall('w2', [4, 0], [4, 4])]
   const openings = [
@@ -2767,6 +2821,54 @@ check('删墙连带删掉挂在上面的门窗', () => {
   */
   assert(left.openings[0].hostWallId === 'w2', '剩下的门窗指错了墙')
   return '级联删除，且引用不因删墙而漂移'
+})
+
+check('一块碎片点下去算谁：有 openingId 归洞口，否则归墙', () => {
+  const door = pickTargetOfPiece({ openingId: 'd' }, 'w1')
+  assert(door.kind === 'opening' && door.id === 'd', `门扇碎片没归到洞口：${JSON.stringify(door)}`)
+
+  // 墙段、以及洞口上下的补墙：不带 openingId，一律归墙
+  const plain = pickTargetOfPiece({ openingId: undefined }, 'w1')
+  assert(plain.kind === 'wall' && plain.id === 'w1', `墙段碎片没归到墙：${JSON.stringify(plain)}`)
+
+  /*
+    过梁 / 窗台（`wallPieces` 的 `-above` / `-below`）的 key 里含着洞口 id，
+    但**没有** `openingId`，必须仍然是墙。按 key 猜、或为了「3D 点过梁也选中洞口」
+    而给补墙补上 openingId，会连带让 `dropOpeningFills` 把它们摘掉——
+    换成模型的洞口上下会漏一块。这条守的就是判据只有一个 `openingId`。
+  */
+  const lintel = pickTargetOfPiece({ key: 'w1-d-above', openingId: undefined }, 'w1')
+  assert(lintel.kind === 'wall', '过梁按 key 猜成了洞口')
+  return '判据只看 openingId，不按 key 拼法猜'
+})
+
+check('选中的墙 / 洞口在配置里查得到才算数', () => {
+  const walls = [mkWall('w1', [0, 0], [4, 0])]
+  const openings = [mkDoor('d', 'w1', 2), mkDoor('orphan', 'gone', 1)]
+  const plan = { walls, openings }
+
+  const wall = findPlanSelectionTarget(plan, { kind: 'wall', id: 'w1' })
+  assert(wall?.kind === 'wall' && wall.wall.id === 'w1', '一面存在的墙没查回来')
+
+  const door = findPlanSelectionTarget(plan, { kind: 'opening', id: 'd' })
+  assert(
+    door?.kind === 'opening' && door.opening.id === 'd' && door.wall.id === 'w1',
+    '洞口没连它的宿主墙一起查回来',
+  )
+
+  /*
+    孤儿洞口（宿主墙不再存在）：返回 null。右栏那一行不亮、3D 也选不中，
+    而不是给出一份「有洞口、没有墙」的半截结果——下游全都默认 wall 一定在。
+  */
+  assert(
+    findPlanSelectionTarget(plan, { kind: 'opening', id: 'orphan' }) === null,
+    '宿主墙不存在的洞口被当成了可选中',
+  )
+
+  // id 不存在、kind 与真实类型对不上：都是 null，不跨种类回退
+  assert(findPlanSelectionTarget(plan, { kind: 'wall', id: 'nope' }) === null, '不存在的墙 id 没返回 null')
+  assert(findPlanSelectionTarget(plan, { kind: 'wall', id: 'd' }) === null, '按墙去找一个洞口却查到了东西')
+  return '墙 / 洞口 / 孤儿洞口 / 错 id 四种输入各归各位'
 })
 
 check('createFloorplanConfig 每次给的都是新对象', () => {
@@ -3888,6 +3990,100 @@ check('整份读不出来时只给一句人话，一件几何体都不给', () =
   )
 
   return '6 种整份问题各自一句人话、0 件几何体；超上限也整份拒掉'
+})
+
+// ---------- 第一人称漫游的碰撞 ----------
+
+/**
+ * 一面沿 +x 从 0 铺到 4 的墙，正中开一个洞口（offset 2、宽 0.9）。
+ *
+ * 洞口尺寸直接引 `DEFAULT_WALL_HEIGHT` / `DEFAULT_WALL_THICKNESS` 与设计值，
+ * 不另写一套——这里要验的正是「碰撞与画面读的是同一份切分」。
+ */
+function wallWithOpening(kind) {
+  const floorplan = createFloorplanConfig()
+  floorplan.walls = [
+    {
+      id: 'w',
+      start: [0, 0],
+      end: [4, 0],
+      height: DEFAULT_WALL_HEIGHT,
+      thickness: DEFAULT_WALL_THICKNESS,
+    },
+  ]
+  floorplan.openings = [
+    {
+      id: 'o',
+      kind,
+      hostWallId: 'w',
+      offset: 2,
+      width: 0.9,
+      height: kind === 'door' ? 2.1 : 1.2,
+      sillHeight: kind === 'door' ? 0 : 0.9,
+    },
+  ]
+  return floorplan
+}
+
+check('走路挡不挡：门只留两段墙，窗多一块窗台矮墙', () => {
+  /*
+    这一条的判据**不能靠 kind**（那样碰撞就成了另一份规则）：门窗的差别是
+    竖直方向上的切法，`wallPieces` 已经把它表达成「门的下段高度为 0」。
+    于是挡块数就是它切出来的墙段里与身体区间相交的那几块。
+  */
+  const door = collectWalkObstacles(wallWithOpening('door'))
+  const window = collectWalkObstacles(wallWithOpening('window'))
+
+  assert(
+    door.length === 2,
+    `门洞两侧各一段墙、过梁在 2.1 米以上不该挡人，实际 ${door.length} 块`,
+  )
+  assert(
+    window.length === 3,
+    `窗比门多一块窗台矮墙（0–0.9 米），实际 ${window.length} 块`,
+  )
+
+  return `门 ${door.length} 块、窗 ${window.length} 块`
+})
+
+check('把人推出墙外：推离量是「半径 − 贴墙距离」，门洞正中原地不动', () => {
+  // 门洞正中：两侧墙的最近角都在 0.45 米外（半门宽），大于人的半径，原样通过
+  const [gx, gz] = resolveWalkPosition(2, 0, collectWalkObstacles(wallWithOpening('door')))
+  assert(Math.abs(gx - 2) < 1e-9, `门洞正中不该被推开，x 变成了 ${gx}`)
+  assert(Math.abs(gz) < 1e-9, `门洞正中不该被推开，z 变成了 ${gz}`)
+
+  /*
+    窗洞正中：人站在窗台矮墙的盒子里，最短的一条边是墙厚方向，
+    于是被推到「半墙厚 + 半径」处。两侧对称，取哪一边由确定性规则决定。
+  */
+  const [wx, wz] = resolveWalkPosition(2, 0, collectWalkObstacles(wallWithOpening('window')))
+  assert(Math.abs(wx - 2) < 1e-9, `窗洞正中只该沿墙厚方向被推开，x 变成了 ${wx}`)
+  assert(
+    Math.abs(Math.abs(wz) - (DEFAULT_WALL_THICKNESS / 2 + WALK_RADIUS)) < 1e-6,
+    `窗洞正中应当被推到 ${DEFAULT_WALL_THICKNESS / 2 + WALK_RADIUS} 米处，实际 ${Math.abs(wz)}`,
+  )
+
+  // 单块墙：站在离墙面 0.1 米处（半径 0.28 之内），推出去之后离墙 0.38
+  const wall = { x: 0, z: 0, rotationY: 0, halfAlong: 1, halfDepth: 0.1 }
+  const [px, pz] = resolveWalkPosition(0, 0.2, [wall])
+  assert(Math.abs(px) < 1e-9, `推离方向应当是 +z，x 却变成了 ${px}`)
+  assert(Math.abs(pz - (0.1 + WALK_RADIUS)) < 1e-9, `推离后 z = ${pz}，应当是 0.38`)
+
+  // 离得够远一格都不挪：这条守住「没碰到墙也照样被推」那种反向错误
+  const [fx, fz] = resolveWalkPosition(0, 1, [wall])
+  assert(fx === 0 && fz === 1, `离墙一米不该被推动，实际 (${fx}, ${fz})`)
+
+  /*
+    转 90° 的墙：`wallPieces` 给墙沿 +z 时 `rotationY = −π/2`。
+    局部 / 世界的正逆变换只要有一处符号写反，这里就会把人推到墙的**另一侧**，
+    而画面上看起来只是「贴着墙走会被吸过去」。
+  */
+  const rotated = { x: 0, z: 0, rotationY: -Math.PI / 2, halfAlong: 1, halfDepth: 0.1 }
+  const [rx, rz] = resolveWalkPosition(0.2, 0, [rotated])
+  assert(Math.abs(rx - (0.1 + WALK_RADIUS)) < 1e-9, `旋转墙推离后 x = ${rx}，应当是 0.38`)
+  assert(Math.abs(rz) < 1e-9, `旋转墙推离后 z = ${rz}，应当保持 0`)
+
+  return '门洞通过；窗洞推到 0.37；贴墙 0.1 → 0.38；旋转墙同距；远处不动'
 })
 
 // ---------- 汇总 ----------

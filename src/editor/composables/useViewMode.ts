@@ -121,12 +121,17 @@ function distanceOf(camera: CameraConfig): number {
  *
  * `infiniteGrid` 同样在里面，理由一样：无限网格是 2D 这一档的取景需要（见下面
  * 写入那一段），不是用户对地面的改动，离开时必须还回去。
+ *
+ * `shadowEnabled` 同理：2D 这一档会顺手关掉阴影总开关（见写入那一段），那是
+ * **这一档的显示需要**，不是用户对阴影的改动，离开时按进来之前的值还原——
+ * 用户本来就在 3D 里关掉了阴影，不该因为去 2D 转了一圈回来就被这枚按钮打开。
  */
-/** 进入 2D 之前的完整状态：机位 + 那两条权限 + 地面是否无限 */
+/** 进入 2D 之前的完整状态：机位 + 那两条权限 + 地面是否无限 + 阴影总开关 */
 interface SavedPose extends Lock {
   position: [number, number, number]
   target: [number, number, number]
   infiniteGrid: boolean
+  shadowEnabled: boolean
 }
 
 let savedPose: SavedPose | null = null
@@ -150,7 +155,7 @@ export async function setViewMode(
   const scene = useSceneStore()
   if (viewModeOf(scene.config.camera) === mode) return
 
-  const { camera, ground } = scene.config
+  const { camera, ground, shadow } = scene.config
 
   if (mode === '2d') {
     savedPose = {
@@ -159,6 +164,7 @@ export async function setViewMode(
       minPolarAngle: camera.minPolarAngle,
       enableRotate: camera.enableRotate,
       infiniteGrid: ground.infiniteGrid,
+      shadowEnabled: shadow.enabled,
     }
 
     /*
@@ -233,6 +239,22 @@ export async function setViewMode(
          * 那时导出的配置里也写着 true。
          */
         ground: { infiniteGrid: true },
+        /*
+         * 俯视下**关掉阴影**。
+         *
+         * 2D 这一档是拿来看平面关系的（谁跟谁对齐、墙与门窗落在哪），而阴影在画面里
+         * 只干两件事：低太阳角时把影子拉得又长又黑、横在房间与墙线上，把本来要读的
+         * 边盖掉；以及让每一面墙的顶面带上一半明一半暗的受光差，同样干扰「这是一条线」。
+         * 俯视里没有立体关系可看，影子提供不了任何信息。
+         *
+         * 代价要认：它是写进 `config.shadow.enabled` 的，于是 2D 下右栏「阴影」页的
+         * 总开关是关的、导出的配置里也写着 `false`（与 `infiniteGrid` / 两条相机权限
+         * 同一条：这一档的取景手段住在配置里）。切回 3D 按进来之前的值还原，见下面那段。
+         *
+         * 打开它仍然是一条**显式动作**：在 2D 里手动点「启用阴影」或者套一个日照预设
+         * 都会把它抬起来，画面随即出影子——这是用户自己要的，不是这一档该拦的。
+         */
+        shadow: { enabled: false },
       },
       '切换到 2D 俯视视角',
     )
@@ -253,13 +275,17 @@ export async function setViewMode(
    * 宿主自己调的权限在这条路上无从得知，只能回到默认。
    *
    * 无限网格同理：那种配置是 2D 下导出物，里面写着 `infiniteGrid: true`，
-   * 既然要离开俯视，就回到默认的有限网格。
+   * 既然要离开俯视，就回到默认的有限网格。阴影也一样：2D 下导出的配置里总开关是
+   * 关的，而「3D 透视视角」这个档位默认要看得见影子，所以没有可还原的值时回到
+   * `DEFAULT_SCENE_CONFIG` 里那个 `true`——否则从一份 2D 配置切进 3D，
+   * 画面会是「写着 3D、地上却没有一点影子」。
    */
   const lock: Lock = saved ?? {
     minPolarAngle: DEFAULT_SCENE_CONFIG.camera.minPolarAngle,
     enableRotate: DEFAULT_SCENE_CONFIG.camera.enableRotate,
   }
   const infiniteGrid = saved?.infiniteGrid ?? DEFAULT_SCENE_CONFIG.ground.infiniteGrid
+  const shadowEnabled = saved?.shadowEnabled ?? DEFAULT_SCENE_CONFIG.shadow.enabled
 
   /*
    * 有得还原就**原地还原**（含注视点，所以是整条机位）；没有就只换方向、
@@ -280,7 +306,11 @@ export async function setViewMode(
   }
 
   scene.applyConfig(
-    { camera: { position, ...lock }, ground: { infiniteGrid } },
+    {
+      camera: { position, ...lock },
+      ground: { infiniteGrid },
+      shadow: { enabled: shadowEnabled },
+    },
     '切回 3D 透视视角',
   )
   if (!options.silent) pushEvent('已切回 3D 透视视角')

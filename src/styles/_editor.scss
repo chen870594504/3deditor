@@ -195,9 +195,11 @@
 
   手柄模式切换条与视角档位条的藏法与胶囊完全相同：它们也是编辑控件。
   视角档位尤其要藏——预览是只读的，连机位都不该由这枚按钮改。
+  漫游入口（`.tdm-walk-btn`）同理：预览里既不该改机位，也不该开始行走。
 */
 .tdm-stage--preview .tdm-viewport-actions,
 .tdm-stage--preview .tdm-view,
+.tdm-stage--preview .tdm-walk-btn,
 .tdm-stage--preview .tdm-gizmo,
 .tdm-stage--preview .tdm-draw,
 .tdm-stage--preview .tdm-draw-hint {
@@ -527,8 +529,15 @@
   align-items: center;
 }
 
-/* .tdm-item 是 display:block / width:100%，这里要让它跟右侧两个按钮共处一行 */
-.tdm-models-pick {
+/*
+  .tdm-item 是 display:block / width:100%，这里要让它跟右侧的按钮共处一行。
+
+  墙 / 门窗那两份清单的主按钮也走这条：它们与「场景模型」页一样是
+  「主按钮 + 行尾 ×」，于是那一套选中的视觉（.tdm-item--active 的琥珀左条）
+  与行高都直接复用，不另造一份。房间那一行不是按钮，不受影响。
+*/
+.tdm-models-pick,
+.tdm-plan-pick {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1184,6 +1193,17 @@
 }
 
 /*
+  待落点时的光标。
+
+  与 `--draw` 分开写而不是合并：两者可能同时成立（绘制工具开着时按住漫游图标），
+  而这条规则**排在后面**——待落点时左键的意思是「就在这儿走」，
+  十字光标必须保持。合并成一条也不改变结果，但会让「谁盖住谁」不明确。
+*/
+.tdm-viewport--walk {
+  cursor: crosshair;
+}
+
+/*
   绘制提示行：视口底部居中。
 
   底部中间是空的（右下角那枚操作胶囊贴着右边），而「一行工具提示放在底部」
@@ -1217,7 +1237,69 @@
   pointer-events: none;
 }
 
-/* 视角档位切换（2D / 3D），视口右上角。
+/*
+  漫游 HUD：视口底部居中，与绘制提示行同一个落点。
+
+  两者不会同时出现（EditorStage 里提示行在漫游时整条不渲染），所以共用
+  底部这一格没有冲突。形状与提示行、操作胶囊同一套底（近黑 + 发丝描边 + 药丸），
+  只是多了一枚实心的退出按钮——漫游中**必须**有一个看得见的出口，
+  指针锁住时 Esc 是第一反应，但「按了 Esc 只是放开指针」这件事第一次遇到的人不知道。
+
+  `pointer-events: none` 与胶囊同一条：整条横带若吃事件，画面底部就出现
+  一条点不到也拖不动的死区。只有退出按钮自己放行。
+*/
+.tdm-walk-hud {
+  position: absolute;
+  bottom: 14px;
+  left: 0;
+  right: 0;
+  width: fit-content;
+  max-width: calc(100% - 28px);
+  margin: 0 auto;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 6px 5px 14px;
+  border: 1px solid var(--tdm-line-strong);
+  border-radius: 999px;
+  background: rgba(8, 9, 12, 0.82);
+  backdrop-filter: blur(2px);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--tdm-text-hi);
+  text-align: center;
+  animation: tdm-rise 160ms var(--tdm-ease);
+  pointer-events: none;
+}
+
+/* 视口窄时整句会换行；药丸的圆角跟着变高，不必另加媒体查询 */
+.tdm-walk-hud-text {
+  min-width: 0;
+}
+
+.tdm-walk-exit {
+  flex: none;
+  padding: 3px 10px;
+  border: 1px solid var(--tdm-signal-dim);
+  border-radius: 999px;
+  background: var(--tdm-signal-dim);
+  font-family: var(--tdm-font-ui);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--tdm-signal);
+  cursor: pointer;
+  pointer-events: auto;
+  transition: color var(--tdm-t-fast) var(--tdm-ease), background var(--tdm-t-fast) var(--tdm-ease);
+
+  &:hover {
+    color: var(--tdm-ink-000);
+    background: var(--tdm-signal);
+  }
+}
+
+/*
+  视角档位切换（2D / 3D / 行走），视口右上角。
 
   位置：右上角。左上角原先被视口 HUD 的四行读数占着，HUD 删掉之后那里空了
   （挪不挪见 .tdm-gizmo 上面那段）。顶边中部是手柄条，右下是操作胶囊，
@@ -1251,6 +1333,74 @@
   backdrop-filter: blur(2px);
   animation: tdm-rise 160ms var(--tdm-ease);
   pointer-events: none;
+}
+
+/*
+  第一人称漫游的入口：一枚独立的人形圆形按钮，贴在视角胶囊正下方。
+
+  **不并进胶囊**：那条胶囊里每一格都是「此刻在看哪个档」的三选一状态，
+  而这一枚是「按住我、把我放到平面图上」的一次拖拽。并排成一格会读成
+  第三个档位——单击切过去，然后呢？所以它单独浮着，且只有图标、不写字。
+
+  位置：胶囊在 top: 10px、高约 28px，这里从 46px 起，留 8px 空隙。
+  右边仍然内缩 14px，与胶囊、操作胶囊、四角角标同一条对齐线。
+
+  **只在 2D 里出现**（判据在模板上）：3D 里拖出的落点要先经过一次相机飞行，
+  飞行途中 `groundPointAt` 用的是旧机位，人会落在离指针很远的地方。
+
+  光标是 grab / grabbing：它是「把人抓起来放到某处」这个动作本身，
+  与胶囊里那些「点一下就切」的按钮手感不一样。
+*/
+.tdm-walk-btn {
+  position: absolute;
+  top: 46px;
+  right: 14px;
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--tdm-line-strong);
+  border-radius: 999px;
+  background: rgba(8, 9, 12, 0.82);
+  backdrop-filter: blur(2px);
+  color: var(--tdm-text-hi);
+  cursor: grab;
+  user-select: none;
+  pointer-events: auto;
+  animation: tdm-rise 160ms var(--tdm-ease);
+  transition: color var(--tdm-t-fast) var(--tdm-ease), background var(--tdm-t-fast) var(--tdm-ease);
+
+  /*
+    描边交给 CSS，路径只负责形状：与导轨那五个内置图标同一个口径
+    （1.5 号描边、圆端点），18px 落在 32px 的圆里四周留白均匀。
+  */
+  svg {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  &:hover {
+    color: #fff;
+  }
+
+  /* 按下之后指针捕获一直在这个按钮上，拖到平面图时它仍在「抓着」的状态 */
+  &:active {
+    cursor: grabbing;
+  }
+}
+
+/* 待放 / 拖拽中：琥珀实底，与胶囊里的选中档同一个信号，表明「这一下算数」 */
+.tdm-walk-btn--on {
+  color: var(--tdm-ink-000);
+  background: var(--tdm-signal);
 }
 
 /* ==========================================================================

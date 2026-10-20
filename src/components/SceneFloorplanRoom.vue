@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { DoubleSide, Euler, Shape, Vector3 } from 'three'
-import { polygonCenter } from '../utils/floorplan'
+import { polygonCenter, roomLabelHeight } from '../utils/floorplan'
 import { createLabelTexture, labelTextureAspect } from '../utils/labelTexture'
 import type { LabelTextureOptions } from '../utils/labelTexture'
 import type { FloorplanRoom } from '../types'
@@ -42,6 +42,23 @@ const props = withDefaults(
  * 这个压住网格），扣掉之后这里仍有 2 个单位——这就是不能再往下调的原因。
  */
 const FLOOR_Y = 0.035
+
+/**
+ * 房间色块的不透明度。
+ *
+ * 早先是 0.55，房间色是画面上一块明确的「标注」。反馈是「房间不要有地板颜色，
+ * 或者透明到 0.1 差不多」——在户型图里，用户的注意力在那几块地面上（地板、
+ * 地基纹理、挨着房间摆的家具），半透明的色块压在上面会把它们整片染色；
+ * 2D 里尤其明显，几个房间拼起来像一块马赛克贴纸，读不出底下是什么。
+ *
+ * 取 0.1 而不是 0：完全透明之后，「哪几块地面属于同一个房间」就只剩名字一行字
+ * 来承担，相邻房间的边界也看不出层次；0.1 是一层几乎只剩「色相提示」的薄雾，
+ * 不遮底下的东西，又还能一眼分出房间。
+ *
+ * 颜色本身仍由配置里的 `room.color` 决定（右栏色块照旧改得动），这里只改
+ * 它铺在地面上的浓度。
+ */
+const ROOM_FILL_OPACITY = 0.1
 
 /**
  * 2D 档的房间名高度。
@@ -125,30 +142,26 @@ const GUIDE_BOTTOM_Y = FLOOR_Y + 0.01
 const GUIDE_COLOR = '#64748b'
 
 /**
- * 房间名在世界坐标里的高度，米。两档各一个值。
+ * 3D 档房间名在世界坐标里的高度，米。
  *
  * **标签是固定世界尺寸（`sizeAttenuation: true`），跟着画面里的模型一起放大缩小。**
  * 相机拉远、模型在画面里变小时，标签跟着变小——不会再用一块固定屏幕大小的字
  * 盖住模型。这正是「不要固定大小」那条反馈要的。
  *
- * 两个数是从**旧观感**折出来的，不是估的。旧写法是 `sizeAttenuation: false` 配
+ * 0.4 是从**旧观感**折出来的，不是估的。旧写法是 `sizeAttenuation: false` 配
  * `0.06`，而 three 的 sprite 顶点着色器在那条路上会把 scale 乘上标签自己的
  * 相机空间深度（`scale *= -mvPosition.z`）。也就是说，那个「屏幕上的 0.06」
- * 在标签所在深度 d 上等价于**世界高度 `0.06 × d`**：
+ * 在标签所在深度 d 上等价于**世界高度 `0.06 × d`**：3D 默认机位 `[4, 3, 6]`
+ * 看原点，标签在墙顶上方约 4.5 米、房间多半在原点附近，深度约 6.1 米 →
+ * `0.06 × 6.1 ≈ 0.37`，取 0.4 米（约 7.9% 画面高度，旧的屏幕比例约 7.2%，
+ * 差不到 10%）。
  *
- * - 2D 的主机位在原点上方 110 米（`useViewMode` 的 `TOP_DISTANCE`），标签在
- *   `LABEL_Y_2D`（1.4 米），相机空间深度约 108.6 米 → `0.06 × 108.6 ≈ 6.5`。
- * - 3D 默认机位 `[4, 3, 6]` 看原点，标签在墙顶上方约 4.5 米、房间多半在原点
- *   附近，深度约 6.1 米 → `0.06 × 6.1 ≈ 0.37`，取 0.4 米（约 7.9% 画面高度，
- *   旧的屏幕比例约 7.2%，差不到 10%）。
- *
- * 所以**默认机位下的观感与改之前基本一致**，只有滚轮缩放时才跟着变。
- *
- * 同一份世界尺寸不可能同时服务两档：2D 的 6.5 米放到 3D 近处会糊满整屏，
- * 而 3D 的 0.4 米在 110 米高的俯视里不到 4 像素。两个数都是**按各档的正常视距
- * 定的**；改默认机位、`TOP_DISTANCE` 或 `LABEL_Y_2D` 时，按同一条式子重算。
+ * **2D 档不用固定值，按房间自己的尺寸算**（`roomLabelHeight`）：2D 里房间是
+ * 画面的主体，标签必须与它标注的那块地面同比例，否则同一栋房子里大小房间
+ * 总有一边不合适（写死 6.5 米时，4 米见方的卧室被字撑满、30 米的大厅里字小
+ * 得像脚注）。3D 档的标签是悬在墙顶的徽标（见 `LABEL_BADGE`），并不贴着
+ * 哪一块地面，固定值反而让远近房间的徽标一样大、读起来更整齐。
  */
-const LABEL_HEIGHT_2D = 6.5
 const LABEL_HEIGHT_3D = 0.4
 
 /**
@@ -281,11 +294,12 @@ const labelMap = computed(() =>
  * **宽度按贴图的实际宽高比算**，否则中英文混排的长短名会被拉成同一个宽度，
  * 字就扁了。
  *
- * 高度取哪一档见 `LABEL_HEIGHT_2D` / `LABEL_HEIGHT_3D`——它是世界尺寸，
- * 由 `sizeAttenuation` 负责投到屏幕上。
+ * 高度是**世界尺寸**，由 `sizeAttenuation` 负责投到屏幕上：2D 档取
+ * `roomLabelHeight`（按这个房间自己的窄边算，见那边的注释），3D 档取
+ * `LABEL_HEIGHT_3D`。两者都是世界单位，滚轮缩放时跟着模型一起变。
  */
 const labelScale = computed(() => {
-  const height = props.plan ? LABEL_HEIGHT_2D : LABEL_HEIGHT_3D
+  const height = props.plan ? roomLabelHeight(props.room.polygon) : LABEL_HEIGHT_3D
   return new Vector3(height * labelTextureAspect(labelMap.value), height, 1)
 })
 </script>
@@ -296,8 +310,9 @@ const labelScale = computed(() => {
 
     位置只动 y（见 `FLOOR_POSITION`）：多边形的坐标就是世界坐标，x / z 必须留在 0。
 
-    半透明（0.55）而不是实心：房间是「被标记出来的区域」，透出底下的地基与网格
-    才读得出这一层是标注。实心色块在俯视图里会像一块贴纸，反而看不出与墙的关系。
+    半透明（`ROOM_FILL_OPACITY`）而不是实心：房间是「被标记出来的区域」，透出底下的
+    地基与网格才读得出这一层是标注。浓度取到 0.1 的理由写在那个常量上——
+    再高就会给地板、地基纹理染上一层整块的色，用户反馈要的就是把它放淡。
     深度写入保持默认的开启——这是一个平铺在地面上的孤立面片，
     关掉只会让它与其它半透明物体排错顺序。
 
@@ -311,7 +326,7 @@ const labelScale = computed(() => {
       :side="DoubleSide"
       :roughness="0.9"
       :metalness="0"
-      :opacity="0.55"
+      :opacity="ROOM_FILL_OPACITY"
       transparent
     />
   </TresMesh>
@@ -351,8 +366,8 @@ const labelScale = computed(() => {
     `size-attenuation` **开着**（显式写出来）：标签是**世界尺寸**，跟着模型一起
     放大缩小——相机拉远、模型在画面里变小时标签也变小，不会盖住模型。
     关掉的话它是屏幕比例、远近一样大，那正是「模型缩小后标签太大」那条反馈。
-    两档各自的世界高度见 `LABEL_HEIGHT_2D` / `LABEL_HEIGHT_3D`（差一个数量级，
-    原因在那两段注释里）。
+    两档各自的世界高度：2D 按房间窄边算（`roomLabelHeight`），3D 是
+    `LABEL_HEIGHT_3D`（原因在那两段注释里）。
 
     贴图周围是透明的，所以必须 `transparent`，否则透明区会渲染成黑色。
 

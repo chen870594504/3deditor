@@ -1,8 +1,8 @@
 import { computed, ref } from 'vue'
 import { useSceneStore } from '../../stores/scene'
-import type { DeepPartial, FloorplanConfig, FloorplanOpening, FloorplanOpeningKind, FloorplanPoint, FloorplanWall } from '../../types'
+import type { DeepPartial, FloorplanConfig, FloorplanOpening, FloorplanOpeningKind, FloorplanPickTarget, FloorplanPoint, FloorplanWall } from '../../types'
 import type { OpeningGap, OpeningRejectReason } from '../../utils/floorplan'
-import { CELL_SIZE, DEFAULT_WALL_HEIGHT, DEFAULT_WALL_THICKNESS, DOOR_HEIGHT, DOOR_WIDTH, WINDOW_HEIGHT, WINDOW_SILL, WINDOW_WIDTH, createFloorplanId, findEnclosedArea, findNearestWall, openingFreeGap, openingMagnetOffset, openingRejectReason, pickRoomColor, pointAlongWall, pointInPolygon, removeWall, resolveOpeningDrag, wallLength, wallPieces, wallRotationY } from '../../utils/floorplan'
+import { CELL_SIZE, DEFAULT_WALL_HEIGHT, DEFAULT_WALL_THICKNESS, DOOR_HEIGHT, DOOR_WIDTH, WINDOW_HEIGHT, WINDOW_SILL, WINDOW_WIDTH, createFloorplanId, findEnclosedArea, findNearestWall, findPlanSelectionTarget, openingFreeGap, openingMagnetOffset, openingRejectReason, pickRoomColor, pointAlongWall, pointInPolygon, removeWall, resolveOpeningDrag, wallLength, wallPieces, wallRotationY } from '../../utils/floorplan'
 import { cloneFloorplanPatch } from '../../utils/config'
 /**
  * 「算不算一次点击」的判据从 `src/utils/pointerClick.ts` 直接引入，不走 `'../../src'` 入口。
@@ -23,6 +23,7 @@ import type { LibrarySectionKey } from './useModelLibrary'
  */
 import { layFloorModel } from './useModelActions'
 import { setViewMode, viewModeOf } from './useViewMode'
+import { walking } from './useWalkMode'
 
 /**
  * 视口里的绘制工具。
@@ -279,6 +280,12 @@ function usePlan() {
  * 它做成 computed 是为了让提示行能说出**为什么**不能改——静默失效和
  * 「点了没反应」是同一种体验，而这两条又恰恰都是用户自己改出来的。
  *
+ * **漫游期间一律不算 2D**（第四条）。漫游的相机虽然是从那张俯视图出发的，
+ * 但它此刻已经降到 1.6 米高；而配置里的机位还停在正上方、`enableRotate` 也还
+ * 是关的。照着配置算出来仍是 2D，于是墙会按平面图外观渲染、点选也继续走
+ * 「地面求交」那条路——人站在屋里却点中头顶的墙，两件事都说不通。
+ * 这一条与 `SceneContent` 的 `planView` 是同一个判据的两半，改一处要看另一处。
+ *
  * 导出是因为它同时也是**绘制工具条摆不摆出来**的判据（`FloorplanTools.vue`）：
  * 画不了的时候把五枚按钮留在那儿，唯一的下场就是用户点了一下、什么也没发生
  * （点了工具确实还会顺手切回 2D，可那正是「用户没打算切档」的那种意外）。
@@ -287,6 +294,7 @@ function usePlan() {
  */
 export const planView = computed(() => {
   if (previewMode.value) return false
+  if (walking.value) return false
   const { camera } = usePlan().config
   if (camera.enableRotate) return false
   return viewModeOf(camera) === '2d'
@@ -374,7 +382,23 @@ export const floorplanHint = computed(() => {
     const wall = selectedWall.value
     if (wall) {
       const [cx, cz] = pointAlongWall(wall, wallLength(wall) / 2)
-      return `已选中一面墙（中点 ${cx.toFixed(2)}, ${cz.toFixed(2)}）：左栏点一格就换掉它；删掉它用右栏「平面图 → 03 墙」那一行`
+      const where = `已选中一面墙（中点 ${cx.toFixed(2)}, ${cz.toFixed(2)}）`
+
+      /*
+        墙这一支现在**在 3D 里也选得中**（射线拾取，见设计决定 66），所以不能再
+        无条件说「左栏点一格就换掉它」：换墙面模型走 `replaceTarget`，而它是
+        `planView` 闸着的。3D 与「2D 但开着允许旋转」两种挡位下那句话都是假的，
+        照旧说出去等于把用户引到一次没有效果的点选上。
+
+        删墙那半句三种挡位都成立（右栏的 × 不看挡位），所以一直留着。
+      */
+      if (blocked === 'rotate') {
+        return `${where}：左键此刻会旋转视角，左栏换不了它的墙面模型——请在「相机」页关掉「允许旋转」；删掉它仍可用右栏「平面图 → 03 墙」那一行`
+      }
+      if (blocked === 'view') {
+        return `${where}：切到 2D 俯视角才能从左边换掉它的墙面模型；删掉它用右栏「平面图 → 03 墙」那一行`
+      }
+      return `${where}：左栏点一格就换掉它；删掉它用右栏「平面图 → 03 墙」那一行`
     }
 
     /*
@@ -618,12 +642,15 @@ function resetDraft(): void {
  * 它是**界面状态**，与「画到一半的墙链」同一条约定：不进配置、不进历史、
  * 不进导出物。理由比墙链还直白——它连几何都不是，纯粹是「现在高亮谁」。
  *
- * 改动这个状态的四处：按下时命中（点空处则清）、Esc、进预览；切工具走
- * `resetDraft`，也清。**撤销 / 重做不清**：撤销把洞口挪回原位、把墙的外观退回去时，
- * 高亮跟着走正是想要的，而 id 万一悬空了由 `selectedOpening` / `selectedWall`
- * 兜住（见那里的注释）。
+ * 改动这个状态的几处：2D 按下时命中（点空处则清）、右栏点一行、3D 射线点中、
+ * Esc、进预览；切工具走 `resetDraft`，也清。**撤销 / 重做不清**：撤销把洞口挪回
+ * 原位、把墙的外观退回去时，高亮跟着走正是想要的，而 id 万一悬空了由
+ * `selectedOpening` / `selectedWall` 兜住（见那里的注释）。
+ *
+ * 写入路径**只有一条**：`selectPlanItem`。2D 命中、右栏点行、3D 点选都走它，
+ * 于是「先校验、再取消工具、最后写」这套顺序只需要维护一次。
  */
-type PlanSelection = { kind: 'opening' | 'wall'; id: string } | null
+type PlanSelection = FloorplanPickTarget | null
 const selection = ref<PlanSelection>(null)
 
 /**
@@ -641,12 +668,13 @@ export const selectedOpening = computed<{
   const picked = selection.value
   if (picked?.kind !== 'opening') return null
 
-  const { walls, openings } = plan()
-  const opening = openings.find((item) => item.id === picked.id)
-  if (!opening) return null
-
-  const wall = walls.find((item) => item.id === opening.hostWallId)
-  return wall ? { opening, wall } : null
+  /*
+    校验统一走 `findPlanSelectionTarget`：它同时管「洞口在不在」与「宿主墙在不在」，
+    与 `selectPlanItem` 用的是同一份实现。抄一份在这里的话，两处对「孤儿洞口」
+    的判断迟早会分叉。
+  */
+  const found = findPlanSelectionTarget(plan(), picked)
+  return found?.kind === 'opening' ? { opening: found.opening, wall: found.wall } : null
 })
 
 /**
@@ -659,7 +687,8 @@ export const selectedWall = computed<FloorplanWall | null>(() => {
   const picked = selection.value
   if (picked?.kind !== 'wall') return null
 
-  return plan().walls.find((item) => item.id === picked.id) ?? null
+  const found = findPlanSelectionTarget(plan(), picked)
+  return found?.kind === 'wall' ? found.wall : null
 })
 
 /** 放开选中的那个东西。Esc、进预览、切工具三处都走它 */
@@ -668,17 +697,68 @@ export function clearSelection(): void {
 }
 
 /**
- * 选中一个洞口 / 一面墙。
+ * 选中一个墙 / 洞口。**这是 `selection` 唯一的写入路径**（`clearSelection` 之外）。
  *
- * 这两个是 `selection` **唯一**的写入路径（`clearSelection` 之外），所以
- * 「同一时刻只选中一个」不需要谁来维护：写进去的时候自然就顶掉了上一个。
+ * 三个入口都走这里：2D 画布按下（`selectAtPointer`）、右栏清单点一行、
+ * 3D 射线点中（`EditorStage` 的 `floorplanPick`）。这样「先校验、再取消工具、
+ * 最后写」这套顺序只需要维护一处：
+ *
+ * - **先校验**（`findPlanSelectionTarget`）：id 不在配置里、孤儿洞口、kind 对不上
+ *   都返回 `false`，一个字都不写。右栏那份清单是按下标渲染配置原文的，导入的
+ *   配置里可能有孤儿洞口——点它不该让选中变成「查不到的东西」。
+ * - **先取消工具**：`cancelFloorplanTool → resetDraft → clearSelection`，
+ *   所以这一步必须在写 selection **之前**。顺序反过来的表现是「点了右栏一行，
+ *   行闪了一下又灭了」。代价是选中会丢掉画到一半的墙链——那是刻意的：
+ *   用户此刻的动作是「看这一件」，而草稿与选中同时亮着会让提示行说两件事。
+ * - **只在 2D 俯视里跳左栏分类**：3D 里 `replaceTarget` 被 `planView` 挡住，
+ *   跳过去也替换不了，只会在左栏制造「看起来能做什么」的假象。从 3D 切回 2D 时
+ *   由 `EditorStage` 的 watch 补跳（`syncLibrarySectionToSelection`）。
+ *
+ * 不写历史、不推日志、不动相机：选中是界面状态，不是一次场景改动。
  */
-function selectOpening(id: string): void {
-  selection.value = { kind: 'opening', id }
+export function selectPlanItem(target: FloorplanPickTarget): boolean {
+  const found = findPlanSelectionTarget(plan(), target)
+  if (!found) return false
+
+  cancelFloorplanTool()
+  selection.value = { kind: found.kind, id: found.id }
+
+  if (planView.value) {
+    const section =
+      found.kind === 'opening'
+        ? sectionKeyForOpening(found.opening.kind)
+        : TOOL_ASSET_RULES.wall?.section
+    if (section) openLibrarySection(section)
+  }
+
+  return true
 }
 
-function selectWall(id: string): void {
-  selection.value = { kind: 'wall', id }
+/**
+ * 3D 里选中之后切回 2D：补一次左栏分类跳转。
+ *
+ * 为什么不把这一步写进 `selectPlanItem`：它只在**从 3D 回到 2D** 那一刻才该发生
+ * （3D 里跳分类没有意义，见上）。放进写入路径就得在里面判「刚才是不是 3D」，
+ * 而那是调用方此刻的上下文，不是选中本身的性质。`EditorStage` 的
+ * `watch(planView)` 是这件事唯一自然的位置。
+ *
+ * 没有选中时什么都不做——切回 2D 不该把左栏从一个用户自己选好的分类上拽走。
+ */
+export function syncLibrarySectionToSelection(): void {
+  if (!planView.value) return
+
+  const wall = selectedWall.value
+  if (wall) {
+    const section = TOOL_ASSET_RULES.wall?.section
+    if (section) openLibrarySection(section)
+    return
+  }
+
+  const opening = selectedOpening.value
+  if (!opening) return
+
+  const section = sectionKeyForOpening(opening.opening.kind)
+  if (section) openLibrarySection(section)
 }
 
 /** 选中高亮要的那一点东西，全是模板直接能用的数，组件里不做算术 */
@@ -999,29 +1079,23 @@ function selectAtPointer(event: PointerEvent): void {
     `openingDrag` 与它无关。左栏照样跟着走到「墙壁」那一类，理由与洞口那条一样。
   */
   if (!picked) {
-    selectWall(hit.wall.id)
-
-    const wallSection = TOOL_ASSET_RULES.wall?.section
-    if (wallSection) openLibrarySection(wallSection)
+    selectPlanItem({ kind: 'wall', id: hit.wall.id })
     return
   }
 
   // 按下即亮：不必等抬手，否则「选中」这件事在按住期间看不出发生过
-  selectOpening(picked.id)
+  selectPlanItem({ kind: 'opening', id: picked.id })
 
   /*
-    左栏跟着走到这一类，让「上哪儿找这一扇的新模型」不必靠用户猜。
+    左栏跟着走到这一类的动作在 `selectPlanItem` 里（只在 2D 挡位下发生）。
 
-    放在这里而不是拖动真的开始之后：下面那条 `!gap` 的分支会 `flash` 并 return，
+    它要在**拖动真的开始之前**就生效：下面那条 `!gap` 的分支会 `flash` 并 return，
     可是**选中已经是事实**了（右栏那一行还能删掉它），左栏就该跟着走。
 
     切分类只是 `librarySection.value = key` 这一句赋值（`openLibrarySection`），
     值相等时 Vue 不触发，所以幂等；它不进历史、不进配置，也不会打断拖动——
     指针捕获挂在视口那个元素上，与左栏不是一棵子树。
   */
-  const section = sectionKeyForOpening(picked.kind)
-  if (section) openLibrarySection(section)
-
   const { id, hostWallId, offset, width } = picked
   const siblings = openings.filter(
     (item) => item.hostWallId === hostWallId && item.id !== id,

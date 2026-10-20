@@ -9,6 +9,7 @@ import {
   selectedWall,
 } from './useFloorplanTool'
 import { exitPreview, redo, undo } from './useSceneActions'
+import { cancelWalkPlacement, stopWalk, walkArmed, walking } from './useWalkMode'
 
 /**
  * 编辑器的全局快捷键。**由 `SceneEditor` 在 setup 里调一次**。
@@ -64,13 +65,26 @@ export function useEditorShortcuts(): void {
         target.tagName === 'SELECT')
 
     /**
-     * Esc 分四级：先关弹窗，再退出绘制工具，再放开选中的那个门窗或墙，最后退出预览。
+     * Esc 分六级：先退出漫游，再取消「等待落点」，再关弹窗，再退出绘制工具，
+     * 再放开选中的那个门窗或墙，最后退出预览。
+     *
+     * 漫游排在最前：它是最外层、最「全屏」的一档，正在走的时候按 Esc
+     * 想的一定是「停下来」。而它一停下来 `SceneWalkControls` 会把相机交还，
+     * 后面那几级即使被一并跳过也不会留下半截状态。
      *
      * 这一步必须在这里做，不能指望弹窗自己 stopPropagation：
      * Esc 的落点取决于焦点在哪儿（触发按钮、文本域、视口、body），
      * 而要挡住的是「按一次 Esc 把弹窗和预览一起关了」。
      */
     if (event.key === 'Escape') {
+      if (walking.value) {
+        stopWalk()
+        return
+      }
+      if (walkArmed.value) {
+        cancelWalkPlacement()
+        return
+      }
       if (eventDialogOpen.value) {
         eventDialogOpen.value = false
         return
@@ -120,8 +134,18 @@ export function useEditorShortcuts(): void {
      * 输入框里打字时不切模式：模型名字、事件代码里满是 w / e / r。
      * 直接拿 `event.key` 查表即可——多字符的键名（`ArrowUp`、`Enter`）天然查不到，
      * 而中文输入法在拼音阶段的 key 是 `Process`，同样落不到表里。
+     *
+     * **漫游时不切**：W 此刻是「往前走」。不挡的话边走边按 W，
+     * 手柄会在脚下无声地换个档，退出漫游之后才发现右栏的模式变了。
      */
-    if (!typing && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) {
+    if (
+      !typing &&
+      !walking.value &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      !event.shiftKey
+    ) {
       const mode = GIZMO_KEYS[event.key.toLowerCase()]
       if (mode && !previewMode.value) {
         event.preventDefault()

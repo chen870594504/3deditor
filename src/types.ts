@@ -544,6 +544,25 @@ export interface FloorplanOpening {
 }
 
 /**
+ * 「平面图里被选中的是哪一件」的**身份**，只有种类与 id。
+ *
+ * 它是选中状态、射线拾取与右栏清单三者之间的共同语言：画布上点中的东西
+ * （`utils/floorplanPick.ts` 的登记簿）、右栏点的一行、以及 `selection` 里
+ * 存的东西都写成这一种形状，于是「同一个选中」不需要在三处各翻译一遍。
+ *
+ * **不带对象引用是刻意的**：撤销、重做、右栏删行都会让配置里那份对象换掉或消失，
+ * 存引用的那一份会悄悄指着旧的。真正的「查得到才算数」由
+ * `findPlanSelectionTarget` 做——它是这条规则的唯一实现。
+ *
+ * 同理，它**不进配置、不进历史、不进导出物**：它只是「现在高亮谁」。
+ */
+export interface FloorplanPickTarget {
+  kind: 'wall' | 'opening'
+  /** 墙的 id，或洞口的 id */
+  id: string
+}
+
+/**
  * 房间：由墙体自动围出来的多边形。
  *
  * `polygon` 是简单多边形、首尾不重复、**已折掉共线点**（见 `findEnclosedArea`），
@@ -575,6 +594,22 @@ export interface FloorplanConfig {
   walls: FloorplanWall[]
   openings: FloorplanOpening[]
   rooms: FloorplanRoom[]
+  /**
+   * 墙体不透明度，0–1，默认 1。
+   *
+   * **它是一个全局量，不住在 `FloorplanWall` 上**，与右栏「墙体」那一节的
+   * 墙高 / 墙厚同一条口径：面板一次改掉全部墙，新画的墙也自动沿用（全局量
+   * 天然不需要继承）。更硬的一条理由在渲染端：贴面墙那条路是「一个地址一份
+   * glTF」，同址的每一块砖**按引用共享材质**；若透明度逐墙存，就得为每块砖
+   * 克隆一份材质，正好丢掉那套分组省下来的显存（见 `SceneFloorplanWallSkin.vue`
+   * 的文件头）。全局值则可以安全地写在共享材质上。
+   *
+   * **它不是几何**：`wallPieces()` 不认识它，切段、开洞、算世界坐标一个字都
+   * 不受影响；它只改「墙身画出什么材质」，门窗框 / 玻璃 / 门扇不跟着变。
+   * 老配置没有这个键时按 1 处理（`createFloorplanConfig` 会给新配置写上 1），
+   * 所以 JSON 往返不需要迁移。
+   */
+  wallOpacity: number
 }
 
 /**

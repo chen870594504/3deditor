@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { Euler, Vector3 } from 'three'
 import SceneFloorplanWallBox from './SceneFloorplanWallBox.vue'
-import { dropOpeningFills, wallPieces } from '../utils/floorplan'
+import { dropOpeningFills, pickTargetOfPiece, wallPieces } from '../utils/floorplan'
 import type { FloorplanOpening, FloorplanWall } from '../types'
 
 defineOptions({ name: 'TdmSceneFloorplanWall' })
@@ -39,6 +39,14 @@ const props = defineProps<{
    * 相机。给出处的完整理由写在 `SceneFloorplanWallBox.vue` 的 `planWall` 那段。
    */
   plan?: boolean
+  /**
+   * 墙身的不透明度（0–1），由 `SceneFloorplan` 从 `floorplan.wallOpacity` 传下来。
+   *
+   * 这里只负责转发：**只有 `role === 'wall'` 的碎片会用它**，门窗框 / 玻璃 /
+   * 门扇保持调色板里的样子（见 `SceneFloorplanWallBox.vue`）。缺省按 1 处理，
+   * 所以老配置与贴面墙退化那条路都不用补值。
+   */
+  opacity?: number
   /** 是否投射 / 接收阴影（只有 Shadow Map 方式为真，判据在 `SceneContent`） */
   castShadow?: boolean
   receiveShadow?: boolean
@@ -81,6 +89,12 @@ const boxes = computed(() =>
     rotation: new Euler(0, piece.rotationY, 0),
     size: piece.size,
     role: piece.role,
+    /*
+      点选身份由碎片自己带：洞口的内饰件归洞口，墙段与洞口上下的补墙归墙。
+      判据只有 `openingId` 一个（见 `pickTargetOfPiece`），所以「过梁算墙」
+      这条已知取舍在这里不是特例，而是同一句话。
+    */
+    pick: pickTargetOfPiece(piece, props.wall.id),
   })),
 )
 </script>
@@ -93,7 +107,9 @@ const boxes = computed(() =>
     :rotation="box.rotation"
     :size="box.size"
     :role="box.role"
+    :pick="box.pick"
     :plan="plan"
+    :opacity="opacity"
     :cast-shadow="castShadow"
     :receive-shadow="receiveShadow"
   />

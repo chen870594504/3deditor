@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { Euler, Vector3 } from 'three'
+import type { Object3D } from 'three'
 import type { FloorplanPieceRole } from '../utils/floorplan'
+import { registerFloorplanNode } from '../utils/floorplanPick'
+import type { FloorplanPickTarget } from '../types'
 
 defineOptions({ name: 'TdmSceneFloorplanWallBox' })
 
@@ -32,11 +35,33 @@ const props = defineProps<{
   /** 取哪一份材质 */
   role: FloorplanPieceRole
   /**
+   * 这一块点下去算选中谁。**必填**：三个调用点（灰墙、贴面墙的补件、洞口模型
+   * 退化时那批构件）一个都不能漏，漏了的表现是「这一块点不中」而不是编译错误
+   * ——所以这里不给可选默认值。
+   *
+   * 判据在 `pickTargetOfPiece`（`openingId` 有就是洞口，没有就是墙），
+   * 组件自己不猜。
+   */
+  pick: FloorplanPickTarget
+  /**
    * 按**平面图外观**（2D 正俯视那一档）画，而不是按 3D 的材质画。
    *
    * 只有 `wall` 这一个 role 会因此改变，见下面 `planWall` 那段。
    */
   plan?: boolean
+  /**
+   * **墙身**的不透明度（0–1）。**只作用于 `role === 'wall'`**。
+   *
+   * 门窗框 / 玻璃 / 门扇刻意不受它影响，两个理由：
+   * ① 玻璃在调色板里已经是 0.26，再乘一次 0.3 会淡到几乎看不见——用户拖的是
+   *    「墙」，不是「窗玻璃」；② 门窗是独立的实体，墙透明时它们跟着一起消失，
+   *    会让人以为门窗被删掉了。
+   *
+   * 值来自 `floorplan.wallOpacity`（全局量，见 `types.ts` 那条注释）。
+   * 缺省按 1 处理；导入的配置把它写坏成 2 或 -1 时在这里夹回 0–1——
+   * 面板的滑杆保证了正常路径，但配置是宿主自己也能写的。
+   */
+  opacity?: number
   /**
    * 是否投射 / 接收阴影（只有 Shadow Map 方式为真，判据在 `SceneContent`）。
    *
@@ -129,10 +154,72 @@ const planWall = computed<string | null>(() => {
   const bottom = props.position.y - props.size[1] / 2
   return bottom > 1e-6 ? PLAN_LINTEL : PLAN_WALL
 })
+
+/**
+ * 这一块最终的不透明度。
+ *
+ * 墙身吃 `opacity`，其余角色照旧吃调色板（玻璃那一项是 0.26，是本文件里唯一
+ * 半透明的构件）。夹取只做在墙身这一支：调色板是自己的常量，不需要防；
+ * 而 `opacity` 来自配置，宿主可以写进任何数。
+ */
+const materialOpacity = computed(() => {
+  if (props.role === 'wall') {
+    const value = props.opacity ?? 1
+    return Math.min(1, Math.max(0, value))
+  }
+
+  return PALETTE[props.role].opacity ?? 1
+})
+
+/**
+ * 是否走透明队列。
+ *
+ * 墙身按「不透明度小于 1」判，其余角色照旧按调色板里有没有写 `opacity` 判。
+ * 玻璃那条因此完全不受墙的滑杆影响——两条判据分开写，而不是
+ * `opacity < 1 || PALETTE...` 混成一句。
+ */
+const materialTransparent = computed(() =>
+  props.role === 'wall'
+    ? materialOpacity.value < 1
+    : PALETTE[props.role].opacity !== undefined,
+)
+
+/**
+ * 半透明的墙**不写深度**。
+ *
+ * 写了的话，近处那面墙会先把自己的深度写进缓冲，于是透过它本应看到的那面远墙
+ * 在深度测试里整片失败——画面上不是「两堵半透明的墙叠在一起」，而是近墙背后
+ * 一片空白，看起来像远墙凭空消失了。这正是 `SceneGround` / `SceneFloorplanDraft`
+ * 那两处写 `depth-write=false` 的同一个理由。
+ *
+ * 只对墙身开口：玻璃维持改造前的行为（透明、但仍写深度），那是既有观感，
+ * 这一轮不顺手改它。
+ */
+const materialDepthWrite = computed(
+  () => !(props.role === 'wall' && materialTransparent.value),
+)
+
+/**
+ * 根 mesh 的函数 ref：挂载时把它登记进户型点选簿。
+ *
+ * 入参是 TresJS 建的那只裸 mesh，照 `SceneModelNode.vue:128-133` 的先例。
+ * **不能用字符串 ref + watch**：登记要与拿到对象同步发生，而 `ScenePicker`
+ * 的命中判据随时可能跑；晚一拍的表现是「刚渲染出来的墙要再点一次才选得中」。
+ *
+ * 只在拿到对象时登记（卸载时入参是 `null`）。WeakMap 会让条目随对象回收，
+ * 不需要反登记。同一块砖的 key 不会换身份，所以 `pick` 变了也不需要重登——
+ * 真正会换的是「这条配置被删掉、另一个 id 顶上同一个 key」，而 key 本身带着
+ * 洞口 id / 墙内位置，那种情况会换一个组件实例。
+ */
+function onMeshRef(element: unknown) {
+  const mesh = (element ?? null) as Object3D | null
+  if (mesh) registerFloorplanNode(mesh, props.pick)
+}
 </script>
 
 <template>
   <TresMesh
+    :ref="onMeshRef"
     :position="position"
     :rotation="rotation"
     :cast-shadow="castShadow"
@@ -147,14 +234,21 @@ const planWall = computed<string | null>(() => {
       任何深色都会被提亮到看不出差别——调色板上的数值在这一档里没有意义。
       先例是 `SceneFloorplanDraft.vue` 那道琥珀色的草稿条，用的也是 Basic。
     -->
-    <TresMeshBasicMaterial v-if="planWall" :color="planWall" />
+    <TresMeshBasicMaterial
+      v-if="planWall"
+      :color="planWall"
+      :opacity="materialOpacity"
+      :transparent="materialTransparent"
+      :depth-write="materialDepthWrite"
+    />
     <TresMeshStandardMaterial
       v-else
       :color="PALETTE[role].color"
       :roughness="PALETTE[role].roughness"
       :metalness="PALETTE[role].metalness"
-      :opacity="PALETTE[role].opacity ?? 1"
-      :transparent="PALETTE[role].opacity !== undefined"
+      :opacity="materialOpacity"
+      :transparent="materialTransparent"
+      :depth-write="materialDepthWrite"
     />
   </TresMesh>
 </template>

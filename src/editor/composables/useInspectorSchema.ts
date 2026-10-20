@@ -607,6 +607,33 @@ export function createInspectorTabs(): InspectorTabDef[] {
               hint: '门窗洞口的宽度不受墙厚影响，但门套会随着一起变厚',
             },
             {
+              key: 'wallOpacity',
+              label: '不透明度',
+              type: 'slider',
+              /*
+               * **有 path，没有 apply**：它是一个全局标量，直接住在 `FloorplanConfig`
+               * 上（与墙高 / 墙厚不同——那两项逐墙存，所以要走 `setWallSize` 改全表）。
+               * 理由写在 `types.ts` 的 `wallOpacity` 上：贴面墙按 url 分组、同址的砖
+               * 共享材质，逐墙存透明度会逼着每块砖克隆一份材质。
+               *
+               * 直接写 path 的那一下由 store 对 `config` 的深 watch 收进历史，
+               * 标签是分组名「平面图」；这里不必再造一个 `applyConfig` 包装。
+               */
+              path: 'floorplan.wallOpacity',
+              min: 0,
+              max: 1,
+              step: 0.01,
+              precision: 2,
+              when: (config) => config.floorplan.walls.length > 0,
+              /*
+               * 两条容易误会的事写进提示里：
+               * ① 只有**墙身**变透明，门窗框 / 玻璃 / 门扇与门窗模型不跟着变
+               *    （玻璃本身已经是 0.26，再乘一次几乎会消失）；
+               * ② 透明**不改深度图**，墙照旧投下一块实心影子。
+               */
+              hint: '0 为全透明、1 为实心；门窗构件不跟着变，墙也照旧投实心影子',
+            },
+            {
               key: 'wallEmpty',
               label: '',
               type: 'note',

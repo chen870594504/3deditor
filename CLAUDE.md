@@ -43,7 +43,7 @@ pnpm preview      # 预览构建产物
 几条容易踩的：
 
 - **没有 lint / formatter 配置**（无 ESLint / Prettier / Biome / EditorConfig）。不要凭空引入，也不要假设某个风格工具会兜住格式问题。
-- **没有测试框架**。`scripts/smoke.mjs` 是唯一的自动化测试，且**不支持筛选用例**——一次跑全部 116 条。想单点验证某个纯函数，写一个临时 node 脚本 `import('../dist/index.js')`（必须先 `pnpm build:only`），用完删掉。
+- **没有测试框架**。`scripts/smoke.mjs` 是唯一的自动化测试，且**不支持筛选用例**——一次跑全部 121 条。想单点验证某个纯函数，写一个临时 node 脚本 `import('../dist/index.js')`（必须先 `pnpm build:only`），用完删掉。
 - `pnpm smoke` 读的是 `dist/index.js`，改完 `src/` 不重新构建就测的是旧产物。
 - **验证 playground 构建必须另给 outDir**。仓库没有 `build:playground` 脚本，裸跑 `vite build` 会用默认 `outDir: dist` **覆盖库产物**。正确做法：
 
@@ -86,8 +86,8 @@ pnpm preview      # 预览构建产物
 组件分层（**三层都在 `src/` 内部，公开面仍然只有一份**）：
 
 ```
-SceneCanvas.vue  由合并后的 SceneViewer.vue 改名而来，收窄成**内部签名**：8 个 prop /
-                 12 个 emits / 6 个方法。编辑器与纯画布共用，宿主永远碰不到——公开面上
+SceneCanvas.vue  由合并后的 SceneViewer.vue 改名而来，收窄成**内部签名**：9 个 prop /
+                 13 个 emits / 6 个方法。编辑器与纯画布共用，宿主永远碰不到——公开面上
                  那几组「场景长什么样」的 prop 桥（`background` / `wireframe` / 分组配置…）
                  全删了，它们本来就住在 `store.config` 里；这里只留能决定画布本身的那些
                  与编辑器自己的手感偏好（`toolbar` / `gizmoMode` / `cameraTransition`）
@@ -154,6 +154,34 @@ SceneViewer.vue  公开面：十二个 prop（editable / mode / defaultViewMode 
 两件反直觉的事：**遮罩走 CORS**（于是图标必须有同源代理，`iconBaseUrl` 那一档就是为它加的），
 以及**探测必须带 `crossOrigin="anonymous"`**（不带的话跨域 svg 照样 `onload`，探测放行、
 渲染遮罩时才被拦，导轨上多出一格空白——兜底就白兜了）。
+
+**第一人称漫游是编辑器里唯一一处「临时的相机接管」**（设计决定 68）。状态住在
+`composables/useWalkMode.ts`（模块级 `walking` / `walkArmed` / `walkSpawn`），
+**不进 `config`、不进历史、不进导出**——走路是观察方式，不是场景改动。
+它分三层落地，改之前先认清各在哪一层：
+
+- **入口与界面**在 `EditorStage.vue`：右上角视角胶囊**正下方**单独一枚人形图标
+  （不并进胶囊，且**只在 2D 里渲染**——3D 里拖出的点要经过一次相机飞行，
+  途中 `groundPointAt` 仍按旧机位算，人会落偏）。按住它拖到平面图上，松开落点
+  （`pointerdown` 记起点、6px 阈值之后才把指针当成拖拽，否则单击按钮会在
+  按钮脚下生成一个人）；待放期间视口套 `.tdm-viewport--walk`，底部 HUD 是退出口。
+  户型工具的分流包了一层 `onViewportPointer*`：`walkArmed` 时指针只喂给起点预览。
+- **相机与移动**在 `src/components/SceneWalkControls.vue`，挂在 `TresCanvas` 内部
+  （所以拿得到活的相机与轨道控制）。进入时关 `OrbitControls.enabled`、逐帧 WASD；
+  退出时**先写相机位置、再写 target、最后 `update()`**，顺序换了会被 `minDistance`
+  顶开几米。起点标记 `src/editor/components/SceneWalkMarker.vue` 只画待放 / 已落点、
+  进入漫游后不画。
+- **碰撞算术**在 `src/utils/walk.ts`（纯函数，从 `index.ts` 导出给冒烟）：
+  `collectWalkObstacles` 复用 `wallPieces`，只留 `role === 'wall'` 且与人体竖向范围
+  相交的碎片——门洞天然可过、窗的窗台矮墙天然挡人，不要另写一套户型解析。
+
+两处联动缺了就会互相打架：`SceneContent` 在 `walking` 时**跳过配置 → 相机的同步**并
+掐掉还在飞的过渡；`useFloorplanTool` 的 `planView` 在 `walking` 时**为假**（否则 2D
+实色墙与户型工具会在漫游中回来）。快捷键里 Esc 的优先级最高一档是退出漫游，
+其次才是取消待放（`useEditorShortcuts.ts`），且漫游中 W 是「前进」、不是手柄模式。
+`SceneCanvas` 还有一层**只给显示用的覆盖**：`walking` 时把 `shadow.enabled` 算成 `true`
+再传给画布（2D 把配置里的总开关写成了 `false`，屋里一片平光就看不出深浅），
+**不写回配置**、不进历史，右栏读数仍是配置里那个 `false`。
 
 ### `playground/`（宿主示例）
 
@@ -246,12 +274,18 @@ host 这一层。
 
 ## 验证到哪一步（不要补的测试）
 
-`pnpm verify` 的 116 条断言**跑在 SSR 下**（`createSSRApp` + `renderToString`），
+`pnpm verify` 的 121 条断言**跑在 SSR 下**（`createSSRApp` + `renderToString`），
 而 `TresCanvas` 的 children 在 SSR 下根本不渲染。所以下列内容**测不到**，
 不要为它们补冒烟用例（只会得到一条永远为真的断言）：
 
 - WebGL 实际出图、阴影是否真的落到地面上
 - `attachPick` 的挂 / 摘、指针事件判别、双击阈值、事件弹窗
+- **第一人称漫游的指针锁、逐帧移动与退出还原**：`SceneWalkControls` 挂在 `TresCanvas`
+  内部，指针锁、WASD、鼠标转视角、相机回位全要真实输入与 `requestAnimationFrame`，
+  SSR 一行都盖不到。冒烟够得着的只有两条碰撞纯函数（`collectWalkObstacles` 门留 2 段、
+  窗留 3 段；`resolveWalkPosition` 的推离量），起点标记 / 拖放落点 / HUD 同样测不到。
+  真实手感归目视清单 174-179——**改 `utils/walk.ts` 或 `SceneWalkControls.vue` 时
+  必须同时看一眼那几条**。
 - 天空盒的**面到轴映射**（错了不报错，只是天整体转到别的方向）
 - 模板 ref 指向 three 对象时的浅引用陷阱（dev 下只是一条警告，生产里静默失效）
 - 那段 `new Function` 执行器（库自身从不执行配置里的任何 `code`）
@@ -290,7 +324,7 @@ host 这一层。
 | 文件 | 读者 | 内容 |
 |---|---|---|
 | `README.md` | 用这个库的宿主 | **一份精简卡片（≤80 行）**：一句话简介、安装、快速开始、三条核心概念、props / 事件 / 对外方法三张表 |
-| `DESIGN.md` | 改这个仓库的人 | 编辑器的设计、**63 条编号设计决定**、168 条**目视清单**、目录结构、发布流程、待办 |
+| `DESIGN.md` | 改这个仓库的人 | 编辑器的设计、**68 条编号设计决定**、179 条**目视清单**、目录结构、发布流程、待办 |
 
 `README.md` 是一份**面向宿主的用法卡片**，结构是固定的（**总长 ≤80 行**）：一句话简介 →
 安装（一条命令）→ 快速开始（一个最小示例）→ 核心概念（最多 3 条）→ props / 事件 / 对外方法
